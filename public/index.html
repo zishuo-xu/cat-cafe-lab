@@ -38,6 +38,15 @@
             </span>
             <span class="pill pill--seq" data-seq>seq 0</span>
           </div>
+          <button
+            type="button"
+            class="icon-btn brand-settings"
+            data-action="open-settings"
+            title="设置"
+            aria-label="设置"
+          >
+            ⚙
+          </button>
         </header>
 
         <section class="card card--roster" aria-labelledby="roster-title">
@@ -73,6 +82,15 @@
             <p class="room-topic" data-room-topic>把需求丢进来，猫猫们会在同一张桌子上把它做出来。</p>
           </div>
           <div class="chat-head-status">
+            <button
+              type="button"
+              class="icon-btn chat-settings"
+              data-action="open-settings"
+              title="设置"
+              aria-label="设置"
+            >
+              ⚙
+            </button>
             <button
               type="button"
               class="btn btn--tiny btn--primary chat-new-task"
@@ -244,6 +262,245 @@
           <button type="submit" class="btn btn--primary" id="create-task-btn" disabled>
             让猫猫开工 🐾
           </button>
+        </footer>
+      </form>
+    </dialog>
+
+    <!-- ── 设置弹窗 ───────────────────────────────────────────────── -->
+    <dialog id="settings-modal" class="modal modal--settings" aria-labelledby="settings-title">
+      <form id="settings-form" class="modal-card settings" novalidate>
+        <header class="modal-head settings-head">
+          <div class="settings-head-text">
+            <h2 id="settings-title">设置</h2>
+            <p class="settings-head-sub">模式、LLM 连接、回复节奏与运行信息</p>
+          </div>
+          <button type="button" class="icon-btn" data-action="close-settings" aria-label="关闭设置">
+            ✕
+          </button>
+        </header>
+
+        <div class="settings-notice" id="settings-notice" role="status" hidden>
+          <span aria-hidden="true">⚠</span>
+          <span data-settings-notice-text></span>
+        </div>
+
+        <div class="settings-scroll">
+          <!-- 1. 运行模式 -->
+          <fieldset class="settings-section">
+            <legend class="settings-legend">运行模式</legend>
+            <p class="settings-desc">
+              演出模式不调用模型、开箱即用；真实模式走你配置的 OpenAI 兼容接口。
+            </p>
+            <div class="segmented" role="radiogroup" aria-label="运行模式">
+              <label class="segment">
+                <input type="radio" name="settings-mode" value="mock" checked />
+                <span>🎭 演出模式</span>
+              </label>
+              <label class="segment">
+                <input type="radio" name="settings-mode" value="llm" />
+                <span>🧠 真实模式</span>
+              </label>
+            </div>
+            <p class="settings-inline-warn" id="settings-mode-warn" role="alert" hidden></p>
+          </fieldset>
+
+          <!-- 2. LLM 连接 -->
+          <fieldset class="settings-section" id="settings-llm-section">
+            <legend class="settings-legend">LLM 连接</legend>
+            <p class="settings-desc">
+              OpenAI 兼容接口，例如 OpenAI
+              <code>https://api.openai.com/v1</code>、DeepSeek
+              <code>https://api.deepseek.com/v1</code>、Ollama
+              <code>http://127.0.0.1:11434/v1</code>。
+            </p>
+
+            <div class="field">
+              <label class="field-label" for="settings-base-url">Base URL</label>
+              <input
+                id="settings-base-url"
+                name="baseUrl"
+                type="url"
+                inputmode="url"
+                placeholder="https://api.deepseek.com/v1"
+                autocomplete="off"
+                spellcheck="false"
+                aria-describedby="settings-base-url-hint"
+              />
+              <span class="field-hint" id="settings-base-url-hint">
+                通常以 <code>/v1</code> 结尾，不要带 <code>/chat/completions</code>。
+              </span>
+            </div>
+
+            <div class="field-grid">
+              <div class="field">
+                <label class="field-label" for="settings-model">模型名</label>
+                <input
+                  id="settings-model"
+                  name="model"
+                  type="text"
+                  placeholder="deepseek-chat / gpt-4o-mini"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </div>
+              <div class="field">
+                <label class="field-label" for="settings-api-key">
+                  API Key
+                  <span class="key-status" id="settings-key-status" data-state="empty">
+                    <i class="key-dot" aria-hidden="true"></i>
+                    <span data-key-status-text>未配置</span>
+                  </span>
+                </label>
+                <span class="input-with-action">
+                  <input
+                    id="settings-api-key"
+                    name="apiKey"
+                    type="password"
+                    placeholder="输入 API Key（可留空）"
+                    autocomplete="new-password"
+                    spellcheck="false"
+                    aria-describedby="settings-key-hint"
+                  />
+                  <button
+                    type="button"
+                    class="icon-btn icon-btn--inline"
+                    data-action="toggle-key"
+                    id="settings-key-toggle"
+                    aria-label="显示 API Key"
+                    aria-pressed="false"
+                  >
+                    👁
+                  </button>
+                </span>
+                <span class="field-hint" id="settings-key-hint">只保存在服务内存，不写盘。</span>
+                <button
+                  type="button"
+                  class="link-btn"
+                  data-action="clear-key"
+                  id="settings-clear-key"
+                  hidden
+                >
+                  清除已保存的 Key
+                </button>
+              </div>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="settings-temperature">
+                温度
+                <output id="settings-temp-value" for="settings-temperature">0.8</output>
+              </label>
+              <input
+                id="settings-temperature"
+                name="temperature"
+                type="range"
+                min="0"
+                max="2"
+                step="0.1"
+                value="0.8"
+              />
+              <span class="field-hint">越低越稳、越高越发散，推荐 0.6–0.9。</span>
+            </div>
+
+            <div class="settings-test-row">
+              <button
+                type="button"
+                class="btn btn--ghost btn--tiny"
+                data-action="test-llm"
+                id="settings-test-btn"
+              >
+                🔌 测试连接
+              </button>
+              <span
+                class="settings-test-result"
+                id="settings-test-result"
+                role="status"
+                aria-live="polite"
+                data-tone="idle"
+              >
+                填好 Base URL 与模型后可以测试。
+              </span>
+            </div>
+          </fieldset>
+
+          <!-- 3. 回复节奏 -->
+          <fieldset class="settings-section">
+            <legend class="settings-legend">回复节奏</legend>
+            <p class="settings-desc">只影响演出与真实模式的打字节奏。</p>
+            <div class="segmented" role="radiogroup" aria-label="回复节奏">
+              <label class="segment">
+                <input type="radio" name="settings-speed" value="slow" />
+                <span>🐢 慢</span>
+              </label>
+              <label class="segment">
+                <input type="radio" name="settings-speed" value="normal" checked />
+                <span>☕ 正常</span>
+              </label>
+              <label class="segment">
+                <input type="radio" name="settings-speed" value="fast" />
+                <span>⚡ 快</span>
+              </label>
+            </div>
+          </fieldset>
+
+          <!-- 4. 数据 -->
+          <fieldset class="settings-section">
+            <legend class="settings-legend">数据</legend>
+            <div class="settings-danger-row">
+              <div>
+                <strong>重置猫咖</strong>
+                <p class="settings-desc">
+                  会清空所有任务、消息、交接卡、产物与共享记忆，无法撤销。
+                </p>
+              </div>
+              <button
+                type="button"
+                class="btn btn--danger btn--tiny"
+                data-action="reset-studio"
+                id="settings-reset-btn"
+              >
+                重置猫咖
+              </button>
+            </div>
+            <div class="danger-confirm" id="settings-reset-confirm" hidden>
+              <span>确定清空全部数据？</span>
+              <button
+                type="button"
+                class="btn btn--danger btn--tiny"
+                data-action="confirm-reset"
+                id="settings-confirm-reset"
+              >
+                确认重置
+              </button>
+              <button type="button" class="btn btn--ghost btn--tiny" data-action="cancel-reset">
+                取消
+              </button>
+            </div>
+          </fieldset>
+
+          <!-- 5. 关于 / 只读 -->
+          <fieldset class="settings-section">
+            <legend class="settings-legend">关于 / 运行信息</legend>
+            <dl class="settings-info" id="settings-info">
+              <div><dt>版本</dt><dd>—</dd></div>
+              <div><dt>端口</dt><dd>—</dd></div>
+              <div><dt>Node</dt><dd>—</dd></div>
+              <div><dt>启动时间</dt><dd>—</dd></div>
+              <div><dt>当前模式</dt><dd>—</dd></div>
+              <div><dt>stallMs</dt><dd>—</dd></div>
+              <div class="settings-info-wide"><dt>数据目录</dt><dd>—</dd></div>
+            </dl>
+            <p class="settings-footnote">
+              API Key 只保存在服务内存，不会写盘；重启后需重填，或使用
+              <code>LLM_API_KEY</code> 环境变量。Key 永远不回传到页面。
+            </p>
+          </fieldset>
+        </div>
+
+        <p class="form-error settings-error" id="settings-error" role="alert" hidden></p>
+        <footer class="modal-foot settings-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-settings">取消</button>
+          <button type="submit" class="btn btn--primary" id="settings-save-btn">保存配置</button>
         </footer>
       </form>
     </dialog>

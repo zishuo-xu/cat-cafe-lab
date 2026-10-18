@@ -11,6 +11,8 @@ import type {
   Driver,
   RoomId,
   Scenario,
+  SettingsApi,
+  SettingsPatch,
   StudioState,
   TaskId,
 } from "../domain/types.ts";
@@ -21,7 +23,9 @@ export interface HttpDeps {
   driver: Driver;
   publicDir: string;
   scenarios: Scenario[];
-  mode: "mock" | "llm";
+  mode?: "mock" | "llm";
+  /** 设置面板后端；不传则相关接口返回 503（测试/精简启动可用）。 */
+  settingsApi?: SettingsApi;
   /** 前端用来判断「卡住」的阈值；不传按 driver.stallMs / 12s。 */
   stallMs?: number;
 }
@@ -134,7 +138,7 @@ function serveStatic(res: ServerResponse, publicDir: string, pathname: string): 
 }
 
 export function createHttpServer(deps: HttpDeps): Server {
-  const { studio, driver, scenarios, mode } = deps;
+  const { studio, driver, scenarios, settingsApi } = deps;
   const publicDir = deps.publicDir;
 
   return createServer((req, res) => {
@@ -153,10 +157,58 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (method === "GET" && pathname === "/api/health") {
       json(res, 200, {
         ok: true,
-        mode,
+        mode: studio.state.mode ?? deps.mode ?? "mock",
         seq: studio.state.seq,
         stallMs: deps.stallMs ?? driver.stallMs ?? 12000,
+        settings: Boolean(settingsApi),
       });
+      return;
+    }
+
+    if (pathname === "/api/settings") {
+      if (!settingsApi) {
+        fail(res, 503, "settings api not enabled");
+        return;
+      }
+      if (method === "GET") {
+        json(res, 200, settingsApi.getPublic());
+        return;
+      }
+      if (method === "PUT") {
+        const body = (await readBody(req)) as SettingsPatch;
+        if (!body || typeof body !== "object") {
+          fail(res, 400, "invalid settings payload");
+          return;
+        }
+        try {
+          json(res, 200, await settingsApi.update(body));
+        } catch (err) {
+          fail(res, 400, err instanceof Error ? err.message : "invalid settings");
+        }
+        return;
+      }
+      fail(res, 405, "method not allowed");
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/settings/test") {
+      if (!settingsApi) {
+        fail(res, 503, "settings api not enabled");
+        return;
+      }
+      const body = (await readBody(req)) as {
+        baseUrl?: unknown;
+        model?: unknown;
+        apiKey?: unknown;
+      };
+      const baseUrl = typeof body.baseUrl === "string" ? body.baseUrl : "";
+      const model = typeof body.model === "string" ? body.model : "";
+      const apiKey = typeof body.apiKey === "string" ? body.apiKey : undefined;
+      if (!baseUrl.trim() || !model.trim()) {
+        fail(res, 400, "baseUrl 和 model 都必填");
+        return;
+      }
+      json(res, 200, await settingsApi.test({ baseUrl, model, ...(apiKey ? { apiKey } : {}) }));
       return;
     }
 

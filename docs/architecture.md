@@ -19,6 +19,11 @@
 │    · seq 单调递增 → SSE 去重                   │
 │    · debounce 200ms 落盘 data/studio.json      │
 ├──────────────────────────────────────────────┤
+│  src/server/settings-store.ts  运行时设置      │
+│    · 模式 / 节奏 / LLM 连接                    │
+│    · apiKey 只在内存，从不落盘                 │
+│    · 切换 brain 不需要重启                     │
+├──────────────────────────────────────────────┤
 │  src/engine/driver.ts  协作会话驱动            │
 │    · 每房间串行队列                            │
 │    · 阶段推进 / @ 路由 / typing / 延迟         │
@@ -96,17 +101,28 @@ intake ──► planning ──► working ──► reviewing ──► done
 - 客户端按 `seq` 去重；断线后先重连，再补一次 `/api/state`（防止漏帧）。
 - 服务端每 15s 发一次 `: ping` 心跳，避免代理掐连接。
 
+## 运行时设置
+
+设置面板（`GET/PUT /api/settings`、`POST /api/settings/test`）背后是 `SettingsStore`：
+
+- **切模式不重启**：driver 持有 `SwitchableBrain` 这层壳，设置保存时原地换成 mock 或 llm；
+- **节奏只缩放延迟**：`wait(ms)` 乘上 `slow=1.7 / normal=1 / fast=0.5`，状态机不受影响；
+- **密钥边界**：`apiKey` 只存在进程内存。`getPublic()` 只回 `hasKey/keySource`，落盘的
+  `data/settings.json`（0600）只有 `mode/speed/baseUrl/model/temperature`；
+- **测试连接**：`POST /api/settings/test` 请求 `{baseUrl}/models`，8s 超时，返回耗时与
+  可用模型数；错误信息经过脱敏，不会带出 key。
+
 ## 持久化
 
-`data/studio.json`，debounce 200ms 原子写（tmp + rename）。
+`data/studio.json`（协作状态）和 `data/settings.json`（非敏感设置），都是原子写（tmp + rename）。
 启动时若无文件则种下房间 + 四猫招呼；若有则恢复（并把残留的 typing 清空）。
 没有数据库：这个体量的数据用 JSON 足够，且方便直接 `cat` 出来看。
 
 ## 真实模式
 
-`LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` 齐了才进入 `llm` 模式。key 只存在进程内存，
-不落盘、不进日志。任何调用失败都降级到 mock，保证界面永远有内容。
-详见 [llm.md](./llm.md)。
+设置面板保存 `baseUrl + model` 后进入 `llm` 模式；也可以让 `LLM_BASE_URL` / `LLM_MODEL` /
+`LLM_API_KEY` 作为启动默认值。key 只存在进程内存，不落盘、不进日志。
+任何调用失败都降级到 mock，保证界面永远有内容。详见 [llm.md](./llm.md)。
 
 ## 有意不做的事
 

@@ -91,6 +91,18 @@ const app = {
   stallMs: FALLBACK_STALL_MS,
 };
 
+/** 设置面板的临时状态（打开时才加载，关闭即丢弃草稿）。 */
+const settingsState = {
+  loading: false,
+  ready: false,
+  data: null,
+  saving: false,
+  testing: false,
+  resetting: false,
+  resetConfirm: false,
+  clearKeyRequested: false,
+};
+
 const els = {};
 
 // ── 小工具 ──────────────────────────────────────────────────────────────
@@ -473,6 +485,31 @@ function cacheDom() {
   els.formError = $("#new-task-error");
   els.modalChips = $$(".chip[data-brief]");
   els.toastStack = $("#toast-stack");
+
+  els.settingsModal = $("#settings-modal");
+  els.settingsForm = $("#settings-form");
+  els.settingsNotice = $("#settings-notice");
+  els.settingsError = $("#settings-error");
+  els.settingsInfo = $("#settings-info");
+  els.settingsModeInputs = $$('input[name="settings-mode"]');
+  els.settingsSpeedInputs = $$('input[name="settings-speed"]');
+  els.settingsBaseUrl = $("#settings-base-url");
+  els.settingsModel = $("#settings-model");
+  els.settingsApiKey = $("#settings-api-key");
+  els.settingsKeyToggle = $("#settings-key-toggle");
+  els.settingsKeyStatus = $("#settings-key-status");
+  els.settingsKeyHint = $("#settings-key-hint");
+  els.settingsClearKey = $("#settings-clear-key");
+  els.settingsTemperature = $("#settings-temperature");
+  els.settingsTempValue = $("#settings-temp-value");
+  els.settingsTestBtn = $("#settings-test-btn");
+  els.settingsTestResult = $("#settings-test-result");
+  els.settingsModeWarn = $("#settings-mode-warn");
+  els.settingsLlmSection = $("#settings-llm-section");
+  els.settingsResetBtn = $("#settings-reset-btn");
+  els.settingsResetConfirm = $("#settings-reset-confirm");
+  els.settingsConfirmReset = $("#settings-confirm-reset");
+  els.settingsSaveBtn = $("#settings-save-btn");
 }
 
 // ── 网络：初始快照 / SSE / 去重 ─────────────────────────────────────────
@@ -1671,6 +1708,31 @@ function bindUi() {
     });
   }
 
+  if (els.settingsForm) {
+    els.settingsForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void saveSettings();
+    });
+    els.settingsForm.addEventListener("change", onSettingsChange);
+    els.settingsForm.addEventListener("input", onSettingsInput);
+  }
+  if (els.settingsModal) {
+    els.settingsModal.addEventListener("click", (event) => {
+      if (event.target === els.settingsModal) closeSettings();
+    });
+    els.settingsModal.addEventListener("close", () => {
+      settingsState.saving = false;
+      settingsState.testing = false;
+      settingsState.resetConfirm = false;
+      settingsState.clearKeyRequested = false;
+      if (els.settingsApiKey) els.settingsApiKey.value = "";
+      setKeyVisibility(false);
+      hideSettingsError();
+      hideModeWarn();
+      setSettingsResetConfirm(false);
+    });
+  }
+
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && app.conn !== "online") {
       refreshState().catch(() => setConn("offline"));
@@ -1725,6 +1787,30 @@ function onGlobalClick(event) {
       app.selectedTaskId = null;
       renderTasks();
       renderWorkspace();
+      break;
+    case "open-settings":
+      void openSettings();
+      break;
+    case "close-settings":
+      closeSettings();
+      break;
+    case "toggle-key":
+      setKeyVisibility(els.settingsApiKey?.type === "password");
+      break;
+    case "clear-key":
+      toggleClearKey();
+      break;
+    case "test-llm":
+      void testLlmConnection();
+      break;
+    case "reset-studio":
+      setSettingsResetConfirm(true);
+      break;
+    case "confirm-reset":
+      void resetStudio();
+      break;
+    case "cancel-reset":
+      setSettingsResetConfirm(false);
       break;
     default:
       break;
@@ -2131,6 +2217,490 @@ async function createTask() {
   } finally {
     app.creating = false;
     updateCreateState();
+  }
+}
+
+// ── 设置面板 ────────────────────────────────────────────────────────────
+
+async function openSettings() {
+  const modal = els.settingsModal;
+  if (!modal) return;
+
+  settingsState.loading = false;
+  settingsState.ready = false;
+  settingsState.data = null;
+  settingsState.saving = false;
+  settingsState.testing = false;
+  settingsState.resetting = false;
+  settingsState.resetConfirm = false;
+  settingsState.clearKeyRequested = false;
+
+  hideSettingsError();
+  hideModeWarn();
+  setSettingsResetConfirm(false);
+  setTestResult("idle", "填好 Base URL 与模型后可以测试。");
+  setSettingsNotice("正在读取设置…", "pending");
+  resetSettingsForm();
+  renderSettingsReadonly(null);
+  updateSettingsButtons();
+
+  if (!modal.open) modal.showModal();
+  await loadSettings();
+}
+
+function closeSettings() {
+  if (els.settingsModal?.open) els.settingsModal.close();
+}
+
+async function fetchSettings() {
+  const response = await fetch("/api/settings", {
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(await describeHttpError(response, "GET /api/settings"));
+  return response.json();
+}
+
+async function describeHttpError(response, label) {
+  try {
+    const payload = await response.json();
+    if (payload && typeof payload.error === "string" && payload.error) {
+      return `${label}：${payload.error}`;
+    }
+  } catch {
+    /* 非 JSON 错误体 */
+  }
+  return `${label} → HTTP ${response.status}`;
+}
+
+async function loadSettings() {
+  settingsState.loading = true;
+  updateSettingsButtons();
+  try {
+    const data = await fetchSettings();
+    settingsState.data = data;
+    settingsState.ready = true;
+    fillSettingsForm(data);
+    renderSettingsReadonly(data);
+    hideSettingsNotice();
+  } catch (error) {
+    settingsState.ready = false;
+    resetSettingsForm();
+    renderSettingsReadonly(null);
+    setSettingsNotice(
+      `设置服务未就绪（${error.message}）。按钮仍可点击，会在面板内显示具体错误；接口就绪后重新打开设置即可。`,
+      "warn",
+    );
+  } finally {
+    settingsState.loading = false;
+    updateSettingsButtons();
+  }
+}
+
+function resetSettingsForm() {
+  setModeRadios(app.state?.mode === "llm" ? "llm" : "mock");
+  setSpeedRadios("normal");
+  if (els.settingsBaseUrl) els.settingsBaseUrl.value = "";
+  if (els.settingsModel) els.settingsModel.value = "";
+  if (els.settingsTemperature) els.settingsTemperature.value = "0.8";
+  updateTempOutput();
+  if (els.settingsApiKey) els.settingsApiKey.value = "";
+  setKeyVisibility(false);
+  renderKeyStatus(null);
+  hideModeWarn();
+}
+
+function fillSettingsForm(data) {
+  const mode = data?.mode === "llm" ? "llm" : "mock";
+  const speed = ["slow", "normal", "fast"].includes(data?.speed) ? data.speed : "normal";
+  const llm = data?.llm ?? {};
+
+  setModeRadios(mode);
+  setSpeedRadios(speed);
+  if (els.settingsBaseUrl) els.settingsBaseUrl.value = llm.baseUrl ?? "";
+  if (els.settingsModel) els.settingsModel.value = llm.model ?? "";
+  const temperature = Number(llm.temperature);
+  if (els.settingsTemperature) {
+    els.settingsTemperature.value = String(Number.isFinite(temperature) ? temperature : 0.8);
+  }
+  updateTempOutput();
+  if (els.settingsApiKey) els.settingsApiKey.value = "";
+  setKeyVisibility(false);
+  settingsState.clearKeyRequested = false;
+  renderKeyStatus(llm);
+  hideModeWarn();
+}
+
+function setModeRadios(mode) {
+  for (const input of els.settingsModeInputs) input.checked = input.value === mode;
+  syncSettingsSegments();
+}
+
+function setSpeedRadios(speed) {
+  for (const input of els.settingsSpeedInputs) input.checked = input.value === speed;
+  syncSettingsSegments();
+}
+
+function syncSettingsSegments() {
+  if (!els.settingsForm) return;
+  for (const segment of $$(".segment", els.settingsForm)) {
+    const input = segment.querySelector('input[type="radio"]');
+    segment.classList.toggle("is-active", Boolean(input?.checked));
+  }
+}
+
+function currentModeChoice() {
+  return els.settingsModeInputs.find((input) => input.checked)?.value ?? "mock";
+}
+
+function currentSpeedChoice() {
+  return els.settingsSpeedInputs.find((input) => input.checked)?.value ?? "normal";
+}
+
+function renderKeyStatus(llm) {
+  const hasKey = Boolean(llm?.hasKey);
+  const source =
+    llm?.keySource === "env" ? "环境变量" : llm?.keySource === "ui" ? "设置面板" : "";
+  const pendingClear = settingsState.clearKeyRequested;
+
+  if (els.settingsKeyStatus) {
+    const status = els.settingsKeyStatus;
+    status.dataset.state = pendingClear ? "pending" : hasKey ? "ok" : "empty";
+    const text = $("[data-key-status-text]", status);
+    if (text) {
+      text.textContent = pendingClear
+        ? "保存后清除"
+        : hasKey
+          ? `已配置${source ? ` · ${source}` : ""}`
+          : "未配置";
+    }
+  }
+
+  if (els.settingsApiKey) {
+    els.settingsApiKey.placeholder = pendingClear
+      ? "保存后将清除已保存的 Key"
+      : hasKey
+        ? "已配置，留空则不修改"
+        : "输入 API Key（可留空）";
+  }
+
+  if (els.settingsKeyHint) {
+    els.settingsKeyHint.textContent = hasKey && !pendingClear
+      ? `已保存 Key（来源：${source || "服务内存"}），留空则不修改。`
+      : pendingClear
+        ? "点击下方按钮可以取消清除；保存前仍会使用已保存的 Key。"
+        : "只保存在服务内存，不写盘。";
+  }
+
+  if (els.settingsClearKey) {
+    els.settingsClearKey.hidden = !hasKey;
+    els.settingsClearKey.textContent = pendingClear ? "取消清除 Key" : "清除已保存的 Key";
+  }
+}
+
+function toggleClearKey() {
+  if (!settingsState.data?.llm?.hasKey) return;
+  settingsState.clearKeyRequested = !settingsState.clearKeyRequested;
+  renderKeyStatus(settingsState.data.llm);
+}
+
+function setKeyVisibility(visible) {
+  if (!els.settingsApiKey) return;
+  els.settingsApiKey.type = visible ? "text" : "password";
+  if (els.settingsKeyToggle) {
+    els.settingsKeyToggle.setAttribute("aria-pressed", String(visible));
+    els.settingsKeyToggle.setAttribute("aria-label", visible ? "隐藏 API Key" : "显示 API Key");
+    els.settingsKeyToggle.textContent = visible ? "🙈" : "👁";
+  }
+}
+
+function updateTempOutput() {
+  if (!els.settingsTempValue || !els.settingsTemperature) return;
+  const value = Number(els.settingsTemperature.value);
+  els.settingsTempValue.textContent = Number.isFinite(value) ? value.toFixed(1) : "0.8";
+}
+
+function renderSettingsReadonly(data) {
+  if (!els.settingsInfo) return;
+  const snapshot = app.state;
+  const mode = data?.mode ?? snapshot?.mode;
+  const stallMs = Number(data?.stallMs);
+  const rows = [
+    ["版本", data?.version ?? "—"],
+    ["端口", data?.port != null ? String(data.port) : "—"],
+    ["Node", data?.node ?? "—"],
+    ["启动时间", data?.startedAt ? fmtFull(data.startedAt) : "—"],
+    ["当前模式", mode === "llm" ? "真实模式（LLM）" : "演出模式"],
+    ["stallMs", Number.isFinite(stallMs) ? `${stallMs} ms` : `${app.stallMs} ms（本地阈值）`],
+  ];
+
+  const nodes = rows.map(([label, value]) =>
+    h(
+      "div",
+      {},
+      h("dt", { text: label }),
+      h("dd", { text: String(value) }),
+    ),
+  );
+  nodes.push(
+    h(
+      "div",
+      { class: "settings-info-wide" },
+      h("dt", { text: "数据目录" }),
+      h("dd", { text: data?.dataDir ?? "—" }),
+    ),
+  );
+  els.settingsInfo.replaceChildren(...nodes);
+}
+
+function showModeWarn(message) {
+  if (!els.settingsModeWarn) return;
+  els.settingsModeWarn.textContent = message;
+  els.settingsModeWarn.hidden = false;
+}
+
+function hideModeWarn() {
+  if (!els.settingsModeWarn) return;
+  els.settingsModeWarn.hidden = true;
+  els.settingsModeWarn.textContent = "";
+}
+
+function setSettingsNotice(message, tone = "warn") {
+  if (!els.settingsNotice) return;
+  els.settingsNotice.hidden = false;
+  els.settingsNotice.dataset.tone = tone;
+  const text = $("[data-settings-notice-text]", els.settingsNotice);
+  if (text) text.textContent = message;
+}
+
+function hideSettingsNotice() {
+  if (els.settingsNotice) els.settingsNotice.hidden = true;
+}
+
+function showSettingsError(message) {
+  if (!els.settingsError) return;
+  els.settingsError.textContent = message;
+  els.settingsError.hidden = false;
+}
+
+function hideSettingsError() {
+  if (!els.settingsError) return;
+  els.settingsError.hidden = true;
+  els.settingsError.textContent = "";
+}
+
+function setTestResult(tone, message) {
+  if (!els.settingsTestResult) return;
+  els.settingsTestResult.dataset.tone = tone;
+  els.settingsTestResult.textContent = message;
+}
+
+function setSettingsResetConfirm(show) {
+  settingsState.resetConfirm = show;
+  if (els.settingsResetBtn) els.settingsResetBtn.hidden = show;
+  if (els.settingsResetConfirm) els.settingsResetConfirm.hidden = !show;
+}
+
+function updateSettingsButtons() {
+  if (els.settingsSaveBtn) {
+    els.settingsSaveBtn.disabled = settingsState.saving;
+    els.settingsSaveBtn.textContent = settingsState.saving ? "保存中…" : "保存配置";
+  }
+  if (els.settingsTestBtn) {
+    els.settingsTestBtn.disabled = settingsState.testing;
+    els.settingsTestBtn.textContent = settingsState.testing ? "测试中…" : "🔌 测试连接";
+  }
+  if (els.settingsConfirmReset) els.settingsConfirmReset.disabled = settingsState.resetting;
+  if (els.settingsResetBtn) {
+    els.settingsResetBtn.disabled = settingsState.resetting;
+    els.settingsResetBtn.textContent = settingsState.resetting ? "重置中…" : "重置猫咖";
+  }
+  if (els.settingsForm) {
+    els.settingsForm.setAttribute("aria-busy", settingsState.loading ? "true" : "false");
+  }
+}
+
+function onSettingsChange(event) {
+  const target = event.target;
+  if (!(target instanceof HTMLInputElement)) return;
+  if (target.name === "settings-mode") {
+    syncSettingsSegments();
+    onSettingsModeChange();
+  } else if (target.name === "settings-speed") {
+    syncSettingsSegments();
+  }
+}
+
+function onSettingsModeChange() {
+  const mode = currentModeChoice();
+  const baseUrl = els.settingsBaseUrl?.value.trim() ?? "";
+  const model = els.settingsModel?.value.trim() ?? "";
+  if (mode !== "llm") {
+    hideModeWarn();
+    return;
+  }
+  if (baseUrl && model) {
+    hideModeWarn();
+    return;
+  }
+  showModeWarn("真实模式需要先填写 Base URL 和模型名，已定位到 LLM 连接。");
+  els.settingsLlmSection?.scrollIntoView({
+    block: "center",
+    behavior: prefersReducedMotion() ? "auto" : "smooth",
+  });
+  els.settingsBaseUrl?.focus({ preventScroll: true });
+}
+
+function onSettingsInput(event) {
+  const target = event.target;
+  if (target === els.settingsTemperature) {
+    updateTempOutput();
+    return;
+  }
+  if (target === els.settingsApiKey && settingsState.clearKeyRequested) {
+    if (String(target.value ?? "").trim()) {
+      settingsState.clearKeyRequested = false;
+      renderKeyStatus(settingsState.data?.llm ?? null);
+    }
+    return;
+  }
+  if (
+    (target === els.settingsBaseUrl || target === els.settingsModel) &&
+    currentModeChoice() === "llm" &&
+    els.settingsBaseUrl?.value.trim() &&
+    els.settingsModel?.value.trim()
+  ) {
+    hideModeWarn();
+  }
+}
+
+function collectSettingsPatch() {
+  const patch = {
+    mode: currentModeChoice(),
+    speed: currentSpeedChoice(),
+    llm: {
+      baseUrl: els.settingsBaseUrl?.value.trim() ?? "",
+      model: els.settingsModel?.value.trim() ?? "",
+      temperature: Number(els.settingsTemperature?.value ?? 0.8),
+    },
+  };
+  const apiKey = els.settingsApiKey?.value.trim() ?? "";
+  if (apiKey) patch.llm.apiKey = apiKey;
+  if (settingsState.clearKeyRequested) patch.llm.clearKey = true;
+  return patch;
+}
+
+async function saveSettings() {
+  if (settingsState.saving) return;
+  hideSettingsError();
+
+  // 没拿到当前配置时不提交，避免把服务端已有配置覆盖成空值。
+  if (!settingsState.ready || !settingsState.data) {
+    showSettingsError("设置服务未就绪，无法保存。请等设置接口恢复后重新打开设置。");
+    return;
+  }
+
+  settingsState.saving = true;
+  updateSettingsButtons();
+  try {
+    const response = await fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(collectSettingsPatch()),
+    });
+    if (!response.ok) throw new Error(await describeHttpError(response, "PUT /api/settings"));
+    const data = await response.json();
+
+    settingsState.data = data;
+    settingsState.ready = true;
+    settingsState.clearKeyRequested = false;
+    fillSettingsForm(data);
+    renderSettingsReadonly(data);
+    hideSettingsNotice();
+    setTestResult("idle", "配置已更新，可重新测试连接。");
+    hideSettingsError();
+    toast("配置已保存");
+
+    // 模式/节奏可能在服务端即时生效；同步一次状态与健康信息。
+    void refreshState().catch(() => {});
+    void refreshHealth();
+  } catch (error) {
+    showSettingsError(`保存失败：${error.message}`);
+  } finally {
+    settingsState.saving = false;
+    updateSettingsButtons();
+  }
+}
+
+async function testLlmConnection() {
+  if (settingsState.testing) return;
+  const baseUrl = els.settingsBaseUrl?.value.trim() ?? "";
+  const model = els.settingsModel?.value.trim() ?? "";
+  const apiKey = els.settingsApiKey?.value.trim() ?? "";
+
+  if (!baseUrl || !model) {
+    setTestResult("error", "先填 Base URL 和模型名再测试。");
+    onSettingsModeChange();
+    return;
+  }
+
+  settingsState.testing = true;
+  updateSettingsButtons();
+  setTestResult("pending", "正在测试连接…");
+  try {
+    const payload = { baseUrl, model };
+    if (apiKey) payload.apiKey = apiKey;
+    const response = await fetch("/api/settings/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!response.ok) throw new Error(await describeHttpError(response, "POST /api/settings/test"));
+    const result = await response.json();
+
+    const ok = Boolean(result?.ok);
+    const latency = Number(result?.latencyMs);
+    const detail = String(result?.detail ?? "").trim();
+    const latencyText = Number.isFinite(latency) ? ` · ${latency}ms` : "";
+    const label = ok ? "连接成功" : "连接失败";
+    // 服务端 detail 常已包含「连接成功/失败」，避免重复。
+    const text = detail
+      ? detail.includes(label)
+        ? `${detail}${latencyText}`
+        : `${label}${latencyText} · ${detail}`
+      : `${label}${latencyText}`;
+    setTestResult(ok ? "ok" : "error", text);
+  } catch (error) {
+    setTestResult("error", `设置服务未就绪或测试失败：${error.message}`);
+  } finally {
+    settingsState.testing = false;
+    updateSettingsButtons();
+  }
+}
+
+async function resetStudio() {
+  if (settingsState.resetting) return;
+  hideSettingsError();
+  settingsState.resetting = true;
+  updateSettingsButtons();
+  try {
+    const response = await fetch("/api/reset", { method: "POST" });
+    if (!response.ok) throw new Error(await describeHttpError(response, "POST /api/reset"));
+    await response.json().catch(() => null);
+
+    app.selectedTaskId = null;
+    app.expanded.clear();
+    await refreshState().catch(() => {});
+    void refreshHealth();
+    setSettingsResetConfirm(false);
+    closeSettings();
+    toast("猫咖已重置，任务、消息、产物与记忆已清空");
+  } catch (error) {
+    setSettingsResetConfirm(false);
+    showSettingsError(`重置失败：${error.message}`);
+  } finally {
+    settingsState.resetting = false;
+    updateSettingsButtons();
   }
 }
 

@@ -343,6 +343,13 @@ export class Studio {
     this.notify();
   }
 
+  /** 设置面板切换模式后同步给前端（SSE 会带出 state.mode）。 */
+  setMode(mode: BrainMode): void {
+    if (this.state.mode === mode) return;
+    this.state.mode = mode;
+    this.notify();
+  }
+
   // ── 订阅 / 持久化 ─────────────────────────────────────
 
   subscribe(listener: Listener): () => void {

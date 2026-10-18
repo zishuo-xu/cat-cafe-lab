@@ -337,6 +337,58 @@ export interface StudioSettings {
   stallMs: number;
 }
 
+// ───────────────────────── 运行时设置（设置面板） ─────────────────────────
+
+/** 回复节奏：只影响打字/思考延迟，不影响协作逻辑。 */
+export type Speed = "slow" | "normal" | "fast";
+
+/** 可安全回传给前端 / 落盘的设置（绝不含 apiKey）。 */
+export interface PublicSettings {
+  mode: BrainMode;
+  speed: Speed;
+  llm: {
+    baseUrl: string;
+    model: string;
+    temperature: number;
+    hasKey: boolean;
+    keySource: "env" | "ui" | null;
+  };
+  stallMs: number;
+  port: number;
+  dataDir: string;
+  version: string;
+  node: string;
+  startedAt: number;
+  /** 环境变量是否提供了 LLM 默认值。 */
+  envDefaults: boolean;
+}
+
+export interface SettingsPatch {
+  mode?: BrainMode;
+  speed?: Speed;
+  llm?: {
+    baseUrl?: string;
+    model?: string;
+    temperature?: number;
+    /** 留空表示不修改；只有非空字符串才会覆盖。 */
+    apiKey?: string;
+    clearKey?: boolean;
+  };
+}
+
+export interface LlmTestResult {
+  ok: boolean;
+  latencyMs: number;
+  detail: string;
+}
+
+/** HTTP 层依赖的最小设置接口，便于测试时替换。 */
+export interface SettingsApi {
+  getPublic(): PublicSettings;
+  update(patch: SettingsPatch): Promise<PublicSettings>;
+  test(draft: { baseUrl: string; model: string; apiKey?: string }): Promise<LlmTestResult>;
+}
+
 // ───────────────────────── 工厂签名（各模块导出） ─────────────────────────
 
 /** T2 导出：src/agents/mock-brain.ts */

@@ -44,7 +44,7 @@ node src/main.ts      # 或 pnpm start
 点「＋ 新任务」→ 选「记住我」示例 → 「让猫猫开工」，然后看着就行。
 
 ```bash
-node --test tests/    # 59 个测试
+node --test tests/    # 76 个测试
 npx tsc --noEmit      # 类型检查
 ```
 
@@ -62,6 +62,7 @@ npx tsc --noEmit      # 类型检查
 | 任务卡住时点「🐾 催一下」 | 宪宪检查并在漏 @ 的地方补投递，任务继续 |
 | 跑完「记住我」后再提「导出 CSV」 | 宪宪会引用上次决策，而不是从零开始 |
 | 点左侧猫名 | 往输入框插入 `@名字` |
+| 点左上角 ⚙️ | 打开设置：切演出/真实模式、配 LLM、调回复节奏、重置数据 |
 
 ### 六阶段
 
@@ -135,9 +136,14 @@ intake planning working reviewing revising done
 
 ## 真实模式（可选）
 
-不配任何东西时是**演出模式**：台词来自 `src/agents/scenarios.ts` 里的剧本，确定、离线、可测试。
+两种配置方式，效果一样：
 
-想让四只猫真的用模型说话，设置三个环境变量再启动：
+**方式 A：设置面板（推荐，不用重启）**
+
+点左上角 ⚙️ → 填 Base URL / 模型名 / API Key → 点「测试连接」确认通 → 选「真实模式」→ 保存。
+四只猫的下一条回复就会走模型。任何调用失败都会自动降级回演出模式，界面不会空。
+
+**方式 B：环境变量（启动默认值）**
 
 ```bash
 LLM_BASE_URL=https://api.deepseek.com/v1 \
@@ -146,9 +152,28 @@ LLM_API_KEY=sk-... \
 node src/main.ts
 ```
 
-支持任何 OpenAI 兼容端点（OpenAI / DeepSeek / Moonshot / 百炼 / OpenRouter / Ollama / vLLM）。
-左上角会变成「真实模式」。**任何调用失败都会降级回演出模式**，界面不会空。
-细节、输出契约和隐私说明见 [docs/llm.md](docs/llm.md)。
+面板里填过的值会覆盖环境变量；**API Key 只存在服务进程内存**，不写盘、不回传前端、不进日志。
+重启后需要重填 key，或者继续用环境变量。细节见 [docs/llm.md](docs/llm.md)。
+
+支持任何 OpenAI 兼容端点：OpenAI / DeepSeek / Moonshot / 百炼 / OpenRouter / Ollama / vLLM。
+
+---
+
+## 设置面板
+
+左上角 ⚙️ 打开，包含四组真正需要的配置：
+
+| 分组 | 内容 |
+|---|---|
+| 运行模式 | 演出模式 / 真实模式，切换后 `state.mode` 实时生效 |
+| LLM 连接 | Base URL、模型名、API Key（密码框，留空不修改）、温度、**测试连接**（显示耗时与可用模型数） |
+| 回复节奏 | 慢 / 正常 / 快，只缩放打字延迟，不影响协作逻辑 |
+| 数据 | 重置猫咖（二次确认，清空任务/消息/记忆） |
+
+底部还有只读的运行信息（版本、端口、数据目录、Node、启动时间、stallMs）。
+只有 `mode / speed / baseUrl / model / temperature` 会落盘到 `data/settings.json`（0600），key 永远只在内存。
+
+![设置面板](docs/images/settings.png)
 
 ---
 
@@ -159,6 +184,7 @@ public/            原生 ESM + CSS，无构建、无框架
   ↕ SSE（每条 {seq, state} 全量快照）
 src/server/http.ts    REST + SSE + 静态资源
 src/server/studio.ts  唯一状态容器，所有写操作走这里
+src/server/settings-store.ts  运行时设置：模式 / 节奏 / LLM（key 只在内存）
 src/engine/driver.ts  每房间串行队列：阶段机 / 路由 / 延迟 / 故障恢复
 src/agents/           brain：mock（剧本）或 llm（真实模型）
 src/domain/types.ts   唯一契约
@@ -193,7 +219,7 @@ cat-cafe-lab/
 │   ├── agents/        personas.ts、scenarios.ts、mock-brain.ts、llm-brain.ts
 │   └── main.ts
 ├── public/            index.html、app.js、styles.css、avatars.js
-├── tests/             engine / agents / llm / integration / smoke（59 个）
+├── tests/             engine / agents / llm / integration / settings / smoke（76 个）
 ├── docs/              architecture.md、llm.md、images/
 ├── data/              studio.json（gitignore）
 └── PLAN.md            设计与分工记录

@@ -6,7 +6,7 @@
 
 真实模式的实现只有两处：
 
-- `src/server/settings.ts` —— 从环境变量解析配置，判定模式；
+- `src/server/settings.ts` / `src/server/settings-store.ts` —— 环境变量默认值 + 运行时设置面板，判定与切换模式；
 - `src/agents/llm-brain.ts` —— 调用 OpenAI 兼容端点，失败时降级到 mock brain。
 
 ---
@@ -25,6 +25,10 @@
 
 **模式判定**：`LLM_BASE_URL` 和 `LLM_MODEL` 都非空才进入真实模式，否则演出模式。
 `GET /api/health` 返回的 `mode` 字段可以确认当前模式。
+
+> 也可以完全不用环境变量：打开工作台左上角 ⚙️ **设置面板**，填 Base URL / 模型 / Key 后
+> 点「测试连接」并保存，运行中即时切换。面板保存的值会覆盖环境变量；API Key 只存在进程内存，
+> 不回传、不落盘。下面的环境变量方式仍然可用，作为启动默认值。
 
 ### 启动示例
 
