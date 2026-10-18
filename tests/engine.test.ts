@@ -8,6 +8,8 @@ import test from "node:test";
 
 import { CATS, SCENARIOS } from "../src/agents/personas.ts";
 import type {
+  ApprovalGate,
+  BrainMode,
   CatBrain,
   CatId,
   CatTurn,
@@ -15,8 +17,11 @@ import type {
   SandboxRunner,
   Task,
   TaskStage,
+  ToolApprovalDecision,
+  ToolApprovalMode,
   ToolName,
   ToolResult,
+  ToolRunResult,
   TurnContext,
 } from "../src/domain/types.ts";
 import { createDriver } from "../src/engine/driver.ts";
@@ -46,10 +51,13 @@ interface ScriptedBrain extends CatBrain {
   callsFor(catId: CatId, stage?: TaskStage): CallRecord[];
 }
 
-function scriptedBrain(handler: (ctx: TurnContext) => CatTurn[]): ScriptedBrain {
+function scriptedBrain(
+  handler: (ctx: TurnContext) => CatTurn[],
+  mode: BrainMode = "mock",
+): ScriptedBrain {
   const calls: CallRecord[] = [];
   return {
-    mode: "mock",
+    mode,
     calls,
     callsFor(catId, stage) {
       return calls.filter(
@@ -70,7 +78,12 @@ function makeStudio(): Studio {
 function makeDriver(
   studio: Studio,
   brain: CatBrain,
-  extra: { sandbox?: SandboxRunner; toolsEnabled?: () => boolean } = {},
+  extra: {
+    sandbox?: SandboxRunner;
+    toolsEnabled?: () => boolean;
+    approvals?: ApprovalGate;
+    approvalMode?: () => ToolApprovalMode;
+  } = {},
 ) {
   return createDriver({
     studio,
@@ -98,6 +111,36 @@ function fakeSandbox(
     async execute(tool, input) {
       calls.push({ tool, input });
       return handler(tool, input);
+    },
+  };
+}
+
+interface FakeApprovalRequest {
+  callId: string;
+  mode: ToolApprovalMode;
+  tool: ToolName;
+  label: string;
+  catId: CatId;
+}
+
+interface FakeApprovals extends ApprovalGate {
+  requests: FakeApprovalRequest[];
+}
+
+function fakeApprovals(
+  decide:
+    | ToolApprovalDecision
+    | ((input: FakeApprovalRequest) => ToolApprovalDecision | Promise<ToolApprovalDecision>) = "approved",
+): FakeApprovals {
+  const requests: FakeApprovalRequest[] = [];
+  return {
+    requests,
+    async request(input) {
+      requests.push(input);
+      return typeof decide === "function" ? await decide(input) : decide;
+    },
+    resolve() {
+      return false;
     },
   };
 }
@@ -1104,4 +1147,372 @@ test("没有 sandbox：不执行工具、不发 ToolCall，只发说明消息并
   const messages = studio.state.messages.filter((m) => m.author === "jinjianceng");
   assert.ok(messages.some((m) => m.kind === "chat" && m.text.includes("没接沙盒")));
   assert.ok(messages.some((m) => m.text === "沙盒没接上，我先把方案写出来。"));
+});
+
+// ───────────────────────── 17. 审批：批准 ─────────────────────────
+
+test("审批：llm + commands 下 run_command 先 pending，批准后执行变 ok", async () => {
+  const studio = makeStudio();
+  let pendingStatus: string | undefined;
+  let runningStatus: string | undefined;
+  const sandbox = fakeSandbox(() => {
+    runningStatus = studio.state.toolCalls.at(-1)?.status;
+    return { status: "ok", exitCode: 0, output: "all pass" };
+  });
+  const approvals = fakeApprovals(() => {
+    pendingStatus = studio.state.toolCalls.at(-1)?.status;
+    return "approved";
+  });
+  const brain = scriptedBrain((ctx) => {
+    if (ctx.trigger.kind === "user_message") {
+      return [toolTurn("run_command", { cmd: "node", args: ["--test"] })];
+    }
+    if (ctx.trigger.kind === "tool_result") return [message("测试全过。")];
+    return [];
+  }, "llm");
+  const driver = makeDriver(studio, brain, {
+    sandbox,
+    approvals,
+    approvalMode: () => "commands",
+  });
+  const task = newTask(studio);
+  studio.updateTaskStage(task.id, "working", "jinjianceng");
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "跑个测试",
+    mentions: ["jinjianceng"],
+  });
+  await driver.whenIdle();
+
+  // 审批阶段：先 pending；通过后 startToolCall 才执行。
+  assert.equal(pendingStatus, "pending");
+  assert.equal(runningStatus, "running");
+  assert.equal(approvals.requests.length, 1);
+
+  const call = studio.state.toolCalls.at(-1);
+  assert.ok(call);
+  assert.equal(approvals.requests[0]?.callId, call.id);
+  assert.equal(approvals.requests[0]?.mode, "commands");
+  assert.equal(approvals.requests[0]?.tool, "run_command");
+  assert.equal(approvals.requests[0]?.catId, "jinjianceng");
+  assert.equal(approvals.requests[0]?.label, "运行 node --test");
+  assert.equal(sandbox.calls.length, 1);
+  assert.equal(call.status, "ok");
+  assert.equal(call.exitCode, 0);
+  assert.equal(call.output, "all pass");
+
+  const toolMessages = studio.state.messages.filter((m) => m.kind === "tool");
+  assert.equal(toolMessages.length, 2);
+  assert.equal(toolMessages[0]?.text, "等你批准：运行 node --test");
+  assert.equal(toolMessages[1]?.toolCallId, call.id);
+
+  // 回喂：第二次 think 收到 tool_result。
+  assert.equal(brain.calls.length, 2);
+  const second = brain.calls[1];
+  assert.ok(second);
+  assert.equal(second.trigger.kind, "tool_result");
+  assert.deepEqual(second.trigger.toolResults, [
+    {
+      callId: call.id,
+      tool: "run_command",
+      status: "ok",
+      output: "all pass",
+      exitCode: 0,
+    },
+  ]);
+  assert.ok(studio.state.messages.some((m) => m.text === "测试全过。"));
+  assert.equal(task.stage, "working");
+  assert.equal(studio.state.typing[ROOM_ID], null);
+});
+
+// ───────────────────────── 18. 审批：拒绝 ─────────────────────────
+
+test("审批：拒绝时不执行 sandbox，ToolCall=rejected 且 rejected 计入回喂", async () => {
+  const studio = makeStudio();
+  const sandbox = fakeSandbox();
+  const approvals = fakeApprovals("rejected");
+  const brain = scriptedBrain((ctx) => {
+    if (ctx.trigger.kind === "user_message") {
+      return [toolTurn("run_command", { cmd: "node", args: ["--test"] })];
+    }
+    if (ctx.trigger.kind === "tool_result") return [message("那我先写方案。")];
+    return [];
+  }, "llm");
+  const driver = makeDriver(studio, brain, {
+    sandbox,
+    approvals,
+    approvalMode: () => "commands",
+  });
+  const task = newTask(studio);
+  studio.updateTaskStage(task.id, "working", "jinjianceng");
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "跑个测试",
+    mentions: ["jinjianceng"],
+  });
+  await driver.whenIdle();
+
+  assert.equal(approvals.requests.length, 1);
+  assert.equal(sandbox.calls.length, 0, "被拒绝时绝不能执行 sandbox");
+
+  const call = studio.state.toolCalls.at(-1);
+  assert.ok(call);
+  assert.equal(call.status, "rejected");
+  assert.equal(call.exitCode, undefined);
+  assert.equal(call.output, "铲屎官拒绝了这次执行");
+
+  const toolMessages = studio.state.messages.filter((m) => m.kind === "tool");
+  assert.equal(toolMessages.length, 2);
+  assert.equal(toolMessages[0]?.text, "等你批准：运行 node --test");
+  assert.equal(toolMessages[1]?.toolCallId, call.id);
+  assert.equal(toolMessages[1]?.text, "铲屎官拒绝了这次执行，我换个办法。");
+
+  assert.equal(brain.calls.length, 2);
+  const second = brain.calls[1];
+  assert.ok(second);
+  assert.equal(second.trigger.kind, "tool_result");
+  assert.equal(second.trigger.toolResults?.[0]?.callId, call.id);
+  assert.equal(second.trigger.toolResults?.[0]?.status, "rejected");
+  assert.equal(second.trigger.toolResults?.[0]?.output, "铲屎官拒绝了这次执行");
+  assert.ok(studio.state.messages.some((m) => m.text === "那我先写方案。"));
+  assert.equal(task.stage, "working");
+});
+
+// ───────────────────────── 19. 审批只对 llm 生效 ─────────────────────────
+
+test("审批只对 llm 生效：mode=auto 与 mock 剧本都不进审批、直接执行", async () => {
+  // case 1: llm + auto（即使注入了 approvals）→ 直接执行。
+  {
+    const studio = makeStudio();
+    const sandbox = fakeSandbox();
+    const approvals = fakeApprovals("rejected");
+    const brain = scriptedBrain(
+      (ctx) =>
+        ctx.trigger.kind === "user_message"
+          ? [toolTurn("run_command", { cmd: "node", args: ["--test"] })]
+          : [],
+      "llm",
+    );
+    const driver = makeDriver(studio, brain, {
+      sandbox,
+      approvals,
+      approvalMode: () => "auto",
+    });
+    driver.submit({
+      type: "user_message",
+      roomId: ROOM_ID,
+      text: "@烁烁 跑一下",
+      mentions: ["shuoshuo"],
+    });
+    await driver.whenIdle();
+    assert.equal(approvals.requests.length, 0);
+    assert.equal(sandbox.calls.length, 1);
+    assert.equal(studio.state.toolCalls.at(-1)?.status, "ok");
+  }
+
+  // case 2: mock 剧本 + mode=commands（approvals 也在）→ 永远自动放行。
+  {
+    const studio = makeStudio();
+    const sandbox = fakeSandbox();
+    const approvals = fakeApprovals("rejected");
+    const brain = scriptedBrain((ctx) =>
+      ctx.trigger.kind === "user_message"
+        ? [toolTurn("run_command", { cmd: "node", args: ["--test"] })]
+        : [],
+    );
+    const driver = makeDriver(studio, brain, {
+      sandbox,
+      approvals,
+      approvalMode: () => "commands",
+    });
+    driver.submit({
+      type: "user_message",
+      roomId: ROOM_ID,
+      text: "@烁烁 跑一下",
+      mentions: ["shuoshuo"],
+    });
+    await driver.whenIdle();
+    assert.equal(approvals.requests.length, 0);
+    assert.equal(sandbox.calls.length, 1);
+    assert.equal(studio.state.toolCalls.at(-1)?.status, "ok");
+  }
+});
+
+// ───────────────────────── 20. ReAct 回喂：handoff 正常处理 ─────────────────────────
+
+test("回喂循环：tool_result 轮的 message + handoff 按正常 turn 处理，工具轮不推进 stage", async () => {
+  const studio = makeStudio();
+  const sandbox = fakeSandbox();
+  const brain = scriptedBrain((ctx) => {
+    if (ctx.cat.id !== "xianxian") return [];
+    if (ctx.trigger.kind === "user_message") return [toolTurn("list_files", {})];
+    if (ctx.trigger.kind === "tool_result") {
+      return [
+        message("看完了，交给金渐层。"),
+        {
+          kind: "handoff",
+          to: "jinjianceng",
+          card: card("实现 remember-me"),
+          text: "@金渐层 交给你。",
+        },
+      ];
+    }
+    return [];
+  }, "llm");
+  const driver = makeDriver(studio, brain, { sandbox });
+  const task = newTask(studio); // stage=intake
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "@宪宪 先看看沙盒里有什么",
+    mentions: ["xianxian"],
+  });
+  await driver.whenIdle();
+
+  const xianCalls = brain.callsFor("xianxian");
+  assert.equal(xianCalls.length, 2);
+  assert.equal(xianCalls[0]?.trigger.kind, "user_message");
+  assert.equal(xianCalls[1]?.trigger.kind, "tool_result");
+  // 两次 think 时 stage 都还是 intake：工具轮本身没有推进阶段。
+  assert.equal(xianCalls[0]?.stageAtCall, "intake");
+  assert.equal(xianCalls[1]?.stageAtCall, "intake");
+
+  const handoffs = studio.state.handoffs.filter((handoff) => handoff.taskId === task.id);
+  assert.equal(handoffs.length, 1);
+  assert.equal(handoffs[0]?.from, "xianxian");
+  assert.equal(handoffs[0]?.to, "jinjianceng");
+  assert.ok(studio.state.messages.some((m) => m.text === "看完了，交给金渐层。"));
+  assert.ok(
+    studio.state.messages.some(
+      (m) => m.kind === "handoff" && m.handoffId === handoffs[0]?.id,
+    ),
+  );
+  assert.ok(studio.state.toolCalls.every((call) => call.status === "ok"));
+  // handoff 正常驱动阶段（说明 afterTurns 只在回喂循环结束后跑了一次）。
+  assert.notEqual(task.stage, "intake");
+});
+
+// ───────────────────────── 21. ReAct 回喂上限 ─────────────────────────
+
+test("回喂循环上限 3：brain 每轮都给工具时最多 4 次 think / 4 次工具", async () => {
+  const studio = makeStudio();
+  const sandbox = fakeSandbox();
+  const brain = scriptedBrain(
+    (ctx) =>
+      ctx.trigger.kind === "user_message" || ctx.trigger.kind === "tool_result"
+        ? [toolTurn("list_files", {})]
+        : [],
+    "llm",
+  );
+  const driver = makeDriver(studio, brain, { sandbox });
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "@烁烁 一直看",
+    mentions: ["shuoshuo"],
+  });
+  await driver.whenIdle();
+
+  const shuoCalls = brain.callsFor("shuoshuo");
+  assert.equal(shuoCalls.length, 4, "首轮 + 3 次回喂");
+  assert.equal(shuoCalls[0]?.trigger.kind, "user_message");
+  assert.deepEqual(
+    shuoCalls.slice(1).map((call) => call.trigger.kind),
+    ["tool_result", "tool_result", "tool_result"],
+  );
+  assert.equal(studio.state.toolCalls.length, 4);
+  assert.ok(studio.state.toolCalls.every((call) => call.status === "ok"));
+});
+
+// ───────────────────────── 22. recentToolResults ─────────────────────────
+
+test("recentToolResults：最近已结束回执按时间正序、字段完整且不含 pending/running", async () => {
+  const studio = makeStudio();
+  let captured: ToolRunResult[] | undefined;
+  const sandbox = fakeSandbox((tool) =>
+    tool === "read_file"
+      ? { status: "ok", output: "hello" }
+      : { status: "ok", output: "a.js" },
+  );
+  const brain = scriptedBrain((ctx) => {
+    if (ctx.trigger.kind === "user_message") {
+      return [toolTurn("read_file", { path: "src/remember.js" }), toolTurn("list_files", {})];
+    }
+    if (ctx.trigger.kind === "tool_result") {
+      captured = ctx.recentToolResults;
+      return [message("知道了。")];
+    }
+    return [];
+  }, "llm");
+  const driver = makeDriver(studio, brain, { sandbox });
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "@烁烁 看看沙盒",
+    mentions: ["shuoshuo"],
+  });
+  await driver.whenIdle();
+
+  assert.ok(captured);
+  const calls = studio.state.toolCalls;
+  assert.equal(calls.length, 2);
+  assert.deepEqual(captured, [
+    { callId: calls[0]?.id, tool: "read_file", status: "ok", output: "hello" },
+    { callId: calls[1]?.id, tool: "list_files", status: "ok", output: "a.js" },
+  ]);
+  // 结果里没有 exitCode 时，回执对象也不带该字段。
+  assert.equal(captured[0]?.exitCode, undefined);
+  assert.equal(captured[0]?.callId, calls[0]?.id);
+  assert.equal(captured[1]?.callId, calls[1]?.id);
+});
+
+// ───────────────────────── 23. 审批策略矩阵 ─────────────────────────
+
+test("审批策略：commands 只批 run_command，all 连 write_file 也批", async () => {
+  async function run(mode: ToolApprovalMode) {
+    const studio = makeStudio();
+    const sandbox = fakeSandbox();
+    const approvals = fakeApprovals("approved");
+    const brain = scriptedBrain(
+      (ctx) =>
+        ctx.trigger.kind === "user_message"
+          ? [toolTurn("write_file", { path: "src/remember.js", content: "// v2" })]
+          : [],
+      "llm",
+    );
+    const driver = makeDriver(studio, brain, {
+      sandbox,
+      approvals,
+      approvalMode: () => mode,
+    });
+    driver.submit({
+      type: "user_message",
+      roomId: ROOM_ID,
+      text: "@烁烁 改文件",
+      mentions: ["shuoshuo"],
+    });
+    await driver.whenIdle();
+    return { approvals, sandbox, studio };
+  }
+
+  // commands：write_file 不在审批范围 → 直接执行。
+  const commands = await run("commands");
+  assert.equal(commands.approvals.requests.length, 0);
+  assert.equal(commands.sandbox.calls.length, 1);
+  assert.equal(commands.studio.state.toolCalls.at(-1)?.status, "ok");
+
+  // all：write_file 也要审批 → 批准后执行。
+  const all = await run("all");
+  assert.equal(all.approvals.requests.length, 1);
+  assert.equal(all.approvals.requests[0]?.tool, "write_file");
+  assert.equal(all.approvals.requests[0]?.mode, "all");
+  assert.equal(all.sandbox.calls.length, 1);
+  assert.equal(all.studio.state.toolCalls.at(-1)?.status, "ok");
 });

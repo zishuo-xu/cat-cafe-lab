@@ -211,6 +211,7 @@ export type TriggerKind =
   | "handoff"
   | "artifact"
   | "review_result"
+  | "tool_result"
   | "nudge";
 
 export interface Trigger {
@@ -224,6 +225,8 @@ export interface Trigger {
   handoff?: HandoffCard;
   artifact?: Artifact;
   review?: { verdict: ReviewVerdict; findings: ReviewFinding[] };
+  /** trigger.kind === "tool_result" 时，本轮拿到的工具回执。 */
+  toolResults?: ToolRunResult[];
 }
 
 export interface TurnContext {
@@ -238,6 +241,8 @@ export interface TurnContext {
   /** 当前任务的交接卡与产物。 */
   handoffs: Handoff[];
   artifacts: Artifact[];
+  /** 最近的工具回执（真实模式下用来继续推理）。 */
+  recentToolResults: ToolRunResult[];
   /** 场景数据（mock brain 用于取台词模板）。 */
   scenario: Scenario | null;
 }
@@ -362,6 +367,8 @@ export interface StudioSettings {
   stallMs: number;
   /** 环境变量默认：是否允许沙盒工具执行。 */
   toolsEnabled?: boolean;
+  /** 环境变量默认审批策略。 */
+  toolApproval?: ToolApprovalMode;
 }
 
 // ───────────────────────── 运行时设置（设置面板） ─────────────────────────
@@ -379,7 +386,7 @@ export interface ToolCall {
   tool: ToolName;
   input: Record<string, unknown>;
   label: string;
-  status: "running" | "ok" | "error";
+  status: "pending" | "running" | "ok" | "error" | "rejected";
   exitCode?: number;
   /** 截断后的输出（stdout + stderr）。 */
   output?: string;
@@ -393,7 +400,7 @@ export interface SandboxFile {
 }
 
 export interface ToolResult {
-  status: "ok" | "error";
+  status: "ok" | "error" | "rejected";
   exitCode?: number;
   output: string;
 }
@@ -401,6 +408,32 @@ export interface ToolResult {
 /** driver 只依赖这个接口，测试时可以塞一个假的。 */
 export interface SandboxRunner {
   execute(tool: ToolName, input: Record<string, unknown>): Promise<ToolResult>;
+}
+
+/** 一次工具执行的回执，喂回给 brain 做下一步判断。 */
+export interface ToolRunResult {
+  callId: string;
+  tool: ToolName;
+  status: ToolResult["status"];
+  exitCode?: number;
+  output: string;
+}
+
+/** 审批策略：auto=全自动；commands=跑命令要批；all=所有工具都要批。 */
+export type ToolApprovalMode = "auto" | "commands" | "all";
+
+export type ToolApprovalDecision = "approved" | "rejected";
+
+/** 审批闸门：driver 发起，HTTP 层负责 resolve（铲屎官点按钮）。 */
+export interface ApprovalGate {
+  request(input: {
+    callId: string;
+    mode: ToolApprovalMode;
+    tool: ToolName;
+    label: string;
+    catId: CatId;
+  }): Promise<ToolApprovalDecision>;
+  resolve(callId: string, decision: ToolApprovalDecision): boolean;
 }
 
 /** 可安全回传给前端 / 落盘的设置（绝不含 apiKey）。 */
@@ -417,6 +450,8 @@ export interface PublicSettings {
   stallMs: number;
   /** 是否允许猫在沙盒里执行工具（写文件 / 跑命令）。 */
   toolsEnabled: boolean;
+  /** 审批策略：auto / commands / all。 */
+  toolApproval: ToolApprovalMode;
   port: number;
   dataDir: string;
   version: string;
@@ -430,6 +465,7 @@ export interface SettingsPatch {
   mode?: BrainMode;
   speed?: Speed;
   toolsEnabled?: boolean;
+  toolApproval?: ToolApprovalMode;
   llm?: {
     baseUrl?: string;
     model?: string;
@@ -474,4 +510,7 @@ export type DriverFactory = (deps: {
   sandbox?: SandboxRunner;
   /** 运行时开关：设置面板里可以关掉工具执行。 */
   toolsEnabled?: () => boolean;
+  /** 审批策略；mock 剧本里的工具默认自动放行。 */
+  approvalMode?: () => ToolApprovalMode;
+  approvals?: ApprovalGate;
 }) => Driver;

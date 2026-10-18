@@ -27,6 +27,7 @@
 - **决策日志 + 共享记忆**：任务结束宪宪落 decision 和 lesson，后续任务会被大脑读到。
 - **故障与恢复**：`remember_me` 剧本里埋了一次"交接漏 @"，任务会真卡住——点「催一下」才恢复。
 - **真实工具**：金渐层在独立沙盒里真的写文件、真的跑测试；砚砚的 review 基于真实退出码和失败输出。
+- **真实模式工具调用 + 审批**：模型可以主动请求工具，执行结果回喂给它继续推理；跑命令前可以挂起等铲屎官批准。
 
 ---
 
@@ -45,7 +46,7 @@ node src/main.ts      # 或 pnpm start
 点「＋ 新任务」→ 选「记住我」示例 → 「让猫猫开工」，然后看着就行。
 
 ```bash
-node --test tests/    # 113 个测试
+node --test tests/    # 132 个测试
 npx tsc --noEmit      # 类型检查
 ```
 
@@ -115,6 +116,27 @@ run_command node --test ...      ✓ exit 0（砚砚放行）
 ![真实工具调用](docs/images/tools-run.png)
 
 ![沙盒文件](docs/images/sandbox.png)
+
+---
+
+## 真实模式：猫会自己决定用工具（需要铲屎官点头）
+
+演出模式里的工具节拍是剧本写好的。到了真实模式，模型可以**自己请求工具**：
+
+1. 模型的输出里带一个 `kind:"tool"` 的 turn（比如「跑一下 `node --test test/export.test.js`」）；
+2. driver 执行后，把 `exitCode` + 输出作为 `tool_result` 再喂回给同一只猫——它可以据此决定下一步
+   （ReAct 循环，最多连续 3 轮）；
+3. 模型主动发起的 `run_command`（按策略也可以是所有工具）会先挂起成 **pending**，
+   左上角出现 `Needs Me`，工具卡上出现「批准执行 / 拒绝」；
+4. 批准 → 真实执行；拒绝 → 不执行，把 `rejected` 回喂给模型，让它换方案。
+
+审批策略在设置里：`auto`（全自动）/ `commands`（跑命令才批，默认）/ `all`（全批）。
+**剧本里的工具永远自动放行**——脚本是作者写的，模型决定才需要人把关。
+
+![待审批的工具调用](docs/images/approval.png)
+
+> 真实模型效果取决于 provider 是否能稳定输出 JSON 数组；当前用本地假端点端到端验证过完整链路，
+> 失败会自动降级回演出模式。真机接真实 provider 时，建议先用低风险任务试。
 
 ---
 
@@ -213,6 +235,7 @@ node src/main.ts
 | 猫猫与模型 | 改名字/称号/性格/口头禅/招呼语/主题色；真实模式下每只猫独立模型与温度 |
 | 剧本库 | 查看/导出/删除自定义剧本，导入 JSON 剧本 |
 | 工具执行 | 开关沙盒工具（写文件 / 跑命令）；关掉后猫只产出文字方案 |
+| 审批策略 | auto / commands / all；只对真实模式下模型主动发起的工具生效 |
 
 底部还有只读的运行信息（版本、端口、数据目录、Node、启动时间、stallMs）。
 只有 `mode / speed / baseUrl / model / temperature` 会落盘到 `data/settings.json`（0600），key 永远只在内存。
@@ -281,7 +304,7 @@ src/domain/types.ts   唯一契约
 - **演出模式是半脚本的**：猫的反应由场景数据 + 当前阶段决定，不会真的理解任意新需求。
   这是为了让"没有 key 也能完整演示协作流程"；接了真实模型才会换脑子。
 - **只在自带沙盒里干活**：猫会真的改 `data/workspace/` 里的 mini 项目、跑它的测试，
-  但**不会碰你的仓库**。真实模式下模型暂不产生工具调用，工具节拍由剧本驱动。
+  但**不会碰你的仓库**。真实模式下模型可以请求工具，但跑命令默认要铲屎官批准。
 - **本地单人**：没有鉴权、没有多用户、没有数据库。JSON 文件就是全部持久化。
 - **剧本台词不会自动改名**：改猫名后，@ 路由、名册、消息作者都用新名字，但剧本里写死的旧名字不会自动替换（剧本是数据，不是模板变量）。
 - **剧本要自己写**：内置两个（记住我、CSV 导出），也可以在「剧本库」导入 JSON；不写剧本的需求会走通用兜底回复。
@@ -300,7 +323,7 @@ cat-cafe-lab/
 │   ├── agents/        personas.ts、scenarios.ts、mock-brain.ts、llm-brain.ts
 │   └── main.ts
 ├── public/            index.html、app.js、styles.css、avatars.js
-├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / smoke（113 个）
+├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / smoke（132 个）
 ├── docs/              architecture.md、llm.md、images/
 ├── data/              studio.json、workspace/（gitignore）
 └── PLAN.md            设计与分工记录

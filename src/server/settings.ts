@@ -1,6 +1,6 @@
 /** 从环境变量解析运行配置。API key 只存在内存里，绝不落盘。 */
 
-import type { LlmSettings, StudioSettings } from "../domain/types.ts";
+import type { LlmSettings, StudioSettings, ToolApprovalMode } from "../domain/types.ts";
 
 export function readSettings(env: NodeJS.ProcessEnv = process.env): StudioSettings {
   const port = Number.parseInt(env.PORT ?? "4318", 10);
@@ -27,5 +27,9 @@ export function readSettings(env: NodeJS.ProcessEnv = process.env): StudioSettin
     llm,
     stallMs: Number.isFinite(stallMs) && stallMs > 0 ? stallMs : 12000,
     toolsEnabled: env.CATCAFE_TOOLS !== "0",
+    toolApproval:
+      env.CATCAFE_APPROVAL === "auto" || env.CATCAFE_APPROVAL === "all"
+        ? env.CATCAFE_APPROVAL
+        : "commands",
   };
 }

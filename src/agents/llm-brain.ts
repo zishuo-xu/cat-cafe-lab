@@ -9,7 +9,8 @@
  *
  * 模型被要求只输出一个 CatTurn[] JSON 数组。解析后逐条做结构校验：
  * kind 必须在白名单内，字段类型必须正确，未知 kind 直接丢弃；无法产出任何合法
- * turn 时视为失败并降级。
+ * turn 时视为失败并降级。工具调用（tool turn）同样走白名单 + input 结构校验，
+ * 执行回执会通过 ctx.recentToolResults / trigger.toolResults 喂回 prompt。
  */
 
 import type {
@@ -25,13 +26,15 @@ import type {
   ReviewVerdict,
   Role,
   TaskStage,
+  ToolName,
+  ToolRunResult,
   Trigger,
   TurnContext,
 } from "../domain/types.ts";
 
 /** 默认请求超时：20s。真实模型偶尔慢，再久就不如先让猫猫动起来。 */
 export const DEFAULT_TIMEOUT_MS = 20_000;
-/** 默认 max_tokens：一轮最多 3 个 turn，1600 足够。 */
+/** 默认 max_tokens：一轮最多 3~4 个 turn（含工具调用），1600 足够。 */
 export const DEFAULT_MAX_TOKENS = 1600;
 /** 一次最多接受的 turn 数，防止模型刷屏。 */
 export const MAX_TURNS = 6;
@@ -47,6 +50,13 @@ const ARTIFACT_KINDS: readonly ArtifactKind[] = [
 ];
 const MEMORY_KINDS: readonly MemoryKind[] = ["decision", "lesson", "preference"];
 const REVIEW_VERDICTS: readonly ReviewVerdict[] = ["approve", "request_changes"];
+/** 沙盒工具白名单；与 src/tools/sandbox.ts 保持一致。 */
+const TOOL_NAMES: readonly ToolName[] = [
+  "read_file",
+  "write_file",
+  "list_files",
+  "run_command",
+];
 
 const ROLE_LABEL: Record<Role, string> = {
   architect: "主架构师 / 主理猫",
@@ -252,6 +262,8 @@ function parseTurn(item: unknown, ctx: TurnContext): CatTurn | null {
   switch (item.kind) {
     case "message":
       return parseMessageTurn(item, ctx);
+    case "tool":
+      return parseToolTurn(item, ctx);
     case "handoff":
       return parseHandoffTurn(item, ctx);
     case "artifact":
@@ -275,6 +287,32 @@ function parseMessageTurn(
   const text = requiredText(item.text);
   if (!text) return null;
   const turn: CatTurn = { kind: "message", text };
+  const mentions = parseMentions(item.mentions, ctx);
+  if (mentions) turn.mentions = mentions;
+  const delay = parseDelay(item.delayMs);
+  if (delay !== undefined) turn.delayMs = delay;
+  return turn;
+}
+
+function parseToolTurn(
+  item: Record<string, unknown>,
+  ctx: TurnContext,
+): CatTurn | null {
+  const rawTool = item.tool;
+  if (typeof rawTool !== "string" || !TOOL_NAMES.includes(rawTool as ToolName)) {
+    // 未知工具直接丢弃，保留同轮其他合法 turn。
+    return null;
+  }
+  const tool = rawTool as ToolName;
+
+  const input = parseToolInput(tool, item.input);
+  if (!input) return null;
+
+  const turn: CatTurn = { kind: "tool", tool, input };
+  const label = requiredText(item.label);
+  if (label) turn.label = label;
+  const text = requiredText(item.text);
+  if (text) turn.text = text;
   const mentions = parseMentions(item.mentions, ctx);
   if (mentions) turn.mentions = mentions;
   const delay = parseDelay(item.delayMs);
@@ -380,6 +418,52 @@ function parseMemoryTurn(item: Record<string, unknown>): CatTurn | null {
 }
 
 // ───────────────────────── 字段校验 ─────────────────────────
+
+/**
+ * 工具 input 结构校验，与 src/tools/sandbox.ts 的契约对齐：
+ * - read_file   { path }
+ * - write_file  { path, content }（content 允许空字符串，表示清空文件）
+ * - list_files  {}（多余参数忽略）
+ * - run_command { cmd, args? }（args 必须是字符串数组，缺省 []）
+ * 只做结构校验；路径越界 / 命令白名单留给沙盒，让它把错误回执喂回来。
+ */
+function parseToolInput(
+  tool: ToolName,
+  value: unknown,
+): Record<string, unknown> | null {
+  if (value !== undefined && !isRecord(value)) return null;
+  const input = value ?? {};
+
+  switch (tool) {
+    case "read_file": {
+      const path = requiredText(input.path);
+      return path ? { path } : null;
+    }
+    case "write_file": {
+      const path = requiredText(input.path);
+      if (!path) return null;
+      // 空文件是合法写入。
+      if (typeof input.content !== "string") return null;
+      return { path, content: input.content };
+    }
+    case "list_files":
+      return {};
+    case "run_command": {
+      const cmd = requiredText(input.cmd);
+      if (!cmd) return null;
+      const rawArgs = input.args;
+      const args: string[] = [];
+      if (rawArgs !== undefined) {
+        if (!Array.isArray(rawArgs)) return null;
+        for (const arg of rawArgs) {
+          if (typeof arg !== "string") return null;
+          args.push(arg);
+        }
+      }
+      return { cmd, args };
+    }
+  }
+}
 
 function parseCard(value: unknown): HandoffCard | null {
   if (!isRecord(value)) return null;
@@ -537,16 +621,30 @@ function buildSystemPrompt(ctx: TurnContext, model: string): string {
     "",
     "【输出格式 · 必须严格遵守】",
     "只输出一个 JSON 数组，不要 markdown 代码围栏，不要任何解释文字。",
-    "数组元素是下面 6 种 turn 之一，只能输出 1~3 个 turn：",
+    "数组元素是下面 7 种 turn 之一；一次输出 1~4 个 turn（工具轮可以连发多个，总共不超过 6 个）：",
     '1. {"kind":"message","text":"要说的话","mentions":["catId"]}',
     '2. {"kind":"handoff","to":"catId","card":{"what":"做什么","why":"为什么","tradeoff":"取舍","openQuestions":["未决问题"],"nextAction":"下一步"},"text":"伴随说明"}',
     '3. {"kind":"artifact","artifact":{"kind":"spec|design|patch|review|decision","title":"标题","body":"正文"},"text":"说明","mentions":["catId"]}',
     '4. {"kind":"review","verdict":"approve|request_changes","title":"结论标题","findings":[{"severity":"blocker|minor","title":"问题","detail":"细节"}],"text":"说明","mentions":["catId"]}',
     '5. {"kind":"decision","artifact":{"title":"标题","body":"正文"},"text":"说明","memory":[{"kind":"decision|lesson|preference","title":"标题","body":"正文","tags":["标签"]}]}',
     '6. {"kind":"memory","memory":{"kind":"decision|lesson|preference","title":"标题","body":"正文","tags":["标签"]},"text":"说明"}',
+    '7. {"kind":"tool","tool":"read_file|write_file|list_files|run_command","input":{...},"label":"人话摘要","text":"说明"}',
+    "",
+    "【工具目录】（只有在确实需要读写沙盒文件 / 跑命令时才用；普通讨论不需要工具）",
+    '1. read_file —— 读取沙盒工作区里的文件。input 示例：{"path":"src/app.js"}',
+    '2. write_file —— 写入或覆盖文件（会真实改动文件内容）。input 示例：{"path":"src/remember.js","content":"完整文件内容"}',
+    '3. list_files —— 列出沙盒里的文件与大小。input 示例：{}',
+    '4. run_command —— 在工作区执行命令（仅白名单 node / npm，不走 shell）。input 示例：{"cmd":"node","args":["--version"]}',
+    "路径必须相对沙盒根目录，禁止绝对路径和 ..；write_file 的 content 必须是完整文件内容。",
+    "风险：write_file 会真实改文件，run_command 会真实执行命令，这两个工具每次执行都可能需要铲屎官审批；被拒绝时回执 status=rejected。",
+    "工具使用纪律：",
+    '- 一轮可以同时请求多个工具，会按数组顺序执行；执行完会用 trigger.kind="tool_result" 把回执再发给你一次。',
+    "- 工具调用最多连续 3 轮，之后必须给出结论或交接，不要无限试探。",
+    "- 收到 status=rejected 时不要重复申请同一个命令 / 同一个写入；换方案，或直接向铲屎官说明被拒原因与替代做法。",
+    "- 读文件、看目录这类低风险操作尽量一轮批量做完，不要一轮一个。",
     "",
     "【规则】",
-    "- kind 只能是 message / handoff / artifact / review / decision / memory；其他一律不要输出。",
+    "- kind 只能是 message / tool / handoff / artifact / review / decision / memory；其他一律不要输出。",
     "- mentions、handoff.to 只能用上面列出的 catId，不要用猫的名字；handoff 不能交给自己。",
     "- handoff 卡片的 what / why / tradeoff / openQuestions / nextAction 五栏必须齐全，openQuestions 必须是字符串数组。",
     "- 全部用中文，保持角色人格和口头禅，不要出戏；每条 text 控制在 120 字以内。",
@@ -557,7 +655,15 @@ function buildSystemPrompt(ctx: TurnContext, model: string): string {
 }
 
 function buildUserPrompt(ctx: TurnContext): string {
-  const { task, recentMessages, memory, handoffs, artifacts, trigger } = ctx;
+  const {
+    task,
+    recentMessages,
+    memory,
+    handoffs,
+    artifacts,
+    recentToolResults,
+    trigger,
+  } = ctx;
 
   const messageLines = recentMessages.map((message: Message) => {
     const who = authorLabel(message.author, ctx);
@@ -579,6 +685,11 @@ function buildUserPrompt(ctx: TurnContext): string {
     (entry) => `- [${entry.kind}] ${clip(entry.title, 100)}：${clip(entry.body, 220)}`,
   );
 
+  // 最近工具回执：喂回给模型判断下一步；单条 output 截断，最多保留 8 条。
+  const toolResultLines = recentToolResults
+    .slice(-8)
+    .map((result) => renderToolResultLine(result));
+
   const sections = [
     "【本任务已有的交接卡】",
     handoffLines.length > 0 ? handoffLines.join("\n") : "（还没有交接卡）",
@@ -588,6 +699,11 @@ function buildUserPrompt(ctx: TurnContext): string {
     "",
     "【相关共享记忆】",
     memoryLines.length > 0 ? memoryLines.join("\n") : "（没有相关记忆）",
+    "",
+    "【工具结果（最近的执行回执）】",
+    toolResultLines.length > 0
+      ? toolResultLines.join("\n")
+      : "（还没有工具结果）",
     "",
     "【触发这次回复的事件】",
     describeTrigger(trigger, ctx),
@@ -624,7 +740,24 @@ function describeTrigger(trigger: Trigger, ctx: TurnContext): string {
       );
     }
   }
+  if (trigger.toolResults && trigger.toolResults.length > 0) {
+    lines.push(`- 本轮工具回执（${trigger.toolResults.length} 条）：`);
+    for (const result of trigger.toolResults.slice(0, 8)) {
+      lines.push(renderToolResultLine(result, "  "));
+    }
+  }
   return lines.join("\n");
+}
+
+/** 一条工具回执的单行摘要：callId / 工具 / 状态 / 退出码 / 截断输出。 */
+function renderToolResultLine(result: ToolRunResult, indent = ""): string {
+  const meta = [
+    `callId=${result.callId}`,
+    `tool=${result.tool}`,
+    `status=${result.status}`,
+  ];
+  if (result.exitCode !== undefined) meta.push(`exitCode=${result.exitCode}`);
+  return `${indent}- ${meta.join(" ")}｜output: ${clip(result.output || "(无输出)", 500)}`;
 }
 
 function renderCard(card: HandoffCard): string {

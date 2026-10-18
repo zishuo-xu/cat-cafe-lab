@@ -26,6 +26,7 @@ import type {
   Role,
   Room,
   Task,
+  ToolRunResult,
   Trigger,
   TurnContext,
 } from "../src/domain/types.ts";
@@ -108,6 +109,7 @@ function makeContext(overrides: Partial<TurnContext> = {}): TurnContext {
     ],
     handoffs: [],
     artifacts: [],
+    recentToolResults: [],
     scenario: null,
     ...overrides,
   };
@@ -663,6 +665,241 @@ describe("llm-brain · 每猫模型与温度", () => {
         for (const request of fake.requests) {
           assert.equal(bodyOf(request).temperature, SETTINGS.temperature);
         }
+      },
+    );
+  });
+});
+
+describe("llm-brain · 工具调用与 tool_result 回喂", () => {
+  const MESSAGE_CONTENT = JSON.stringify([{ kind: "message", text: "收到。" }]);
+
+  interface RecordedBody {
+    model: string;
+    messages: Array<{ role: string; content: string }>;
+  }
+
+  function bodyOf(request: RecordedRequest): RecordedBody {
+    return JSON.parse(request.body) as RecordedBody;
+  }
+
+  function userPrompt(body: RecordedBody): string {
+    return body.messages[1]?.content ?? "";
+  }
+
+  function systemPrompt(body: RecordedBody): string {
+    return body.messages[0]?.content ?? "";
+  }
+
+  test("假端点返回含 tool turn 的 JSON → 解析出全部合法工具调用", async () => {
+    const content = JSON.stringify([
+      {
+        kind: "tool",
+        tool: "read_file",
+        input: { path: "src/app.js" },
+        label: "看登录页",
+        text: "先看现有实现。",
+      },
+      {
+        kind: "tool",
+        tool: "write_file",
+        input: { path: "src/remember.js", content: "export const DAYS = 7;\n" },
+      },
+      { kind: "tool", tool: "list_files", input: {} },
+      { kind: "tool", tool: "run_command", input: { cmd: "node", args: ["--version"] } },
+    ]);
+
+    await withFake(
+      (_req, res) => sendOpenAi(res, content),
+      async (fake) => {
+        const fallback = makeFallback();
+        const brain = createLlmBrain(
+          { ...SETTINGS, baseUrl: fake.baseUrl },
+          fallback.brain,
+        );
+        const turns = await brain.think(makeContext());
+
+        assert.equal(fallback.calls(), 0, "合法 tool turn 不应触发降级");
+        assert.equal(turns.length, 4);
+        assert.deepEqual(
+          turns.map((turn) => (turn.kind === "tool" ? turn.tool : `not-tool:${turn.kind}`)),
+          ["read_file", "write_file", "list_files", "run_command"],
+        );
+
+        const read = turns[0];
+        assert.equal(read?.kind, "tool");
+        if (read?.kind === "tool") {
+          assert.deepEqual(read.input, { path: "src/app.js" });
+          assert.equal(read.label, "看登录页");
+          assert.equal(read.text, "先看现有实现。");
+        }
+
+        const write = turns[1];
+        assert.equal(write?.kind, "tool");
+        if (write?.kind === "tool") {
+          assert.equal(write.input["path"], "src/remember.js");
+          assert.match(String(write.input["content"]), /DAYS = 7/);
+          assert.equal(write.label, undefined, "缺省 label 不应被编造");
+        }
+
+        const run = turns[3];
+        assert.equal(run?.kind, "tool");
+        if (run?.kind === "tool") {
+          assert.deepEqual(run.input, { cmd: "node", args: ["--version"] });
+        }
+      },
+    );
+  });
+
+  test("非法 tool turn 被丢弃，同轮合法 turn 保留", async () => {
+    const content = JSON.stringify([
+      { kind: "tool", tool: "delete_everything", input: {} }, // 未知工具
+      { kind: "tool", tool: "write_file", input: { path: "a.js" } }, // 缺 content
+      { kind: "tool", tool: "read_file", input: { content: "x" } }, // 缺 path
+      { kind: "tool", tool: "run_command", input: { args: ["-v"] } }, // 缺 cmd
+      { kind: "tool", tool: "run_command", input: { cmd: "node", args: ["ok", 3] } }, // args 非字符串
+      { kind: "tool", tool: "list_files", input: "all" }, // input 不是对象
+      { kind: "message", text: "好，先看看。" },
+      { kind: "tool", tool: "write_file", input: { path: "empty.js", content: "" } }, // 空文件合法
+    ]);
+
+    await withFake(
+      (_req, res) => sendOpenAi(res, content),
+      async (fake) => {
+        const fallback = makeFallback();
+        const brain = createLlmBrain(
+          { ...SETTINGS, baseUrl: fake.baseUrl },
+          fallback.brain,
+        );
+        const turns = await brain.think(makeContext());
+
+        assert.equal(fallback.calls(), 0, "还有合法 turn 时不应整轮降级");
+        assert.equal(turns.length, 2, `应只剩 message + 空文件写入，实际 ${turns.length}`);
+        assert.equal(turns[0]?.kind, "message");
+        const emptyWrite = turns[1];
+        assert.equal(emptyWrite?.kind, "tool");
+        if (emptyWrite?.kind === "tool") {
+          assert.equal(emptyWrite.tool, "write_file");
+          assert.equal(emptyWrite.input["content"], "");
+        }
+      },
+    );
+  });
+
+  test("system prompt 含 4 个工具、审批风险与 tool_result 回喂纪律", async () => {
+    await withFake(
+      (_req, res) => sendOpenAi(res, MESSAGE_CONTENT),
+      async (fake) => {
+        const fallback = makeFallback();
+        const brain = createLlmBrain(
+          { ...SETTINGS, baseUrl: fake.baseUrl },
+          fallback.brain,
+        );
+        await brain.think(makeContext());
+
+        const request = fake.requests[0];
+        assert.ok(request);
+        const system = systemPrompt(bodyOf(request));
+
+        for (const tool of ["read_file", "write_file", "list_files", "run_command"]) {
+          assert.ok(system.includes(tool), `system prompt 应包含工具 ${tool}`);
+        }
+        // 风险 / 审批
+        assert.match(system, /审批/);
+        assert.match(system, /真实改动文件|真实改文件/);
+        assert.match(system, /真实执行命令/);
+        // 回喂与纪律
+        assert.match(system, /tool_result/);
+        assert.match(system, /rejected/);
+        assert.match(system, /3 轮/);
+        assert.match(system, /不要重复申请/);
+        // schema 里要有第 7 种 turn
+        assert.ok(system.includes('"kind":"tool"'));
+        assert.match(system, /7 种 turn/);
+      },
+    );
+  });
+
+  test("ctx.recentToolResults 会写进 user prompt（callId/tool/status/exitCode/output）", async () => {
+    const recentToolResults: ToolRunResult[] = [
+      {
+        callId: "call_read_1",
+        tool: "read_file",
+        status: "ok",
+        exitCode: 0,
+        output: "console.log('hi')",
+      },
+      {
+        callId: "call_run_2",
+        tool: "run_command",
+        status: "rejected",
+        output: "铲屎官拒绝了这次命令",
+      },
+    ];
+
+    await withFake(
+      (_req, res) => sendOpenAi(res, MESSAGE_CONTENT),
+      async (fake) => {
+        const fallback = makeFallback();
+        const brain = createLlmBrain(
+          { ...SETTINGS, baseUrl: fake.baseUrl },
+          fallback.brain,
+        );
+        await brain.think(makeContext({ recentToolResults }));
+
+        const request = fake.requests[0];
+        assert.ok(request);
+        const user = userPrompt(bodyOf(request));
+
+        assert.match(user, /【工具结果/);
+        assert.match(user, /call_read_1/);
+        assert.match(user, /tool=read_file/);
+        assert.match(user, /status=ok/);
+        assert.match(user, /exitCode=0/);
+        assert.match(user, /console\.log\('hi'\)/);
+        assert.match(user, /call_run_2/);
+        assert.match(user, /status=rejected/);
+        assert.match(user, /铲屎官拒绝了这次命令/);
+      },
+    );
+  });
+
+  test("trigger.kind=tool_result 时本轮 toolResults 也进 prompt", async () => {
+    const ctx = makeContext();
+    const toolResults: ToolRunResult[] = [
+      {
+        callId: "call_write_3",
+        tool: "write_file",
+        status: "ok",
+        output: "已写入 src/remember.js（22 字符）",
+      },
+    ];
+    const trigger: Trigger = {
+      kind: "tool_result",
+      roomId: ctx.room.id,
+      ...(ctx.task ? { taskId: ctx.task.id } : {}),
+      text: "工具执行完成",
+      toolResults,
+    };
+
+    await withFake(
+      (_req, res) => sendOpenAi(res, MESSAGE_CONTENT),
+      async (fake) => {
+        const fallback = makeFallback();
+        const brain = createLlmBrain(
+          { ...SETTINGS, baseUrl: fake.baseUrl },
+          fallback.brain,
+        );
+        await brain.think(makeContext({ trigger }));
+
+        const request = fake.requests[0];
+        assert.ok(request);
+        const user = userPrompt(bodyOf(request));
+
+        assert.match(user, /kind：tool_result/);
+        assert.match(user, /本轮工具回执/);
+        assert.match(user, /call_write_3/);
+        assert.match(user, /tool=write_file/);
+        assert.match(user, /已写入 src\/remember\.js/);
       },
     );
   });

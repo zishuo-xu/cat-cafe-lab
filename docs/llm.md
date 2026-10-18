@@ -43,9 +43,12 @@
 
 ### 真实模式与沙盒工具
 
-真实模式下，llm-brain 只输出对话类 turn（message / handoff / artifact / review / decision / memory），
-**不会**让模型决定执行 `run_command`。沙盒工具节拍由剧本（scenarios）驱动，在演出模式下执行。
-这样模型没法直接碰命令，工具调用是可控的、可审查的。
+真实模式下，llm-brain 的输出第 7 种 turn 是 `kind:"tool"`：模型可以请求 read_file / write_file /
+list_files / run_command。driver 执行后以 `trigger.kind="tool_result"` 再叫一次，把 exitCode 和输出
+喂回去（最多连续 3 轮）。
+
+模型主动发起的命令默认要铲屎官审批（`commands` 策略），拒绝会以 `rejected` 回喂；
+剧本里的工具节拍永远自动放行。详见 README「真实模式：猫会自己决定用工具」。
 
 ### 启动示例
 

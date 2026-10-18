@@ -31,12 +31,14 @@
 │  src/engine/driver.ts  协作会话驱动            │
 │    · 每房间串行队列                            │
 │    · 阶段推进 / @ 路由 / typing / 延迟         │
-│    · tool turn → 沙盒执行                      │
+│    · tool turn → 沙盒执行 / 审批闸门           │
 │    · 故障注入（漏 @）与 nudge 恢复             │
 ├──────────────────────────────────────────────┤
 │  src/tools/sandbox.ts  沙盒工具运行时          │
 │    · 路径锁根目录 / 命令白名单 / 10s 超时      │
 │    · read_file / write_file / list / run       │
+│  src/tools/approval.ts 铲屎官审批队列          │
+│    · pending → approve / reject                │
 ├──────────────────────────────────────────────┤
 │  src/agents/          猫猫的"大脑"             │
 │    mock-brain.ts   场景 beats → CatTurn[]     │
@@ -152,8 +154,22 @@ intake ──► planning ──► working ──► reviewing ──► done
 - 设置面板可以关掉工具执行（`toolsEnabled`）；关掉后 tool turn 变一句说明，协作流程照走。
   注意：mock 剧本里"测试挂了/测试全绿"的台词是写死的，关掉工具后这些台词不再对应真实执行。
 
-**真实模式暂不产生工具调用**：llm-brain 的输出 schema 只有六种对话类 turn，工具节拍由剧本驱动。
-这是有意的边界——不让模型直接决定跑什么命令。
+## 真实模式的工具调用与审批
+
+llm-brain 的输出 schema 增加第 7 种 turn：`kind:"tool"`。模型可以主动请求工具，
+driver 执行后用 `trigger.kind="tool_result"` 再叫同一只猫，把 exitCode/output 喂回去
+（首轮 + 最多 3 次回喂，工具轮本身不推进阶段）。
+
+**审批闸门**（`src/tools/approval.ts`）：
+
+- 只对「模型驱动」生效：`brain.mode === "llm"`；mock 剧本里的工具永远自动放行；
+- 策略：`auto` 不批 / `commands` 只批 `run_command` / `all` 全批；
+- pending 流程：`addToolCall(status:"pending")` → `await gate.request()` → 批准后
+  `startToolCall` 再执行；拒绝则不执行，把 `rejected` 回喂给模型；
+- HTTP：`POST /api/tool-calls/:id/approve|reject`、`GET /api/approvals`；
+- 审批期间不触发 stall 判定（等待是人，不是猫卡住了）。
+
+这样模型不能直接决定跑什么命令——命令执行要么来自剧本，要么经过铲屎官点头。
 
 ## 真实模式
 

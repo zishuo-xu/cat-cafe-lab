@@ -358,6 +358,7 @@ export class Studio {
     args: Record<string, unknown>;
     label: string;
     taskId?: Task["id"];
+    status?: "running" | "pending";
   }): ToolCall {
     const call: ToolCall = {
       id: ids.message(),
@@ -365,7 +366,7 @@ export class Studio {
       tool: input.tool,
       input: input.args,
       label: input.label,
-      status: "running",
+      status: input.status ?? "running",
       startedAt: now(),
     };
     if (input.taskId) call.taskId = input.taskId;
@@ -374,6 +375,16 @@ export class Studio {
       this.state.toolCalls.splice(0, this.state.toolCalls.length - 300);
     }
     this.touchTask(input.taskId);
+    this.notify();
+    return call;
+  }
+
+  /** 审批通过后把 pending 转成 running，再执行。 */
+  startToolCall(id: string): ToolCall {
+    const call = this.state.toolCalls.find((item) => item.id === id);
+    if (!call) throw new Error(`tool call not found: ${id}`);
+    call.status = "running";
+    call.startedAt = now();
     this.notify();
     return call;
   }

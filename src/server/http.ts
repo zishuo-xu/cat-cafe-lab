@@ -7,6 +7,7 @@ import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve } from "node:path";
 
 import type {
+  ApprovalGate,
   CatId,
   Driver,
   RoomId,
@@ -34,6 +35,8 @@ export interface HttpDeps {
   settingsApi?: SettingsApi;
   /** 沙盒工具运行时；不传则 workspace 接口返回 503。 */
   sandbox?: Sandbox;
+  /** 审批闸门；不传则审批接口返回 503。 */
+  approvals?: ApprovalGate;
   /** 前端用来判断「卡住」的阈值；不传按 driver.stallMs / 12s。 */
   stallMs?: number;
 }
@@ -178,7 +181,7 @@ function serveStatic(res: ServerResponse, publicDir: string, pathname: string): 
 }
 
 export function createHttpServer(deps: HttpDeps): Server {
-  const { studio, driver, scenarios, settingsApi, sandbox } = deps;
+  const { studio, driver, scenarios, settingsApi, sandbox, approvals } = deps;
   const publicDir = deps.publicDir;
 
   return createServer((req, res) => {
@@ -265,6 +268,34 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (method === "POST" && pathname === "/api/reset") {
       const state = studio.reset();
       json(res, 200, { ok: true, seq: state.seq });
+      return;
+    }
+
+    {
+      const approvalMatch = /^\/api\/tool-calls\/([^/]+)\/(approve|reject)$/.exec(pathname);
+      if (approvalMatch && method === "POST") {
+        if (!approvals) {
+          fail(res, 503, "approval queue not enabled");
+          return;
+        }
+        const callId = decodeURIComponent(approvalMatch[1] ?? "");
+        const decision = approvalMatch[2] === "approve" ? "approved" : "rejected";
+        if (!approvals.resolve(callId, decision)) {
+          fail(res, 404, "没有等待中的审批（可能已经处理过）");
+          return;
+        }
+        json(res, 200, { ok: true, decision });
+        return;
+      }
+    }
+
+    if (pathname === "/api/approvals" && method === "GET") {
+      if (!approvals) {
+        fail(res, 503, "approval queue not enabled");
+        return;
+      }
+      const queue = approvals as ApprovalGate & { list?: () => unknown[] };
+      json(res, 200, { pending: queue.list?.() ?? [] });
       return;
     }
 

@@ -2184,6 +2184,77 @@ button {
   background: var(--danger);
 }
 
+/* ── Needs Me 待审批徽标 ──────────────────────────────────────────────── */
+
+.needs-me {
+  appearance: none;
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  padding: 4px 9px;
+  border: 1px solid #e3b979;
+  border-radius: 999px;
+  background: #fff3df;
+  color: #8a5a22;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.needs-me:hover {
+  background: #fbe7cc;
+}
+
+.needs-me-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--caramel-deep);
+  animation: pulse-dot 1.8s ease-in-out infinite;
+}
+
+.needs-me-count {
+  min-width: 16px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--caramel-deep);
+  color: #fffdf8;
+  font-size: 10px;
+  text-align: center;
+}
+
+.pill--needs {
+  border: 1px solid #e3b979;
+  background: #fff3df;
+  color: #8a5a22;
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.pill--needs:hover {
+  background: #fbe7cc;
+}
+
+.needs-flash {
+  animation: needs-flash 1.8s ease-out;
+}
+
+@keyframes needs-flash {
+  0%,
+  100% {
+    box-shadow: none;
+  }
+  25% {
+    box-shadow: 0 0 0 3px rgba(217, 160, 102, 0.55);
+  }
+  60% {
+    box-shadow: 0 0 0 6px rgba(217, 160, 102, 0);
+  }
+}
+
 /* ── Toast ────────────────────────────────────────────────────────────── */
 
 .toast-stack {
@@ -3313,6 +3384,75 @@ button {
   color: #9b4434;
 }
 
+.tool-status[data-status="pending"] {
+  background: #fbf0da;
+  color: #8a6118;
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+.tool-status[data-status="rejected"] {
+  background: #efe6de;
+  color: #8b6f5e;
+}
+
+.tool-card[data-status="pending"] {
+  border-color: #e3b979;
+  background: #fffaf0;
+  box-shadow: 0 0 0 1px rgba(217, 160, 102, 0.22);
+}
+
+.tool-card[data-status="rejected"] {
+  border-color: #e0cfc4;
+  background: #f6f1eb;
+}
+
+.tool-approval {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-top: 1px dashed #e5c48c;
+  background: #fff6e5;
+}
+
+.tool-approval-hint {
+  flex: 1;
+  min-width: 120px;
+  color: #8a6118;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.btn--approve {
+  border-color: #cfe0cf;
+  background: var(--ok-soft);
+  color: #3f6a4b;
+}
+
+.btn--approve:hover:not(:disabled) {
+  background: #d7e7d7;
+}
+
+.tool-approval-error {
+  flex-basis: 100%;
+  color: var(--danger);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.tool-rejected-note {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border-top: 1px dashed #e0cfc4;
+  background: #f6f1eb;
+  color: #8b6f5e;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
 .tool-exit {
   flex: none;
   color: var(--muted);
@@ -3776,6 +3916,20 @@ button {
 
   .chat-new-task {
     display: inline-flex;
+  }
+
+  .needs-me-text {
+    display: none;
+  }
+
+  .needs-me {
+    padding: 4px 7px;
+    font-size: 10.5px;
+  }
+
+  .tool-approval .btn {
+    flex: 1;
+    justify-content: center;
   }
 
   .icon-btn.chat-settings {

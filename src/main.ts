@@ -8,6 +8,7 @@ import { initScenarios } from "./agents/scenario-registry.ts";
 import { createDriver } from "./engine/driver.ts";
 import { createHttpServer } from "./server/http.ts";
 import { Sandbox } from "./tools/sandbox.ts";
+import { ApprovalQueue } from "./tools/approval.ts";
 import { readSettings } from "./server/settings.ts";
 import { SettingsStore, SwitchableBrain } from "./server/settings-store.ts";
 import { Studio } from "./server/studio.ts";
@@ -20,6 +21,7 @@ const studio = new Studio({ cats: CATS, mode: settings.mode, dataDir });
 // 沙盒：猫猫真的在这里写文件、跑命令。独立目录，不是用户的仓库。
 const sandbox = new Sandbox(resolve(dataDir, "workspace"));
 sandbox.ensureSeed();
+const approvals = new ApprovalQueue();
 // 导入的自定义剧本会原地追加到 SCENARIOS，driver / HTTP 拿到的是同一数组引用。
 initScenarios(dataDir, studio.state.cats.map((cat) => cat.id));
 const mock = createMockBrain(SCENARIOS, {
@@ -48,6 +50,8 @@ const driver = createDriver({
   stallMs: settings.stallMs,
   sandbox,
   toolsEnabled: () => settingsStore.toolsOn(),
+  approvals,
+  approvalMode: () => settingsStore.approvalMode(),
 });
 
 const server = createHttpServer({
@@ -59,6 +63,7 @@ const server = createHttpServer({
   stallMs: settings.stallMs,
   settingsApi: settingsStore,
   sandbox,
+  approvals,
 });
 
 server.listen(settings.port, "127.0.0.1", () => {

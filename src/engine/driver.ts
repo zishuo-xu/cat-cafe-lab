@@ -13,10 +13,15 @@
  *     但不唤醒接收猫、任务标 stalled；等 nudge 补投递后才进下一阶段。
  *   - tool turn：走 studio.addToolCall → sandbox.execute → finishToolCall →
  *     appendMessage(kind:"tool")；不改阶段、不触发 handoff，失败也不抛异常。
+ *   - 审批：仅 brain.mode === "llm" 且注入 approvals 时生效；pending → request →
+ *     拒绝则不执行（rejected 也回喂），批准后 startToolCall 再执行。
+ *   - ReAct：llm 模式下本轮有工具回执时，用 Trigger{kind:"tool_result"} 再问同一只猫，
+ *     最多 MAX_TOOL_ROUNDS 轮；回喂轮不改 stage。
  */
 
 import { SCENARIOS } from "../agents/personas.ts";
 import type {
+  ApprovalGate,
   Artifact,
   Cat,
   CatBrain,
@@ -34,7 +39,10 @@ import type {
   Task,
   TaskId,
   TaskStage,
+  ToolApprovalMode,
+  ToolName,
   ToolResult,
+  ToolRunResult,
   Trigger,
   TurnContext,
 } from "../domain/types.ts";
@@ -53,6 +61,10 @@ const DEFAULT_STALL_MS = 12_000;
 const THINK_DELAY_MS = 600;
 /** 一个 turn 与下一个 turn 之间的默认间隔。 */
 const TURN_DELAY_MS = 220;
+/** 真实模式下工具回执 → 再推理的最大回喂轮数（不含首轮）。 */
+const MAX_TOOL_ROUNDS = 3;
+/** TurnContext.recentToolResults 保留的最近条数。 */
+const RECENT_TOOL_RESULTS = 8;
 
 type TurnOf<K extends CatTurn["kind"]> = Extract<CatTurn, { kind: K }>;
 type HandoffTurn = TurnOf<"handoff">;
@@ -108,6 +120,30 @@ function inputList(input: Record<string, unknown>, key: string): string[] {
     : [];
 }
 
+/** ToolCall / ToolResult → 回喂给 brain 的 ToolRunResult。 */
+function toRunResult(callId: string, tool: ToolName, result: ToolResult): ToolRunResult {
+  const runResult: ToolRunResult = {
+    callId,
+    tool,
+    status: result.status,
+    output: result.output,
+  };
+  if (result.exitCode !== undefined) runResult.exitCode = result.exitCode;
+  return runResult;
+}
+
+/** 执行工具；SandboxRunner 约定不抛，注入实现万一抛了也记成 error。 */
+async function executeSafely(runner: SandboxRunner, turn: ToolTurn): Promise<ToolResult> {
+  try {
+    return await runner.execute(turn.tool, turn.input);
+  } catch (err) {
+    return {
+      status: "error",
+      output: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
 type WakePurpose =
   | "kickoff"
   | "planning"
@@ -158,6 +194,8 @@ interface AppliedTurns {
   handoffs: Array<{ turn: HandoffTurn; handoff: Handoff }>;
   review: ReviewApplied | null;
   lastArtifact: Artifact | null;
+  /** 本轮实际执行 / 被拒绝的工具回执（用于 ReAct 回喂）。 */
+  toolResults: ToolRunResult[];
 }
 
 export function createDriver(deps: {
@@ -169,9 +207,14 @@ export function createDriver(deps: {
   sandbox?: SandboxRunner;
   /** 运行时开关：设置面板可以随时关掉工具执行。 */
   toolsEnabled?: () => boolean;
+  /** 审批策略：auto / commands / all。 */
+  approvalMode?: () => ToolApprovalMode;
+  /** 审批闸门；不传则不审批。仅 brain.mode === "llm" 时生效。 */
+  approvals?: ApprovalGate;
 }): Driver {
-  const { studio, brain, sandbox } = deps;
+  const { studio, brain, sandbox, approvals } = deps;
   const toolsEnabled = deps.toolsEnabled;
+  const approvalMode = deps.approvalMode;
   const wait =
     deps.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const stallMs = deps.stallMs ?? DEFAULT_STALL_MS;
@@ -292,16 +335,46 @@ export function createDriver(deps: {
 
     studio.setTyping(room.id, cat.id);
     try {
-      let turns: CatTurn[] = [];
-      try {
-        await wait(THINK_DELAY_MS);
-        turns = await brain.think(buildContext(cat, room, task, wake.trigger));
-      } catch (err) {
-        console.error(`[engine] ${cat.id} 的 brain 调用失败，按空轮次继续：`, err);
+      const merged: AppliedTurns = {
+        handoffs: [],
+        review: null,
+        lastArtifact: null,
+        toolResults: [],
+      };
+      let trigger = wake.trigger;
+      let rounds = 0;
+
+      // 首轮 + 最多 MAX_TOOL_ROUNDS 次「工具回执 → 再推理」的 ReAct 循环。
+      // 工具轮本身不推进 stage；回喂轮里的 handoff/review/decision 会在循环结束后
+      // 由 afterTurns 统一按正常 turn 处理。
+      for (;;) {
+        let turns: CatTurn[] = [];
+        try {
+          await wait(THINK_DELAY_MS);
+          turns = await brain.think(buildContext(cat, room, task, trigger));
+        } catch (err) {
+          console.error(`[engine] ${cat.id} 的 brain 调用失败，按空轮次继续：`, err);
+        }
+
+        const applied = await applyTurns(room, cat, task, turns);
+        mergeApplied(merged, applied);
+
+        const canReact =
+          brain.mode === "llm" &&
+          applied.toolResults.length > 0 &&
+          rounds < MAX_TOOL_ROUNDS;
+        if (!canReact) break;
+
+        rounds += 1;
+        trigger = {
+          kind: "tool_result",
+          roomId: room.id,
+          ...(task ? { taskId: task.id } : {}),
+          toolResults: applied.toolResults,
+        };
       }
 
-      const applied = await applyTurns(room, cat, task, turns);
-      if (task && runtime) afterTurns(wake, room, cat, task, runtime, applied);
+      if (task && runtime) afterTurns(wake, room, cat, task, runtime, merged);
     } finally {
       studio.setTyping(room.id, null);
       if (task && task.status === "active") scheduleStall(task.id);
@@ -316,7 +389,12 @@ export function createDriver(deps: {
     task: Task | null,
     turns: readonly CatTurn[],
   ): Promise<AppliedTurns> {
-    const applied: AppliedTurns = { handoffs: [], review: null, lastArtifact: null };
+    const applied: AppliedTurns = {
+      handoffs: [],
+      review: null,
+      lastArtifact: null,
+      toolResults: [],
+    };
 
     for (const turn of turns) {
       await wait(turn.delayMs ?? TURN_DELAY_MS);
@@ -335,7 +413,8 @@ export function createDriver(deps: {
         }
 
         case "tool": {
-          await runToolTurn(room, cat, task, turn);
+          const runResult = await runToolTurn(room, cat, task, turn);
+          if (runResult) applied.toolResults.push(runResult);
           break;
         }
 
@@ -512,6 +591,14 @@ export function createDriver(deps: {
     return applied;
   }
 
+  /** 把回喂轮次的产出合并到整轮结果里（handoff 全留，review 取第一个）。 */
+  function mergeApplied(target: AppliedTurns, source: AppliedTurns): void {
+    target.handoffs.push(...source.handoffs);
+    target.toolResults.push(...source.toolResults);
+    if (!target.review && source.review) target.review = source.review;
+    if (source.lastArtifact) target.lastArtifact = source.lastArtifact;
+  }
+
   // ── tool turn：真在沙盒里执行 ─────────────────────────
 
   async function runToolTurn(
@@ -519,7 +606,7 @@ export function createDriver(deps: {
     cat: Cat,
     task: Task | null,
     turn: ToolTurn,
-  ): Promise<void> {
+  ): Promise<ToolRunResult | null> {
     const taskField = task ? { taskId: task.id } : {};
 
     // 1) 设置面板关掉工具：不执行，只留一句说明。
@@ -532,7 +619,7 @@ export function createDriver(deps: {
         mentions: [],
         ...taskField,
       });
-      return;
+      return null;
     }
 
     // 2) 没接沙盒（测试 / 降级模式）：同样只说明，不报错。
@@ -545,11 +632,73 @@ export function createDriver(deps: {
         mentions: [],
         ...taskField,
       });
-      return;
+      return null;
     }
 
-    // 3) 正常执行：先落 running 的 ToolCall，再执行，再 finish。
     const label = turn.label?.trim() || defaultToolLabel(turn.tool, turn.input);
+    const approval = approvalFor(turn.tool);
+
+    // 3a) 模型发起 + 命中审批策略：先挂 pending，等铲屎官决定。
+    if (approval) {
+      const call = studio.addToolCall({
+        catId: cat.id,
+        tool: turn.tool,
+        args: turn.input,
+        label,
+        status: "pending",
+        ...taskField,
+      });
+      studio.appendMessage({
+        roomId: room.id,
+        author: cat.id,
+        kind: "tool",
+        text: `等你批准：${label}`,
+        mentions: [],
+        toolCallId: call.id,
+        ...taskField,
+      });
+
+      let approved = false;
+      try {
+        const decision = await approvals!.request({
+          callId: call.id,
+          mode: approval,
+          tool: turn.tool,
+          label,
+          catId: cat.id,
+        });
+        approved = decision === "approved";
+      } catch (err) {
+        // 审批流程异常也按拒绝处理（不放行），流程不断。
+        console.warn("[engine] 审批请求失败，按拒绝处理：", err);
+      }
+
+      if (!approved) {
+        const rejected: ToolResult = {
+          status: "rejected",
+          output: "铲屎官拒绝了这次执行",
+        };
+        studio.finishToolCall(call.id, rejected);
+        appendToolMessage(
+          room,
+          cat,
+          task,
+          turn,
+          call.id,
+          rejected,
+          "铲屎官拒绝了这次执行，我换个办法。",
+        );
+        return toRunResult(call.id, turn.tool, rejected);
+      }
+
+      studio.startToolCall(call.id);
+      const result = await executeSafely(sandbox, turn);
+      studio.finishToolCall(call.id, result);
+      appendToolMessage(room, cat, task, turn, call.id, result);
+      return toRunResult(call.id, turn.tool, result);
+    }
+
+    // 3b) 自动放行（mock 剧本 / mode=auto / 非 commands 工具）。
     const call = studio.addToolCall({
       catId: cat.id,
       tool: turn.tool,
@@ -558,26 +707,29 @@ export function createDriver(deps: {
       ...taskField,
     });
 
-    let result: ToolResult;
-    try {
-      result = await sandbox.execute(turn.tool, turn.input);
-    } catch (err) {
-      // SandboxRunner 约定不抛；注入实现万一抛了也按失败记录，流程不断。
-      result = {
-        status: "error",
-        output: err instanceof Error ? err.message : String(err),
-      };
-    }
+    const result = await executeSafely(sandbox, turn);
     studio.finishToolCall(call.id, result);
+    appendToolMessage(room, cat, task, turn, call.id, result);
+    return toRunResult(call.id, turn.tool, result);
+  }
 
+  function appendToolMessage(
+    room: Room,
+    cat: Cat,
+    task: Task | null,
+    turn: ToolTurn,
+    callId: string,
+    result: ToolResult,
+    fallbackText?: string,
+  ): void {
     studio.appendMessage({
       roomId: room.id,
       author: cat.id,
       kind: "tool",
-      text: turn.text ?? defaultToolText(turn.tool, turn.input, result),
+      text: turn.text ?? fallbackText ?? defaultToolText(turn.tool, turn.input, result),
       mentions: normalizeMentions(turn.mentions, studio.state.cats),
-      toolCallId: call.id,
-      ...taskField,
+      toolCallId: callId,
+      ...(task ? { taskId: task.id } : {}),
     });
   }
 
@@ -921,6 +1073,7 @@ export function createDriver(deps: {
       memory: studio.memoryForTask(task),
       handoffs: task ? studio.state.handoffs.filter((h) => h.taskId === task.id) : [],
       artifacts: task ? studio.state.artifacts.filter((a) => a.taskId === task.id) : [],
+      recentToolResults: recentToolResults(task),
       scenario: task
         ? SCENARIOS.find((scenario) => scenario.id === task.scenarioId) ?? null
         : null,
@@ -958,6 +1111,50 @@ export function createDriver(deps: {
       console.warn("[engine] toolsEnabled() 读取失败，按关闭处理：", err);
       return false;
     }
+  }
+
+  /**
+   * 这次工具调用要不要审批？
+   * 只对模型驱动的调用生效（brain.mode === "llm" 且有 ApprovalGate）；
+   * mock 剧本里的工具永远自动放行。
+   */
+  function approvalFor(tool: ToolName): ToolApprovalMode | null {
+    if (brain.mode !== "llm" || !approvals) return null;
+    const mode = readApprovalMode();
+    if (mode === "auto") return null;
+    if (mode === "commands") return tool === "run_command" ? "commands" : null;
+    return "all";
+  }
+
+  function readApprovalMode(): ToolApprovalMode {
+    if (!approvalMode) return "auto";
+    try {
+      return approvalMode();
+    } catch (err) {
+      console.warn("[engine] approvalMode() 读取失败，按 auto 处理：", err);
+      return "auto";
+    }
+  }
+
+  /** recentToolResults：本任务最近 8 条已结束（ok/error/rejected）的工具回执，时间正序。 */
+  function recentToolResults(task: Task | null): ToolRunResult[] {
+    const calls = studio.state.toolCalls;
+    const picked: ToolRunResult[] = [];
+    for (let i = calls.length - 1; i >= 0 && picked.length < RECENT_TOOL_RESULTS; i -= 1) {
+      const call = calls[i];
+      if (!call) continue;
+      if (task && call.taskId !== task.id) continue;
+      if (call.status === "pending" || call.status === "running") continue;
+      picked.push(
+        toRunResult(call.id, call.tool, {
+          status: call.status,
+          output: call.output ?? "",
+          ...(call.exitCode !== undefined ? { exitCode: call.exitCode } : {}),
+        }),
+      );
+    }
+    picked.reverse();
+    return picked;
   }
 
   return {

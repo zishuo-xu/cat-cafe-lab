@@ -96,6 +96,7 @@ function makeCtx(input: {
     recentMessages: [],
     memory: input.memory ?? [],
     handoffs: [],
+    recentToolResults: [],
     artifacts: input.artifacts ?? [],
     scenario: input.scenario ?? null,
   };

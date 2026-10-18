@@ -356,6 +356,8 @@ describe("工具执行开关", () => {
     const ctx = makeStore(dir);
     assert.equal(ctx.store.getPublic().toolsEnabled, true);
     assert.equal(ctx.store.toolsOn(), true);
+    assert.equal(ctx.store.getPublic().toolApproval, "commands");
+    assert.equal(ctx.store.approvalMode(), "commands");
 
     const pub = await ctx.store.update({ toolsEnabled: false });
     assert.equal(pub.toolsEnabled, false);
@@ -370,6 +372,23 @@ describe("工具执行开关", () => {
     const reopened = makeStore(dir);
     assert.equal(reopened.store.getPublic().toolsEnabled, false);
     reopened.studio.close();
+  });
+
+  test("审批策略可保存并持久化", async () => {
+    const ctx = makeStore(dir);
+    const pub = await ctx.store.update({ toolApproval: "all" });
+    assert.equal(pub.toolApproval, "all");
+    assert.equal(ctx.store.approvalMode(), "all");
+    const persisted = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")) as {
+      toolApproval?: string;
+    };
+    assert.equal(persisted.toolApproval, "all");
+    await assert.rejects(
+      () => ctx.store.update({ toolApproval: "sometimes" as unknown as "auto" }),
+      /auto.*commands.*all/,
+    );
+    await ctx.store.update({ toolApproval: "commands" });
+    ctx.studio.close();
   });
 
   test("非布尔值被拒绝", async () => {

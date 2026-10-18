@@ -135,6 +135,15 @@ const scenarioState = {
   taskItems: [],
 };
 
+/** 审批队列 / pending 工具卡 / Needs Me 的临时状态。 */
+const approvalState = {
+  available: null,
+  loading: false,
+  pending: [],
+  error: "",
+  lastToolSignature: "",
+};
+
 /** 沙盒面板 / 文件查看 / 重置 的临时状态。 */
 const sandboxState = {
   loading: false,
@@ -484,6 +493,7 @@ async function boot() {
   void refreshHealth();
   void refreshGlobalModel();
   void loadWorkspace();
+  void loadApprovals();
   try {
     await refreshState("boot");
   } catch {
@@ -595,6 +605,11 @@ function cacheDom() {
 
   els.settingsToolsToggle = $("#settings-tools-toggle");
   els.settingsToolsHint = $("#settings-tools-hint");
+  els.settingsToolApproval = $("#settings-tool-approval");
+  els.settingsToolApprovalHint = $("#settings-tool-approval-hint");
+
+  els.needsNodes = $$("[data-needs-me]");
+  els.needsCounts = $$("[data-needs-count]");
 
   els.sandboxList = $("#sandbox-list");
   els.sandboxCount = $("[data-sandbox-count]");
@@ -661,7 +676,10 @@ function applyState(next) {
   if (toolSignature !== sandboxState.lastToolSignature) {
     const hadSignature = Boolean(sandboxState.lastToolSignature);
     sandboxState.lastToolSignature = toolSignature;
-    if (hadSignature) scheduleSandboxRefresh();
+    if (hadSignature) {
+      scheduleSandboxRefresh();
+      void loadApprovals();
+    }
   }
 
   const rooms = next.rooms ?? [];
@@ -695,6 +713,7 @@ function connectEvents() {
       refreshState().catch(() => setConn("offline"));
     }
     void refreshHealth();
+    void loadApprovals();
     app.sseOpened = true;
   };
 
@@ -734,6 +753,7 @@ function renderAll() {
   renderTimeline();
   syncToolCards();
   renderSandbox();
+  updateNeedsMe();
   renderTypingHint();
   updateComposerState();
   updateStallUi();
@@ -2042,6 +2062,15 @@ function onGlobalClick(event) {
     case "toggle-tool-output":
       toggleToolOutput(actionEl);
       break;
+    case "approve-tool":
+      if (actionEl.dataset.callId) void decideToolCall(actionEl.dataset.callId, "approve", actionEl);
+      break;
+    case "reject-tool":
+      if (actionEl.dataset.callId) void decideToolCall(actionEl.dataset.callId, "reject", actionEl);
+      break;
+    case "focus-needs-me":
+      focusNeedsMe();
+      break;
     case "open-sandbox-file":
       if (actionEl.dataset.path) void openSandboxFile(actionEl.dataset.path);
       break;
@@ -2593,6 +2622,11 @@ function resetSettingsForm() {
   renderKeyStatus(null);
   if (els.settingsToolsToggle) els.settingsToolsToggle.checked = true;
   if (els.settingsToolsHint) delete els.settingsToolsHint.dataset.missing;
+  if (els.settingsToolApproval) els.settingsToolApproval.value = "commands";
+  if (els.settingsToolApprovalHint) {
+    els.settingsToolApprovalHint.textContent =
+      "仅对真实模式下模型主动发起的工具生效；剧本工具自动放行。";
+  }
   updateToolsHint();
   hideModeWarn();
 }
@@ -2625,6 +2659,18 @@ function fillSettingsForm(data) {
       } else {
         els.settingsToolsHint.dataset.missing = "true";
       }
+    }
+  }
+  if (els.settingsToolApproval) {
+    const approval = ["auto", "commands", "all"].includes(data?.toolApproval)
+      ? data.toolApproval
+      : "commands";
+    els.settingsToolApproval.value = approval;
+    if (els.settingsToolApprovalHint) {
+      const missing = typeof data?.toolApproval !== "string";
+      els.settingsToolApprovalHint.textContent = missing
+        ? "仅对真实模式下模型主动发起的工具生效；当前服务端未返回 toolApproval（可能未就绪）。"
+        : "仅对真实模式下模型主动发起的工具生效；剧本工具自动放行。";
     }
   }
   updateToolsHint();
@@ -2881,6 +2927,7 @@ function collectSettingsPatch() {
     mode: currentModeChoice(),
     speed: currentSpeedChoice(),
     toolsEnabled: els.settingsToolsToggle ? Boolean(els.settingsToolsToggle.checked) : true,
+    toolApproval: els.settingsToolApproval?.value ?? "commands",
     llm: {
       baseUrl: els.settingsBaseUrl?.value.trim() ?? "",
       model: els.settingsModel?.value.trim() ?? "",
@@ -3807,8 +3854,10 @@ function toolOutputText(call) {
 
 function toolStatusLabel(call) {
   const status = call?.status ?? "running";
+  if (status === "pending") return "⏳ 等你批准";
   if (status === "ok") return "✓ 成功";
   if (status === "error") return "✗ 失败";
+  if (status === "rejected") return "✗ 已拒绝";
   return "执行中…";
 }
 
@@ -3867,6 +3916,43 @@ function toolCardNode(call, message) {
     ),
     h(
       "div",
+      { class: "tool-approval", "data-role": "approval", hidden: true },
+      h("span", {
+        class: "tool-approval-hint",
+        "data-role": "approval-hint",
+        text: "等你批准这次工具调用",
+      }),
+      h("button", {
+        type: "button",
+        class: "btn btn--tiny btn--approve",
+        "data-action": "approve-tool",
+        "data-call-id": id,
+        "data-role": "approve",
+        text: "批准执行",
+      }),
+      h("button", {
+        type: "button",
+        class: "btn btn--tiny btn--danger",
+        "data-action": "reject-tool",
+        "data-call-id": id,
+        "data-role": "reject",
+        text: "拒绝",
+      }),
+      h("span", {
+        class: "tool-approval-error",
+        "data-role": "approval-error",
+        role: "alert",
+        hidden: true,
+      }),
+    ),
+    h(
+      "div",
+      { class: "tool-rejected-note", "data-role": "rejected-note", hidden: true },
+      h("span", { "aria-hidden": "true", text: "🚫" }),
+      h("span", { text: "铲屎官拒绝了这次执行。" }),
+    ),
+    h(
+      "div",
       { class: "tool-output", "data-role": "output", hidden: true },
       h("pre", { "data-role": "pre" }),
     ),
@@ -3910,6 +3996,16 @@ function updateToolCard(card, call, options = {}) {
   if (durationEl) durationEl.textContent = toolDurationText(call);
   if (commandEl) commandEl.textContent = toolLine(call);
 
+  if (status !== "pending") {
+    delete card.dataset.deciding;
+    card.dataset.approvalSent = "";
+    const approvalError = card.querySelector('[data-role="approval-error"]');
+    if (approvalError) {
+      approvalError.hidden = true;
+      approvalError.textContent = "";
+    }
+  }
+
   const output = toolOutputText(call);
   if (preEl) preEl.textContent = output || (status === "running" ? "执行中…" : "（无输出）");
   if (outputEl && toggle) {
@@ -3923,6 +4019,204 @@ function updateToolCard(card, call, options = {}) {
     toggle.hidden = !hasOutput;
     toggle.textContent = expanded ? "收起输出" : "展开输出";
     toggle.setAttribute("aria-expanded", String(expanded));
+  }
+
+  updateToolApprovalUi(card);
+}
+
+function showToolApprovalError(card, message) {
+  const error = card?.querySelector('[data-role="approval-error"]');
+  if (!error) return;
+  error.textContent = message;
+  error.hidden = false;
+}
+
+function updateToolApprovalUi(card) {
+  if (!card) return;
+  const status = card.dataset.status;
+  const approval = card.querySelector('[data-role="approval"]');
+  const rejectedNote = card.querySelector('[data-role="rejected-note"]');
+  if (rejectedNote) rejectedNote.hidden = status !== "rejected";
+  if (!approval) return;
+  if (status !== "pending") {
+    approval.hidden = true;
+    return;
+  }
+  approval.hidden = false;
+
+  const deciding = card.dataset.deciding || "";
+  const sent = card.dataset.approvalSent || "";
+  const available = approvalState.available !== false;
+  const hint = card.querySelector('[data-role="approval-hint"]');
+  const approveBtn = card.querySelector('[data-role="approve"]');
+  const rejectBtn = card.querySelector('[data-role="reject"]');
+
+  if (approveBtn) {
+    approveBtn.disabled = !available || Boolean(deciding) || Boolean(sent);
+    approveBtn.textContent = deciding === "approve" ? "批准中…" : "批准执行";
+  }
+  if (rejectBtn) {
+    rejectBtn.disabled = !available || Boolean(deciding) || Boolean(sent);
+    rejectBtn.textContent = deciding === "reject" ? "拒绝中…" : "拒绝";
+  }
+  if (hint) {
+    if (!available) hint.textContent = "审批服务未就绪（接口 404/503），暂时不能处理。";
+    else if (sent === "approved") hint.textContent = "已批准，等待猫继续…";
+    else if (sent === "rejected") hint.textContent = "已拒绝，等待状态更新…";
+    else if (deciding) hint.textContent = "处理中…";
+    else hint.textContent = "等你批准这次工具调用";
+  }
+}
+
+function updateAllApprovalUi() {
+  if (!els.timeline) return;
+  for (const card of $$(".tool-card[data-tool-call-id]", els.timeline)) {
+    updateToolApprovalUi(card);
+  }
+}
+
+function pendingCallsFromState() {
+  return (app.state?.toolCalls ?? []).filter((call) => call.status === "pending");
+}
+
+function pendingCallCount() {
+  const stateCount = pendingCallsFromState().length;
+  if (stateCount > 0) return stateCount;
+  return Array.isArray(approvalState.pending) ? approvalState.pending.length : 0;
+}
+
+async function loadApprovals() {
+  if (approvalState.loading) return;
+  approvalState.loading = true;
+  try {
+    const response = await fetch("/api/approvals", {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (response.status === 404 || response.status === 503) {
+      approvalState.available = false;
+      approvalState.pending = [];
+      approvalState.error = "审批服务未就绪";
+    } else if (!response.ok) {
+      throw new Error(await describeHttpError(response, "GET /api/approvals"));
+    } else {
+      const payload = await response.json();
+      approvalState.available = true;
+      approvalState.pending = Array.isArray(payload?.pending) ? payload.pending : [];
+      approvalState.error = "";
+    }
+  } catch (error) {
+    approvalState.available = false;
+    approvalState.error = error.message || "审批服务未就绪";
+  } finally {
+    approvalState.loading = false;
+    updateNeedsMe();
+    updateAllApprovalUi();
+  }
+}
+
+function updateNeedsMe() {
+  const count = pendingCallCount();
+  for (const node of els.needsNodes ?? []) node.hidden = count === 0;
+  for (const node of els.needsCounts ?? []) node.textContent = String(count);
+  const room = currentRoom();
+  const base = room ? `${room.name} · Cat Café Lab` : "Cat Café Lab · 猫咖工作台";
+  document.title = count > 0 ? `(${count}) ${base}` : base;
+}
+
+function focusNeedsMe() {
+  const card = els.timeline ? $('.tool-card[data-status="pending"]', els.timeline) : null;
+  if (!card) {
+    toast("当前没有待审批的工具调用", "warn");
+    void refreshState().catch(() => {});
+    return;
+  }
+  const target = card.closest(".msg") ?? card;
+  target.scrollIntoView({
+    block: "center",
+    behavior: prefersReducedMotion() ? "auto" : "smooth",
+  });
+  target.classList.remove("needs-flash");
+  void target.offsetWidth;
+  target.classList.add("needs-flash");
+  window.setTimeout(() => target.classList.remove("needs-flash"), 1900);
+  const approve = card.querySelector('[data-role="approve"]');
+  if (approve) approve.focus({ preventScroll: true });
+}
+
+async function decideToolCall(callId, decision, trigger) {
+  const card = trigger?.closest?.(".tool-card");
+  if (!card || !callId) return;
+  if (card.dataset.status !== "pending" || card.dataset.approvalSent) {
+    showToolApprovalError(card, "已经处理过了");
+    return;
+  }
+  if (card.dataset.deciding) return;
+  if (approvalState.available === false) {
+    showToolApprovalError(card, "审批服务未就绪（接口 404/503），暂时不能处理。");
+    updateToolApprovalUi(card);
+    return;
+  }
+
+  const verb = decision === "approve" ? "批准" : "拒绝";
+  card.dataset.deciding = decision;
+  updateToolApprovalUi(card);
+
+  try {
+    const response = await fetch(
+      `/api/tool-calls/${encodeURIComponent(callId)}/${decision}`,
+      { method: "POST" },
+    );
+    if (!response.ok) {
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        /* ignore */
+      }
+      if (response.status === 404) {
+        approvalState.available = true;
+        showToolApprovalError(card, "已经处理过了");
+        delete card.dataset.deciding;
+        updateToolApprovalUi(card);
+        await refreshState().catch(() => {});
+        void loadApprovals();
+        return;
+      }
+      if (response.status === 503) {
+        approvalState.available = false;
+        showToolApprovalError(card, "审批服务未就绪（503）：服务端未启用审批队列。");
+        delete card.dataset.deciding;
+        updateAllApprovalUi();
+        return;
+      }
+      showToolApprovalError(
+        card,
+        `${verb}失败：${payload?.error ?? `HTTP ${response.status}`}`,
+      );
+      delete card.dataset.deciding;
+      updateToolApprovalUi(card);
+      return;
+    }
+
+    await response.json().catch(() => null);
+    card.dataset.approvalSent = decision === "approve" ? "approved" : "rejected";
+    delete card.dataset.deciding;
+    updateToolApprovalUi(card);
+    void loadApprovals();
+
+    // 兜底：8s 后仍未收到状态更新，就还原按钮并提示可以刷新。
+    window.setTimeout(() => {
+      if (card.isConnected && card.dataset.status === "pending") {
+        delete card.dataset.approvalSent;
+        showToolApprovalError(card, `已${verb}，仍在等待服务端更新；可刷新页面查看。`);
+        updateToolApprovalUi(card);
+      }
+    }, 8000);
+  } catch (error) {
+    showToolApprovalError(card, `${verb}失败：${error.message}`);
+    delete card.dataset.deciding;
+    updateToolApprovalUi(card);
   }
 }
 

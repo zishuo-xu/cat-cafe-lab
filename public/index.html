@@ -37,6 +37,16 @@
               <span data-conn-text>连接中…</span>
             </span>
             <span class="pill pill--seq" data-seq>seq 0</span>
+            <button
+              type="button"
+              class="pill pill--needs"
+              data-action="focus-needs-me"
+              data-needs-me
+              title="有工具调用等你批准"
+              hidden
+            >
+              🙋 <span data-needs-count>0</span> 待批准
+            </button>
           </div>
           <button
             type="button"
@@ -82,6 +92,18 @@
             <p class="room-topic" data-room-topic>把需求丢进来，猫猫们会在同一张桌子上把它做出来。</p>
           </div>
           <div class="chat-head-status">
+            <button
+              type="button"
+              class="needs-me"
+              data-action="focus-needs-me"
+              data-needs-me
+              title="有工具调用等你批准"
+              hidden
+            >
+              <span class="needs-me-dot" aria-hidden="true"></span>
+              <span class="needs-me-text">Needs Me</span>
+              <span class="needs-me-count" data-needs-count>0</span>
+            </button>
             <button
               type="button"
               class="icon-btn chat-settings"
@@ -375,6 +397,18 @@
             <span class="field-hint" id="settings-tools-hint">
               开启：猫可以读/写工作区文件并运行命令；关闭：只产出文字。
             </span>
+
+            <div class="field">
+              <label class="field-label" for="settings-tool-approval">审批策略</label>
+              <select id="settings-tool-approval">
+                <option value="auto">全自动（不等待审批）</option>
+                <option value="commands" selected>只有跑命令需要批准（默认）</option>
+                <option value="all">所有工具都需批准</option>
+              </select>
+              <span class="field-hint" id="settings-tool-approval-hint">
+                仅对真实模式下模型主动发起的工具生效；剧本工具自动放行。
+              </span>
+            </div>
           </fieldset>
 
           <!-- 3. LLM 连接 -->

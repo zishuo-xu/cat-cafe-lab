@@ -16,6 +16,7 @@ import type {
   LlmSettings,
   LlmTestResult,
   PublicSettings,
+  ToolApprovalMode,
   SettingsApi,
   SettingsPatch,
   Speed,
@@ -51,6 +52,7 @@ interface PersistedSettings {
   mode?: BrainMode;
   speed?: Speed;
   toolsEnabled?: boolean;
+  toolApproval?: ToolApprovalMode;
   llm?: {
     baseUrl?: string;
     model?: string;
@@ -71,6 +73,7 @@ export class SettingsStore implements SettingsApi {
   private mode: BrainMode;
   private speed: Speed;
   private toolsEnabled: boolean;
+  private toolApproval: ToolApprovalMode;
   private baseUrl: string;
   private model: string;
   private temperature: number;
@@ -104,6 +107,7 @@ export class SettingsStore implements SettingsApi {
     this.mode = persisted.mode ?? opts.settings.mode;
     this.speed = persisted.speed ?? "normal";
     this.toolsEnabled = persisted.toolsEnabled ?? opts.settings.toolsEnabled ?? true;
+    this.toolApproval = persisted.toolApproval ?? opts.settings.toolApproval ?? "commands";
     this.baseUrl = persisted.llm?.baseUrl ?? env?.baseUrl ?? "";
     this.model = persisted.llm?.model ?? env?.model ?? "";
     this.temperature = clampTemperature(
@@ -127,6 +131,10 @@ export class SettingsStore implements SettingsApi {
     return this.toolsEnabled;
   }
 
+  approvalMode(): ToolApprovalMode {
+    return this.toolApproval;
+  }
+
   getPublic(): PublicSettings {
     return {
       mode: this.mode,
@@ -140,6 +148,7 @@ export class SettingsStore implements SettingsApi {
       },
       stallMs: this.stallMs,
       toolsEnabled: this.toolsEnabled,
+      toolApproval: this.toolApproval,
       port: this.port,
       dataDir: this.dataDirAbs,
       version: this.version,
@@ -159,10 +168,19 @@ export class SettingsStore implements SettingsApi {
     if (patch.toolsEnabled !== undefined && typeof patch.toolsEnabled !== "boolean") {
       throw new Error("toolsEnabled 必须是布尔值");
     }
+    if (
+      patch.toolApproval !== undefined &&
+      patch.toolApproval !== "auto" &&
+      patch.toolApproval !== "commands" &&
+      patch.toolApproval !== "all"
+    ) {
+      throw new Error("toolApproval 只能是 auto / commands / all");
+    }
 
     const nextMode = patch.mode ?? this.mode;
     const nextSpeed = patch.speed ?? this.speed;
     const nextToolsEnabled = patch.toolsEnabled ?? this.toolsEnabled;
+    const nextToolApproval = patch.toolApproval ?? this.toolApproval;
 
     let baseUrl = this.baseUrl;
     let model = this.model;
@@ -206,6 +224,7 @@ export class SettingsStore implements SettingsApi {
     this.mode = nextMode;
     this.speed = nextSpeed;
     this.toolsEnabled = nextToolsEnabled;
+    this.toolApproval = nextToolApproval;
     this.baseUrl = baseUrl;
     this.model = model;
     this.temperature = temperature;
@@ -301,6 +320,7 @@ export class SettingsStore implements SettingsApi {
         mode: this.mode,
         speed: this.speed,
         toolsEnabled: this.toolsEnabled,
+        toolApproval: this.toolApproval,
         llm: {
           baseUrl: this.baseUrl,
           model: this.model,
