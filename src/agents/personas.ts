@@ -6,7 +6,7 @@
  */
 
 import type { Cat } from "../domain/types.ts";
-import { SCENARIOS } from "./scenarios.ts";
+import { SCENARIOS } from "./scenario-registry.ts";
 
 export { SCENARIOS };
 

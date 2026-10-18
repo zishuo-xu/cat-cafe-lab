@@ -239,6 +239,15 @@
             placeholder="例如：给登录页加一个「记住我」勾选框，7 天内免登录。"
           ></textarea>
         </label>
+        <div class="field">
+          <label class="field-label" for="task-scenario">场景（可选）</label>
+          <select id="task-scenario">
+            <option value="">自动匹配（按需求）</option>
+          </select>
+          <span class="field-hint" id="task-scenario-hint">
+            自动匹配：根据需求关键词挑一个演示剧本；也可以指定内置或自定义剧本。
+          </span>
+        </div>
         <div class="chips" role="group" aria-label="示例需求">
           <span class="chips-label">试试：</span>
           <button
@@ -272,7 +281,7 @@
         <header class="modal-head settings-head">
           <div class="settings-head-text">
             <h2 id="settings-title">设置</h2>
-            <p class="settings-head-sub">模式、LLM 连接、回复节奏与运行信息</p>
+            <p class="settings-head-sub">模式、LLM、猫猫与剧本、运行信息</p>
           </div>
           <button type="button" class="icon-btn" data-action="close-settings" aria-label="关闭设置">
             ✕
@@ -423,7 +432,18 @@
             </div>
           </fieldset>
 
-          <!-- 3. 回复节奏 -->
+          <!-- 3. 猫猫与模型 -->
+          <fieldset class="settings-section" id="settings-cats-section">
+            <legend class="settings-legend">猫猫与模型</legend>
+            <p class="settings-desc">
+              真实模式下可以给每只猫单独指定模型和温度；留空则跟随全局。改完点行内「保存模型」。
+            </p>
+            <div id="cat-model-list" class="cat-model-list">
+              <div class="empty"><span>正在读取猫猫…</span></div>
+            </div>
+          </fieldset>
+
+          <!-- 4. 回复节奏 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">回复节奏</legend>
             <p class="settings-desc">只影响演出与真实模式的打字节奏。</p>
@@ -443,7 +463,83 @@
             </div>
           </fieldset>
 
-          <!-- 4. 数据 -->
+          <!-- 5. 剧本库 -->
+          <fieldset class="settings-section" id="settings-scenarios-section">
+            <legend class="settings-legend">剧本库</legend>
+            <p class="settings-desc">
+              内置剧本可导出；导入的自定义剧本会出现在新任务弹窗里，也可以删除。
+            </p>
+
+            <div class="scenario-toolbar">
+              <button
+                type="button"
+                class="btn btn--ghost btn--tiny"
+                data-action="toggle-import-scenario"
+                id="scenario-import-toggle"
+              >
+                ＋ 导入剧本
+              </button>
+              <button
+                type="button"
+                class="btn btn--ghost btn--tiny"
+                data-action="reload-scenarios"
+                id="scenario-reload-btn"
+              >
+                ↻ 刷新
+              </button>
+              <span
+                class="scenario-status"
+                id="scenario-status"
+                role="status"
+                aria-live="polite"
+              ></span>
+            </div>
+
+            <div class="scenario-import" id="scenario-import" hidden>
+              <div class="field">
+                <label class="field-label" for="scenario-import-text">剧本 JSON</label>
+                <textarea
+                  id="scenario-import-text"
+                  rows="6"
+                  spellcheck="false"
+                  placeholder='{"id":"my_scenario","name":"我的剧本","sampleBrief":"…","tags":["demo"],"beats":[]}'
+                ></textarea>
+                <span class="field-hint">
+                  结构见剧本库导出文件；也可以选择一个 .json 文件，内容会填进输入框。
+                </span>
+              </div>
+              <div class="scenario-import-row">
+                <label class="btn btn--ghost btn--tiny file-btn">
+                  选择 .json 文件
+                  <input id="scenario-file" type="file" accept=".json,application/json" hidden />
+                </label>
+                <span class="scenario-file-name" id="scenario-file-name"></span>
+                <button
+                  type="button"
+                  class="btn btn--primary btn--tiny"
+                  data-action="import-scenario"
+                  id="scenario-import-submit"
+                >
+                  导入
+                </button>
+                <button
+                  type="button"
+                  class="btn btn--ghost btn--tiny"
+                  data-action="cancel-import-scenario"
+                >
+                  取消
+                </button>
+              </div>
+              <p class="form-error" id="scenario-import-error" role="alert" hidden></p>
+              <ul class="scenario-error-list" id="scenario-import-error-list" hidden></ul>
+            </div>
+
+            <div id="scenario-list" class="scenario-list">
+              <div class="empty"><span>正在读取剧本…</span></div>
+            </div>
+          </fieldset>
+
+          <!-- 6. 数据 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">数据</legend>
             <div class="settings-danger-row">
@@ -478,7 +574,7 @@
             </div>
           </fieldset>
 
-          <!-- 5. 关于 / 只读 -->
+          <!-- 7. 关于 / 只读 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">关于 / 运行信息</legend>
             <dl class="settings-info" id="settings-info">
@@ -501,6 +597,70 @@
         <footer class="modal-foot settings-foot">
           <button type="button" class="btn btn--ghost" data-action="close-settings">取消</button>
           <button type="submit" class="btn btn--primary" id="settings-save-btn">保存配置</button>
+        </footer>
+      </form>
+    </dialog>
+
+
+    <!-- ── 猫猫档案弹窗 ───────────────────────────────────────────── -->
+    <dialog id="cat-edit-modal" class="modal modal--cat" aria-labelledby="cat-edit-title">
+      <form id="cat-edit-form" class="modal-card" novalidate>
+        <header class="modal-head">
+          <h2 id="cat-edit-title">编辑猫猫档案</h2>
+          <button type="button" class="icon-btn" data-action="close-cat-edit" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+
+        <div class="cat-edit-head">
+          <span class="cat-edit-avatar" id="cat-edit-avatar" aria-hidden="true"></span>
+          <div class="cat-edit-preview">
+            <strong id="cat-edit-name-preview">宪宪</strong>
+            <span id="cat-edit-species">布偶猫 · 主架构师 / 主理猫</span>
+            <span class="cat-edit-note">保存后名册、消息气泡与 @ 名字会立刻更新。</span>
+          </div>
+        </div>
+
+        <div class="field-grid">
+          <label class="field">
+            <span class="field-label">名字</span>
+            <input id="cat-name" type="text" maxlength="20" autocomplete="off" required />
+          </label>
+          <label class="field">
+            <span class="field-label">称号 title</span>
+            <input id="cat-title" type="text" maxlength="48" autocomplete="off" />
+          </label>
+        </div>
+
+        <label class="field">
+          <span class="field-label">性格 persona</span>
+          <textarea id="cat-persona" rows="2" maxlength="240"></textarea>
+        </label>
+
+        <div class="field-grid">
+          <label class="field">
+            <span class="field-label">口头禅</span>
+            <input id="cat-catchphrase" type="text" maxlength="80" autocomplete="off" />
+          </label>
+          <div class="field">
+            <span class="field-label">主题色</span>
+            <span class="color-row">
+              <input id="cat-accent" type="color" value="#7C9EB2" aria-label="主题色" />
+              <code id="cat-accent-hex">#7C9EB2</code>
+              <span class="color-swatches" id="cat-color-swatches" role="group" aria-label="主题色色板"></span>
+            </span>
+          </div>
+        </div>
+
+        <label class="field">
+          <span class="field-label">初次招呼语</span>
+          <textarea id="cat-greeting" rows="2" maxlength="240"></textarea>
+        </label>
+
+        <p class="form-error" id="cat-edit-error" role="alert" hidden></p>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-cat-edit">取消</button>
+          <button type="submit" class="btn btn--primary" id="cat-save-btn">保存档案</button>
         </footer>
       </form>
     </dialog>

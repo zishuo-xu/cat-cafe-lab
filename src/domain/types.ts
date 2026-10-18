@@ -43,6 +43,10 @@ export interface Cat {
   avatar: "ragdoll" | "mainecoon" | "siamese" | "golden";
   /** 初次进房时的招呼语。 */
   greeting: string;
+  /** 真实模式下这只猫使用的模型 id；空/缺省时用全局 LLM_MODEL。 */
+  llmModel?: string;
+  /** 真实模式下这只猫的温度；缺省时用全局。 */
+  llmTemperature?: number;
 }
 
 // ───────────────────────── 房间与消息 ─────────────────────────
@@ -302,6 +306,11 @@ export interface Scenario {
   tags: string[];
   /** 按阶段顺序播放的拍子；mock brain 按 stage 取。 */
   beats: ScenarioBeat[];
+}
+
+export interface ScenarioWithSource {
+  scenario: Scenario;
+  source: "builtin" | "custom";
 }
 
 // ───────────────────────── 引擎契约 ─────────────────────────

@@ -30,6 +30,17 @@
 > 点「测试连接」并保存，运行中即时切换。面板保存的值会覆盖环境变量；API Key 只存在进程内存，
 > 不回传、不落盘。下面的环境变量方式仍然可用，作为启动默认值。
 
+### 每只猫独立模型
+
+设置面板「猫猫与模型」里可以给每只猫单独填 `llmModel` 和 `llmTemperature`
+（等价于 `PUT /api/cats/:id`）。真实模式下，llm-brain 每次调用按当前这只猫解析：
+
+- `Cat.llmModel` 非空 → 用这只猫的模型；空/缺省 → 用全局 `LLM_MODEL`；
+- `Cat.llmTemperature` 是数字（包括 `0`）→ 用它；否则回落全局 `LLM_TEMPERATURE`；
+- 覆盖值存在 `data/studio.json` 的 `cats` 里，重启保留。
+
+这样可以让宪宪用推理模型、金渐层用便宜快速的模型，而不需要维护多个 brain 实例。
+
 ### 启动示例
 
 ```bash

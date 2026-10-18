@@ -16,7 +16,12 @@ import type {
   StudioState,
   TaskId,
 } from "../domain/types.ts";
-import type { Studio } from "./studio.ts";
+import {
+  addScenario,
+  listScenarios,
+  removeScenario,
+} from "../agents/scenario-registry.ts";
+import type { CatPatch, Studio } from "./studio.ts";
 
 export interface HttpDeps {
   studio: Studio;
@@ -104,6 +109,38 @@ function pickScenario(scenarios: Scenario[], brief: string): string {
     if (!best || score > best.score) best = { id: scenario.id, score };
   }
   return best?.id ?? scenarios[0]?.id ?? "remember_me";
+}
+
+const CAT_TEXT_FIELDS = ["name", "title", "persona", "catchphrase", "greeting", "accent"] as const;
+
+function parseCatPatch(body: unknown): CatPatch {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    throw new Error("请求体必须是对象");
+  }
+  const record = body as Record<string, unknown>;
+  const patch: CatPatch = {};
+  for (const field of CAT_TEXT_FIELDS) {
+    const value = record[field];
+    if (value === undefined) continue;
+    if (typeof value !== "string") throw new Error(`${field} 必须是字符串`);
+    patch[field] = value;
+  }
+  const model = record["llmModel"];
+  if (model !== undefined) {
+    if (model !== null && typeof model !== "string") {
+      throw new Error("llmModel 必须是字符串或 null");
+    }
+    patch.llmModel = model;
+  }
+  const temperature = record["llmTemperature"];
+  if (temperature !== undefined) {
+    if (temperature !== null && typeof temperature !== "number") {
+      throw new Error("llmTemperature 必须是数字或 null");
+    }
+    patch.llmTemperature = temperature;
+  }
+  if (Object.keys(patch).length === 0) throw new Error("没有可更新的字段");
+  return patch;
 }
 
 function serveStatic(res: ServerResponse, publicDir: string, pathname: string): void {
@@ -226,6 +263,78 @@ export function createHttpServer(deps: HttpDeps): Server {
       const state = studio.reset();
       json(res, 200, { ok: true, seq: state.seq });
       return;
+    }
+
+    if (pathname === "/api/cats" && method === "GET") {
+      json(res, 200, { cats: studio.state.cats });
+      return;
+    }
+
+    {
+      const catMatch = /^\/api\/cats\/([^/]+)$/.exec(pathname);
+      if (catMatch && method === "PUT") {
+        const catId = decodeURIComponent(catMatch[1] ?? "");
+        const body = await readBody(req);
+        let patch: CatPatch;
+        try {
+          patch = parseCatPatch(body);
+        } catch (err) {
+          fail(res, 400, err instanceof Error ? err.message : "invalid cat patch");
+          return;
+        }
+        try {
+          json(res, 200, studio.updateCat(catId, patch));
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "invalid cat patch";
+          fail(res, message.includes("not found") ? 404 : 400, message);
+        }
+        return;
+      }
+    }
+
+    if (pathname === "/api/scenarios") {
+      if (method === "GET") {
+        json(res, 200, { scenarios: listScenarios() });
+        return;
+      }
+      if (method === "POST") {
+        const body = await readBody(req);
+        const raw =
+          body && typeof body === "object" && !Array.isArray(body) && "scenario" in body
+            ? (body as { scenario: unknown }).scenario
+            : body;
+        const result = addScenario(raw);
+        if (result.ok) {
+          json(res, 201, { scenario: result.scenario, source: "custom" });
+          return;
+        }
+        const conflict = result.errors.some((message) => message.includes("已存在"));
+        json(res, conflict ? 409 : 400, {
+          error: result.errors[0] ?? "invalid scenario",
+          errors: result.errors,
+        });
+        return;
+      }
+      fail(res, 405, "method not allowed");
+      return;
+    }
+
+    {
+      const scenarioMatch = /^\/api\/scenarios\/([^/]+)$/.exec(pathname);
+      if (scenarioMatch && method === "DELETE") {
+        const scenarioId = decodeURIComponent(scenarioMatch[1] ?? "");
+        const outcome = removeScenario(scenarioId);
+        if (outcome === "builtin") {
+          fail(res, 400, "内置剧本不能删除");
+          return;
+        }
+        if (outcome === "not_found") {
+          fail(res, 404, "剧本不存在");
+          return;
+        }
+        json(res, 200, { ok: true });
+        return;
+      }
     }
 
     const msgMatch = /^\/api\/rooms\/([^/]+)\/messages$/.exec(pathname);

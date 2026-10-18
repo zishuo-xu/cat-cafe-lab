@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 
 import { CATS, SCENARIOS } from "./agents/personas.ts";
 import { createMockBrain } from "./agents/mock-brain.ts";
+import { initScenarios } from "./agents/scenario-registry.ts";
 import { createDriver } from "./engine/driver.ts";
 import { createHttpServer } from "./server/http.ts";
 import { readSettings } from "./server/settings.ts";
@@ -14,7 +15,11 @@ const settings = readSettings();
 const dataDir = resolve(settings.dataDir);
 
 const studio = new Studio({ cats: CATS, mode: settings.mode, dataDir });
-const mock = createMockBrain(SCENARIOS);
+// 导入的自定义剧本会原地追加到 SCENARIOS，driver / HTTP 拿到的是同一数组引用。
+initScenarios(dataDir, studio.state.cats.map((cat) => cat.id));
+const mock = createMockBrain(SCENARIOS, {
+  catName: (id) => studio.getCat(id)?.name ?? id,
+});
 const switchable = new SwitchableBrain(mock);
 
 // 设置面板可以在运行中切换 brain；driver 只持有 switchable 这层壳。

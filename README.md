@@ -44,7 +44,7 @@ node src/main.ts      # 或 pnpm start
 点「＋ 新任务」→ 选「记住我」示例 → 「让猫猫开工」，然后看着就行。
 
 ```bash
-node --test tests/    # 76 个测试
+node --test tests/    # 96 个测试
 npx tsc --noEmit      # 类型检查
 ```
 
@@ -169,11 +169,47 @@ node src/main.ts
 | LLM 连接 | Base URL、模型名、API Key（密码框，留空不修改）、温度、**测试连接**（显示耗时与可用模型数） |
 | 回复节奏 | 慢 / 正常 / 快，只缩放打字延迟，不影响协作逻辑 |
 | 数据 | 重置猫咖（二次确认，清空任务/消息/记忆） |
+| 猫猫与模型 | 改名字/称号/性格/口头禅/招呼语/主题色；真实模式下每只猫独立模型与温度 |
+| 剧本库 | 查看/导出/删除自定义剧本，导入 JSON 剧本 |
 
 底部还有只读的运行信息（版本、端口、数据目录、Node、启动时间、stallMs）。
 只有 `mode / speed / baseUrl / model / temperature` 会落盘到 `data/settings.json`（0600），key 永远只在内存。
 
 ![设置面板](docs/images/settings.png)
+
+---
+
+## 猫猫档案、每猫模型、自定义剧本
+
+这三件事是「下一层」，都在设置面板里：
+
+**猫猫档案**：名字、称号、性格、口头禅、招呼语、主题色都能改（id 不变）。
+改名后 @ 新名字立刻生效，名册和消息里的旧名字也会跟着变。
+
+**每猫模型**：真实模式下，每只猫可以单独指定模型和温度；留空就跟随全局设置。
+比如宪宪用推理模型、金渐层用便宜快速的模型——和猫咖原本「不同模型不同分工」的思路一致。
+
+**剧本库**：剧本是数据，不是代码。内置两个（记住我 / CSV 导出）只读可导出；
+自定义剧本以 JSON 导入，服务端会逐条校验（猫 id、交接卡五栏、review verdict/findings），
+通过后立刻出现在「新任务」的场景选择里。导入的剧本保存在 `data/scenarios.json`。
+
+```jsonc
+// 一个最简剧本骨架（完整示例可从「剧本库 → 导出」拿到）
+{
+  "id": "my_scenario",
+  "name": "我的场景",
+  "sampleBrief": "一句话示例需求",
+  "tags": ["示例"],
+  "beats": [
+    { "stage": "intake", "cat": "xianxian",
+      "turn": { "kind": "message", "text": "我先接住。" } }
+  ]
+}
+```
+
+![猫猫与模型](docs/images/settings-cats.png)
+
+![剧本库](docs/images/settings-scenarios.png)
 
 ---
 
@@ -204,7 +240,8 @@ src/domain/types.ts   唯一契约
 - **猫交付的不是可执行代码**：spec / design / patch 摘要，不会真的改你的仓库。
   这个项目的目标是协作过程本身，不是 coding agent。
 - **本地单人**：没有鉴权、没有多用户、没有数据库。JSON 文件就是全部持久化。
-- **只内置两个剧本**：记住我、CSV 导出。其他需求会走通用兜底回复。
+- **剧本台词不会自动改名**：改猫名后，@ 路由、名册、消息作者都用新名字，但剧本里写死的旧名字不会自动替换（剧本是数据，不是模板变量）。
+- **剧本要自己写**：内置两个（记住我、CSV 导出），也可以在「剧本库」导入 JSON；不写剧本的需求会走通用兜底回复。
 
 ---
 
@@ -219,7 +256,7 @@ cat-cafe-lab/
 │   ├── agents/        personas.ts、scenarios.ts、mock-brain.ts、llm-brain.ts
 │   └── main.ts
 ├── public/            index.html、app.js、styles.css、avatars.js
-├── tests/             engine / agents / llm / integration / settings / smoke（76 个）
+├── tests/             engine / agents / llm / integration / settings / cats-scenarios / smoke（96 个）
 ├── docs/              architecture.md、llm.md、images/
 ├── data/              studio.json（gitignore）
 └── PLAN.md            设计与分工记录

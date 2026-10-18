@@ -84,8 +84,8 @@ export function createLlmBrain(
   const timeoutMs = positiveInt(options.timeoutMs, DEFAULT_TIMEOUT_MS);
   const maxTokens = positiveInt(options.maxTokens, DEFAULT_MAX_TOKENS);
   const endpoint = `${settings.baseUrl.trim().replace(/\/+$/, "")}/chat/completions`;
-  const model = settings.model.trim();
-  const temperature = clamp(
+  const globalModel = settings.model.trim();
+  const globalTemperature = clamp(
     Number.isFinite(settings.temperature) ? settings.temperature : 0.8,
     0,
     2,
@@ -105,9 +105,13 @@ export function createLlmBrain(
   return {
     mode: "llm",
     async think(ctx: TurnContext): Promise<CatTurn[]> {
+      // 每只猫可以有自己的模型 / 温度；缺省回落全局设置。
+      const model = resolveModel(ctx, globalModel);
+      const temperature = resolveTemperature(ctx, globalTemperature);
+
       const downgrade = (reason: string): Promise<CatTurn[]> => {
         warn(
-          `[llm-brain] ${reason}，降级 fallback（猫=${ctx.cat.name}，stage=${ctx.task?.stage ?? "-"}）`,
+          `[llm-brain] ${reason}，降级 fallback（猫=${ctx.cat.name}，model=${model || "-"}，stage=${ctx.task?.stage ?? "-"}）`,
         );
         return fallback.think(ctx);
       };
@@ -121,7 +125,7 @@ export function createLlmBrain(
         max_tokens: maxTokens,
         stream: false,
         messages: [
-          { role: "system", content: buildSystemPrompt(ctx) },
+          { role: "system", content: buildSystemPrompt(ctx, model) },
           { role: "user", content: buildUserPrompt(ctx) },
         ],
       });
@@ -489,7 +493,22 @@ function stringList(value: unknown): string[] | null {
 
 // ───────────────────────── Prompt 组装 ─────────────────────────
 
-function buildSystemPrompt(ctx: TurnContext): string {
+/** 每只猫用哪个模型：cat.llmModel 优先（空白串视为未设置），否则全局。 */
+function resolveModel(ctx: TurnContext, globalModel: string): string {
+  const perCat = typeof ctx.cat.llmModel === "string" ? ctx.cat.llmModel.trim() : "";
+  return perCat || globalModel;
+}
+
+/** 每只猫的温度：cat.llmTemperature 优先，0 是合法值，非法/缺省回落全局。 */
+function resolveTemperature(ctx: TurnContext, globalTemperature: number): number {
+  const perCat = ctx.cat.llmTemperature;
+  if (typeof perCat === "number" && Number.isFinite(perCat)) {
+    return clamp(perCat, 0, 2);
+  }
+  return globalTemperature;
+}
+
+function buildSystemPrompt(ctx: TurnContext, model: string): string {
   const { cat, room, task } = ctx;
   const selfId = cat.id;
   const others = room.catIds.filter((id) => id !== selfId);
@@ -511,6 +530,7 @@ function buildSystemPrompt(ctx: TurnContext): string {
     `性格：${cat.persona}`,
     `口头禅：${cat.catchphrase}`,
     `房间：${room.name} —— ${room.topic}`,
+    `本次使用模型：${model}。`,
     `你自己的 catId 是 ${selfId}。房间里其他猫的 catId：${others.join("、") || "（无）"}。`,
     "",
     taskBlock,

@@ -59,6 +59,18 @@ export interface CreateTaskInput {
   title?: string;
 }
 
+/** 猫猫档案可编辑字段；id / role / avatar / species 不可改。 */
+export interface CatPatch {
+  name?: string;
+  title?: string;
+  persona?: string;
+  catchphrase?: string;
+  greeting?: string;
+  accent?: string;
+  llmModel?: string | null;
+  llmTemperature?: number | null;
+}
+
 type Listener = (state: StudioState) => void;
 
 function now(): number {
@@ -350,6 +362,76 @@ export class Studio {
     this.notify();
   }
 
+  /**
+   * 编辑猫猫档案（名字 / 称号 / 性格 / 口头禅 / 招呼语 / 主题色）与真实模式模型覆盖。
+   * id、角色、头像、品种不可改。改名后 @ 解析会自动用新名字。
+   */
+  updateCat(catId: CatId, patch: CatPatch): Cat {
+    const index = this.state.cats.findIndex((c) => c.id === catId);
+    const current = this.state.cats[index];
+    if (index < 0 || !current) throw new Error(`cat not found: ${catId}`);
+    const next: Cat = { ...current };
+
+    if (patch.name !== undefined) {
+      const name = patch.name.trim();
+      if (name.length < 1 || name.length > 8) throw new Error("名字需要 1–8 个字符");
+      if (this.state.cats.some((c) => c.id !== catId && c.name === name)) {
+        throw new Error(`名字「${name}」已经被其他猫用了`);
+      }
+      next.name = name;
+    }
+    if (patch.title !== undefined) {
+      const title = patch.title.trim();
+      if (title.length < 1 || title.length > 24) throw new Error("称号需要 1–24 个字符");
+      next.title = title;
+    }
+    if (patch.persona !== undefined) {
+      const persona = patch.persona.trim();
+      if (persona.length < 1 || persona.length > 100) throw new Error("性格需要 1–100 个字符");
+      next.persona = persona;
+    }
+    if (patch.catchphrase !== undefined) {
+      const catchphrase = patch.catchphrase.trim();
+      if (catchphrase.length < 1 || catchphrase.length > 50) throw new Error("口头禅需要 1–50 个字符");
+      next.catchphrase = catchphrase;
+    }
+    if (patch.greeting !== undefined) {
+      const greeting = patch.greeting.trim();
+      if (greeting.length < 1 || greeting.length > 100) throw new Error("招呼语需要 1–100 个字符");
+      next.greeting = greeting;
+    }
+    if (patch.accent !== undefined) {
+      if (!/^#[0-9a-fA-F]{6}$/.test(patch.accent.trim())) {
+        throw new Error("主题色需要是 #RRGGBB 格式");
+      }
+      next.accent = patch.accent.trim();
+    }
+    if (patch.llmModel !== undefined) {
+      if (patch.llmModel === null || patch.llmModel.trim() === "") {
+        delete next.llmModel;
+      } else {
+        const model = patch.llmModel.trim();
+        if (model.length > 80) throw new Error("模型名不能超过 80 个字符");
+        next.llmModel = model;
+      }
+    }
+    if (patch.llmTemperature !== undefined) {
+      if (patch.llmTemperature === null) {
+        delete next.llmTemperature;
+      } else {
+        const temperature = Number(patch.llmTemperature);
+        if (!Number.isFinite(temperature) || temperature < 0 || temperature > 2) {
+          throw new Error("温度需要在 0–2 之间");
+        }
+        next.llmTemperature = temperature;
+      }
+    }
+
+    this.state.cats[index] = next;
+    this.notify();
+    return next;
+  }
+
   // ── 订阅 / 持久化 ─────────────────────────────────────
 
   subscribe(listener: Listener): () => void {
@@ -435,6 +517,34 @@ export class Studio {
       this.state.artifacts = (parsed.artifacts ?? []) as Artifact[];
       this.state.memory = (parsed.memory ?? []) as MemoryEntry[];
       this.state.typing = (parsed.typing ?? {}) as Record<RoomId, CatId | null>;
+
+      // 猫猫档案：以代码里的 CATS 为底，只接受安全的字段覆盖。
+      const baseCats = this.state.cats;
+      const savedCats = Array.isArray(parsed.cats) ? (parsed.cats as unknown[]) : [];
+      if (savedCats.length > 0) {
+        const overrides = new Map<string, Partial<Cat>>();
+        for (const raw of savedCats) {
+          if (!raw || typeof raw !== "object") continue;
+          const record = raw as Record<string, unknown>;
+          if (typeof record["id"] !== "string") continue;
+          const patch = sanitizeCatOverrides(record);
+          if (Object.keys(patch).length > 0) overrides.set(record["id"], patch);
+        }
+        this.state.cats = this.state.cats.map((base) => {
+          const patch = overrides.get(base.id);
+          return patch ? { ...base, ...patch, id: base.id } : base;
+        });
+        // 防止手工改坏存档导致重名：重名的那只回退默认名。
+        const seenNames = new Set<string>();
+        for (const cat of this.state.cats) {
+          if (seenNames.has(cat.name)) {
+            const fallback = baseCats.find((c) => c.id === cat.id);
+            if (fallback) cat.name = fallback.name;
+          }
+          seenNames.add(cat.name);
+        }
+      }
+
       this.state.startedAt = parsed.startedAt ?? now();
       this.state.seq = parsed.seq ?? 0;
       // 上次退出时可能残留 typing，恢复时清掉。
@@ -483,4 +593,42 @@ export class Studio {
       this.persistTimer.unref?.();
     }
   }
+}
+
+/** 从存档里只挑安全、合法的档案字段，其余丢弃。 */
+function sanitizeCatOverrides(record: Record<string, unknown>): Partial<Cat> {
+  const patch: Partial<Cat> = {};
+  const takeText = (
+    key: "name" | "title" | "persona" | "catchphrase" | "greeting",
+    max: number,
+  ): void => {
+    const value = record[key];
+    if (typeof value !== "string") return;
+    const trimmed = value.trim();
+    if (trimmed.length >= 1 && trimmed.length <= max) patch[key] = trimmed;
+  };
+  takeText("name", 8);
+  takeText("title", 24);
+  takeText("persona", 100);
+  takeText("catchphrase", 50);
+  takeText("greeting", 100);
+
+  const accent = record["accent"];
+  if (typeof accent === "string" && /^#[0-9a-fA-F]{6}$/.test(accent.trim())) {
+    patch.accent = accent.trim();
+  }
+  const llmModel = record["llmModel"];
+  if (typeof llmModel === "string" && llmModel.trim().length > 0 && llmModel.length <= 80) {
+    patch.llmModel = llmModel.trim();
+  }
+  const llmTemperature = record["llmTemperature"];
+  if (
+    typeof llmTemperature === "number" &&
+    Number.isFinite(llmTemperature) &&
+    llmTemperature >= 0 &&
+    llmTemperature <= 2
+  ) {
+    patch.llmTemperature = llmTemperature;
+  }
+  return patch;
 }

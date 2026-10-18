@@ -213,6 +213,7 @@ function nudgeTurns(
   ctx: TurnContext,
   scenario: Scenario | null,
   recovered: Set<string>,
+  nameOf: (id: CatId) => string,
 ): CatTurn[] {
   const task = ctx.task;
   if (!task) {
@@ -239,8 +240,8 @@ function nudgeTurns(
     recovered.add(task.id);
 
     const handoff = faultBeat.turn.kind === "handoff" ? faultBeat.turn : null;
-    const authorName = CAT_NAMES[faultBeat.cat] ?? faultBeat.cat;
-    const recipientName = handoff ? CAT_NAMES[handoff.to] ?? handoff.to : "接收猫";
+    const authorName = nameOf(faultBeat.cat);
+    const recipientName = handoff ? nameOf(handoff.to) : "接收猫";
     return [
       {
         kind: "message",
@@ -286,15 +287,21 @@ function chatTurns(ctx: TurnContext, vars: Record<string, string>): CatTurn[] {
 
 // ───────────────────────── 工厂 ─────────────────────────
 
-export function createMockBrain(scenarios: Scenario[]): CatBrain {
-  const byId = new Map(scenarios.map((scenario) => [scenario.id, scenario]));
+export interface MockBrainDeps {
+  /** 取当前猫名的访问器；改名后 nudge 台词也能跟着变。 */
+  catName?: (id: CatId) => string;
+}
+
+export function createMockBrain(scenarios: Scenario[], deps: MockBrainDeps = {}): CatBrain {
+  const nameOf = (id: CatId): string => deps.catName?.(id) ?? CAT_NAMES[id] ?? id;
   /** 已经补投过漏 @ 交接卡的任务。 */
   const recovered = new Set<string>();
 
   function resolveScenario(ctx: TurnContext): Scenario | null {
     if (ctx.scenario) return ctx.scenario;
     if (!ctx.task) return null;
-    return byId.get(ctx.task.scenarioId) ?? null;
+    // 每次现查：自定义剧本导入后无需重建 brain。
+    return scenarios.find((scenario) => scenario.id === ctx.task?.scenarioId) ?? null;
   }
 
   return {
@@ -304,7 +311,7 @@ export function createMockBrain(scenarios: Scenario[]): CatBrain {
       const vars = buildVars(ctx, scenario);
 
       if (ctx.trigger.kind === "nudge") {
-        return nudgeTurns(ctx, scenario, recovered);
+        return nudgeTurns(ctx, scenario, recovered, nameOf);
       }
       if (ctx.trigger.kind === "user_message") {
         return chatTurns(ctx, vars);

@@ -515,3 +515,155 @@ describe("llm-brain · 结构校验（纯函数）", () => {
     if (turns[1]?.kind === "message") assert.equal(turns[1].delayMs, undefined);
   });
 });
+
+describe("llm-brain · 每猫模型与温度", () => {
+  const OK_CONTENT = JSON.stringify([{ kind: "message", text: "我先说结论，再拆。" }]);
+
+  interface RecordedBody {
+    model: string;
+    temperature: number;
+    messages: Array<{ role: string; content: string }>;
+  }
+
+  function bodyOf(request: RecordedRequest): RecordedBody {
+    return JSON.parse(request.body) as RecordedBody;
+  }
+
+  test("两只不同的猫，各自请求体与 prompt 都用各自的模型", async () => {
+    await withFake(
+      (_req, res) => sendOpenAi(res, OK_CONTENT),
+      async (fake) => {
+        const fallback = makeFallback();
+        const brain = createLlmBrain(
+          { ...SETTINGS, baseUrl: fake.baseUrl },
+          fallback.brain,
+        );
+        const xianxian = catByRole("architect");
+        const yanyan = catByRole("reviewer");
+
+        await brain.think(
+          makeContext({ cat: { ...xianxian, llmModel: "model-architect" } }),
+        );
+        await brain.think(
+          makeContext({ cat: { ...yanyan, llmModel: "model-reviewer" } }),
+        );
+
+        assert.equal(fallback.calls(), 0);
+        assert.equal(fake.requests.length, 2);
+        const first = fake.requests[0];
+        const second = fake.requests[1];
+        assert.ok(first);
+        assert.ok(second);
+        assert.equal(bodyOf(first).model, "model-architect");
+        assert.equal(bodyOf(second).model, "model-reviewer");
+        // prompt 里也要体现这只猫实际使用的模型。
+        assert.match(bodyOf(first).messages[0]?.content ?? "", /model-architect/);
+        assert.match(bodyOf(second).messages[0]?.content ?? "", /model-reviewer/);
+      },
+    );
+  });
+
+  test("llmModel 为空串 / 纯空白时回落全局 settings.model", async () => {
+    await withFake(
+      (_req, res) => sendOpenAi(res, OK_CONTENT),
+      async (fake) => {
+        const fallback = makeFallback();
+        const brain = createLlmBrain(
+          { ...SETTINGS, baseUrl: fake.baseUrl },
+          fallback.brain,
+        );
+        const cat = catByRole("architect");
+
+        await brain.think(makeContext({ cat: { ...cat, llmModel: "" } }));
+        await brain.think(makeContext({ cat: { ...cat, llmModel: "   " } }));
+
+        assert.equal(fallback.calls(), 0);
+        assert.equal(fake.requests.length, 2);
+        for (const request of fake.requests) {
+          assert.equal(bodyOf(request).model, SETTINGS.model);
+        }
+      },
+    );
+  });
+
+  test("llmTemperature = 0 生效（0 是合法值，不能按 falsy 回落）", async () => {
+    await withFake(
+      (_req, res) => sendOpenAi(res, OK_CONTENT),
+      async (fake) => {
+        const fallback = makeFallback();
+        const brain = createLlmBrain(
+          { ...SETTINGS, baseUrl: fake.baseUrl },
+          fallback.brain,
+        );
+        await brain.think(
+          makeContext({ cat: { ...catByRole("reviewer"), llmTemperature: 0 } }),
+        );
+
+        const request = fake.requests[0];
+        assert.ok(request);
+        assert.equal(bodyOf(request).temperature, 0);
+      },
+    );
+  });
+
+  test("每猫温度生效，且越界值被夹到 0–2", async () => {
+    const cases = [
+      { llmTemperature: 1.5, expected: 1.5 },
+      { llmTemperature: 5, expected: 2 },
+      { llmTemperature: -3, expected: 0 },
+    ];
+
+    await withFake(
+      (_req, res) => sendOpenAi(res, OK_CONTENT),
+      async (fake) => {
+        const fallback = makeFallback();
+        const brain = createLlmBrain(
+          { ...SETTINGS, baseUrl: fake.baseUrl },
+          fallback.brain,
+        );
+        const cat = catByRole("designer");
+
+        for (const item of cases) {
+          await brain.think(
+            makeContext({ cat: { ...cat, llmTemperature: item.llmTemperature } }),
+          );
+        }
+
+        assert.equal(fake.requests.length, cases.length);
+        cases.forEach((item, index) => {
+          const request = fake.requests[index];
+          assert.ok(request);
+          assert.equal(bodyOf(request).temperature, item.expected);
+        });
+      },
+    );
+  });
+
+  test("非法温度（NaN / 非数字）回落全局 settings.temperature", async () => {
+    await withFake(
+      (_req, res) => sendOpenAi(res, OK_CONTENT),
+      async (fake) => {
+        const fallback = makeFallback();
+        const brain = createLlmBrain(
+          { ...SETTINGS, baseUrl: fake.baseUrl },
+          fallback.brain,
+        );
+        const cat = catByRole("designer");
+
+        await brain.think(
+          makeContext({ cat: { ...cat, llmTemperature: Number.NaN } }),
+        );
+        await brain.think(
+          makeContext({
+            cat: { ...cat, llmTemperature: "hot" as unknown as number },
+          }),
+        );
+
+        assert.equal(fake.requests.length, 2);
+        for (const request of fake.requests) {
+          assert.equal(bodyOf(request).temperature, SETTINGS.temperature);
+        }
+      },
+    );
+  });
+});

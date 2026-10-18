@@ -89,6 +89,8 @@ const app = {
   ticker: null,
   /** 卡住判定的时间阈值，优先取 /api/health 的 stallMs。 */
   stallMs: FALLBACK_STALL_MS,
+  /** 全局 LLM 模型名（来自 /api/settings），用于「跟随全局」标签。 */
+  globalModel: "",
 };
 
 /** 设置面板的临时状态（打开时才加载，关闭即丢弃草稿）。 */
@@ -101,6 +103,24 @@ const settingsState = {
   resetting: false,
   resetConfirm: false,
   clearKeyRequested: false,
+};
+
+/** 猫猫档案编辑对话框状态。 */
+const catEditState = { catId: null, saving: false, accent: "#D9A066" };
+
+/** 剧本库 / 新任务场景选择的临时状态。 */
+const scenarioState = {
+  items: [],
+  loaded: false,
+  loading: false,
+  error: "",
+  importOpen: false,
+  importing: false,
+  deleteConfirmId: null,
+  deleteError: "",
+  deleteErrorId: "",
+  taskToken: 0,
+  taskItems: [],
 };
 
 const els = {};
@@ -434,6 +454,7 @@ async function boot() {
   renderAll();
 
   void refreshHealth();
+  void refreshGlobalModel();
   try {
     await refreshState("boot");
   } catch {
@@ -510,6 +531,38 @@ function cacheDom() {
   els.settingsResetConfirm = $("#settings-reset-confirm");
   els.settingsConfirmReset = $("#settings-confirm-reset");
   els.settingsSaveBtn = $("#settings-save-btn");
+
+  els.catModelList = $("#cat-model-list");
+  els.catEditModal = $("#cat-edit-modal");
+  els.catEditForm = $("#cat-edit-form");
+  els.catEditAvatar = $("#cat-edit-avatar");
+  els.catEditNamePreview = $("#cat-edit-name-preview");
+  els.catEditSpecies = $("#cat-edit-species");
+  els.catName = $("#cat-name");
+  els.catTitle = $("#cat-title");
+  els.catPersona = $("#cat-persona");
+  els.catCatchphrase = $("#cat-catchphrase");
+  els.catGreeting = $("#cat-greeting");
+  els.catAccent = $("#cat-accent");
+  els.catAccentHex = $("#cat-accent-hex");
+  els.catColorSwatches = $("#cat-color-swatches");
+  els.catEditError = $("#cat-edit-error");
+  els.catSaveBtn = $("#cat-save-btn");
+
+  els.scenarioList = $("#scenario-list");
+  els.scenarioStatus = $("#scenario-status");
+  els.scenarioImportToggle = $("#scenario-import-toggle");
+  els.scenarioImport = $("#scenario-import");
+  els.scenarioImportText = $("#scenario-import-text");
+  els.scenarioImportSubmit = $("#scenario-import-submit");
+  els.scenarioImportError = $("#scenario-import-error");
+  els.scenarioImportErrorList = $("#scenario-import-error-list");
+  els.scenarioFile = $("#scenario-file");
+  els.scenarioFileName = $("#scenario-file-name");
+  els.scenarioReload = $("#scenario-reload-btn");
+
+  els.taskScenario = $("#task-scenario");
+  els.taskScenarioHint = $("#task-scenario-hint");
 }
 
 // ── 网络：初始快照 / SSE / 去重 ─────────────────────────────────────────
@@ -668,10 +721,21 @@ function renderRoster() {
 
   const workTask = latestActiveTask();
   const statuses = cats.map((cat) => catState(cat.id));
+  const mode = app.state?.mode ?? "mock";
   const sig = cats
     .map((cat, index) => {
       const state = statuses[index];
-      return [cat.id, cat.name, cat.avatar, cat.accent, state, state === "working" ? workTask?.stage : ""].join(":");
+      return [
+        cat.id,
+        cat.name,
+        cat.avatar,
+        cat.accent,
+        state,
+        state === "working" ? workTask?.stage : "",
+        cat.llmModel ?? "",
+        mode,
+        app.globalModel,
+      ].join(":");
     })
     .join("|");
 
@@ -724,11 +788,32 @@ function renderRoster() {
             : stageText,
         ),
       ),
-      h("span", { class: "cat-catch", "aria-hidden": "true", text: cat.catchphrase }),
+      (() => {
+        const model = catModelLabel(cat);
+        return h("span", {
+          class: "cat-model-tag",
+          "data-mode": app.state?.mode === "llm" ? "llm" : "mock",
+          title: model.title,
+          text: model.text,
+        });
+      })(),
     );
   });
 
   host.replaceChildren(...nodes);
+}
+
+/** 名册/设置里的「当前模型」标签。 */
+function catModelLabel(cat) {
+  const mode = app.state?.mode ?? "mock";
+  if (mode !== "llm") {
+    return { text: "演出", title: "演出模式：不调用模型" };
+  }
+  const override = String(cat?.llmModel ?? "").trim();
+  if (override) return { text: override, title: `模型覆盖：${override}` };
+  const globalModel = String(app.globalModel ?? "").trim();
+  if (globalModel) return { text: globalModel, title: `跟随全局模型：${globalModel}` };
+  return { text: "跟随全局", title: "跟随全局模型（全局模型名为空）" };
 }
 
 function typingDots() {
@@ -1733,6 +1818,38 @@ function bindUi() {
     });
   }
 
+  if (els.catEditForm) {
+    els.catEditForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void saveCatProfile();
+    });
+    els.catEditForm.addEventListener("input", onCatEditInput);
+  }
+  if (els.catEditModal) {
+    els.catEditModal.addEventListener("click", (event) => {
+      if (event.target === els.catEditModal) closeCatEdit();
+    });
+    els.catEditModal.addEventListener("close", () => {
+      catEditState.catId = null;
+      catEditState.saving = false;
+      hideCatEditError();
+    });
+  }
+
+  if (els.taskScenario) {
+    els.taskScenario.addEventListener("change", onTaskScenarioChange);
+  }
+  if (els.scenarioFile) {
+    els.scenarioFile.addEventListener("change", () => {
+      void readScenarioFile();
+    });
+  }
+  if (els.scenarioImportText) {
+    els.scenarioImportText.addEventListener("input", () => {
+      hideScenarioImportErrors();
+    });
+  }
+
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && app.conn !== "online") {
       refreshState().catch(() => setConn("offline"));
@@ -1811,6 +1928,43 @@ function onGlobalClick(event) {
       break;
     case "cancel-reset":
       setSettingsResetConfirm(false);
+      break;
+    case "edit-cat":
+      if (actionEl.dataset.catId) openCatEdit(actionEl.dataset.catId);
+      break;
+    case "save-cat-model":
+      if (actionEl.dataset.catId) void saveCatModel(actionEl.dataset.catId, actionEl);
+      break;
+    case "close-cat-edit":
+      closeCatEdit();
+      break;
+    case "pick-accent":
+      if (actionEl.dataset.accent) pickCatAccent(actionEl.dataset.accent);
+      break;
+    case "toggle-import-scenario":
+      toggleScenarioImport();
+      break;
+    case "cancel-import-scenario":
+      closeScenarioImport();
+      break;
+    case "import-scenario":
+      void importScenario();
+      break;
+    case "reload-scenarios":
+      void loadScenarios({ force: true });
+      break;
+    case "export-scenario":
+      if (actionEl.dataset.scenarioId) exportScenario(actionEl.dataset.scenarioId);
+      break;
+    case "delete-scenario":
+      if (actionEl.dataset.scenarioId) askDeleteScenario(actionEl.dataset.scenarioId);
+      break;
+    case "confirm-delete-scenario":
+      if (actionEl.dataset.scenarioId) void deleteScenario(actionEl.dataset.scenarioId);
+      break;
+    case "cancel-delete-scenario":
+      scenarioState.deleteConfirmId = null;
+      renderScenarioList();
       break;
     default:
       break;
@@ -2146,8 +2300,10 @@ function openNewTaskModal() {
     els.brief.value = "";
     for (const chip of els.modalChips ?? []) chip.classList.remove("is-active");
   }
+  resetTaskScenarioSelect();
   updateCreateState();
   if (!els.modal.open) els.modal.showModal();
+  void loadTaskScenarioOptions();
   requestAnimationFrame(() => els.brief?.focus());
 }
 
@@ -2198,7 +2354,11 @@ async function createTask() {
     const response = await fetch("/api/tasks", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ roomId: app.roomId, brief }),
+      body: JSON.stringify({
+        roomId: app.roomId,
+        brief,
+        ...(els.taskScenario?.value ? { scenarioId: els.taskScenario.value } : {}),
+      }),
     });
     if (!response.ok) throw new Error(await readApiError(response));
     await response.json();
@@ -2222,6 +2382,24 @@ async function createTask() {
 
 // ── 设置面板 ────────────────────────────────────────────────────────────
 
+async function refreshGlobalModel() {
+  try {
+    const response = await fetch("/api/settings", {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!response.ok) return;
+    const data = await response.json();
+    const model = String(data?.llm?.model ?? "");
+    if (model !== app.globalModel) {
+      app.globalModel = model;
+      renderRoster();
+    }
+  } catch {
+    /* 设置接口未就绪时名册显示「演出」/「跟随全局」即可 */
+  }
+}
+
 async function openSettings() {
   const modal = els.settingsModal;
   if (!modal) return;
@@ -2242,9 +2420,12 @@ async function openSettings() {
   setSettingsNotice("正在读取设置…", "pending");
   resetSettingsForm();
   renderSettingsReadonly(null);
+  renderCatModelList();
+  renderScenarioList();
   updateSettingsButtons();
 
   if (!modal.open) modal.showModal();
+  void loadScenarios();
   await loadSettings();
 }
 
@@ -2280,8 +2461,14 @@ async function loadSettings() {
     const data = await fetchSettings();
     settingsState.data = data;
     settingsState.ready = true;
+    const globalModel = String(data?.llm?.model ?? "");
+    if (globalModel !== app.globalModel) {
+      app.globalModel = globalModel;
+      renderRoster();
+    }
     fillSettingsForm(data);
     renderSettingsReadonly(data);
+    renderCatModelList();
     hideSettingsNotice();
   } catch (error) {
     settingsState.ready = false;
@@ -2614,6 +2801,12 @@ async function saveSettings() {
     settingsState.data = data;
     settingsState.ready = true;
     settingsState.clearKeyRequested = false;
+    const globalModel = String(data?.llm?.model ?? "");
+    if (globalModel !== app.globalModel) {
+      app.globalModel = globalModel;
+      renderRoster();
+      renderCatModelList();
+    }
     fillSettingsForm(data);
     renderSettingsReadonly(data);
     hideSettingsNotice();
@@ -2702,6 +2895,765 @@ async function resetStudio() {
     settingsState.resetting = false;
     updateSettingsButtons();
   }
+}
+
+
+// ── 设置 · 猫猫与模型 / 猫猫档案 ────────────────────────────────────────
+
+function renderCatModelList() {
+  const host = els.catModelList;
+  if (!host) return;
+  const cats = app.state?.cats ?? [];
+  if (!cats.length) {
+    host.replaceChildren(emptyNote("猫猫还没到店，稍后刷新。"));
+    return;
+  }
+  host.replaceChildren(...cats.map((cat) => catModelRow(cat)));
+}
+
+function catModelRow(cat) {
+  const model = catModelLabel(cat);
+  const globalTemp = Number(settingsState.data?.llm?.temperature);
+  const tempPlaceholder = Number.isFinite(globalTemp)
+    ? `跟随全局（${globalTemp}）`
+    : "跟随全局";
+  const modelPlaceholder = `跟随全局：${app.globalModel || "未配置"}`;
+  const overriding = Boolean(String(cat.llmModel ?? "").trim());
+  const tempValue =
+    typeof cat.llmTemperature === "number" && Number.isFinite(cat.llmTemperature)
+      ? String(cat.llmTemperature)
+      : "";
+
+  return h(
+    "div",
+    {
+      class: "cat-model-row",
+      "data-cat-id": cat.id,
+      style: `--accent:${safeCss(cat.accent)}`,
+    },
+    h(
+      "div",
+      { class: "cat-model-head" },
+      h("span", { class: "cat-avatar", "aria-hidden": "true", html: avatarSvg(cat, { size: 32 }) }),
+      h(
+        "div",
+        { class: "cat-model-id" },
+        h("strong", { text: cat.name }),
+        h("span", { text: `${cat.species} · ${cat.title}` }),
+      ),
+      h("span", {
+        class: "cat-model-tag",
+        "data-mode": app.state?.mode === "llm" ? "llm" : "mock",
+        title: model.title,
+        text: model.text,
+      }),
+      h("button", {
+        type: "button",
+        class: "btn btn--tiny btn--ghost",
+        "data-action": "edit-cat",
+        "data-cat-id": cat.id,
+        text: "编辑档案",
+      }),
+    ),
+    h(
+      "div",
+      { class: "cat-model-fields" },
+      h(
+        "label",
+        { class: "field" },
+        h("span", { class: "field-label", text: "模型覆盖" }),
+        h("input", {
+          type: "text",
+          class: "cat-model-input",
+          "data-role": "model",
+          autocomplete: "off",
+          spellcheck: "false",
+          placeholder: modelPlaceholder,
+          value: cat.llmModel ?? "",
+          "aria-label": `${cat.name} 的模型覆盖`,
+        }),
+      ),
+      h(
+        "label",
+        { class: "field" },
+        h("span", { class: "field-label", text: "温度覆盖" }),
+        h("input", {
+          type: "number",
+          class: "cat-temp-input",
+          "data-role": "temp",
+          min: "0",
+          max: "2",
+          step: "0.1",
+          placeholder: tempPlaceholder,
+          value: tempValue,
+          "aria-label": `${cat.name} 的温度覆盖`,
+        }),
+      ),
+      h("button", {
+        type: "button",
+        class: "btn btn--tiny btn--primary cat-model-save",
+        "data-action": "save-cat-model",
+        "data-cat-id": cat.id,
+        text: "保存模型",
+      }),
+      h("span", {
+        class: "cat-model-row-error",
+        "data-role": "error",
+        role: "alert",
+        hidden: true,
+      }),
+    ),
+    overriding
+      ? h("span", {
+          class: "field-hint",
+          text: "当前为单独覆盖；把模型/温度清空后保存即「跟随全局」。",
+        })
+      : null,
+  );
+}
+
+function catModelRowError(catId, message) {
+  const row = Array.from(els.catModelList?.querySelectorAll(".cat-model-row") ?? []).find(
+    (node) => node.dataset.catId === catId,
+  );
+  const host = row?.querySelector('[data-role="error"]');
+  if (host) {
+    host.textContent = message;
+    host.hidden = !message;
+  }
+}
+
+async function saveCatModel(catId, trigger) {
+  const row = trigger?.closest(".cat-model-row");
+  const cat = catById(catId);
+  if (!row || !cat) return;
+
+  const modelInput = row.querySelector('[data-role="model"]');
+  const tempInput = row.querySelector('[data-role="temp"]');
+  const saveBtn = row.querySelector('[data-action="save-cat-model"]');
+  const llmModel = String(modelInput?.value ?? "").trim();
+  const tempRaw = String(tempInput?.value ?? "").trim();
+
+  let llmTemperature = null;
+  if (tempRaw !== "") {
+    const parsed = Number(tempRaw);
+    if (!Number.isFinite(parsed) || parsed < 0 || parsed > 2) {
+      catModelRowError(catId, "温度需要在 0–2 之间，或留空跟随全局。");
+      return;
+    }
+    llmTemperature = Math.round(parsed * 10) / 10;
+  }
+
+  catModelRowError(catId, "");
+  if (saveBtn) {
+    saveBtn.disabled = true;
+    saveBtn.textContent = "保存中…";
+  }
+  try {
+    const updated = await putCat(catId, { llmModel, llmTemperature });
+    if (updated && typeof updated === "object") applyUpdatedCat(updated);
+    toast(`已保存 ${cat.name} 的模型设置`);
+  } catch (error) {
+    catModelRowError(catId, error.message);
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.textContent = "保存模型";
+    }
+  }
+}
+
+async function putCat(catId, patch) {
+  const response = await fetch(`/api/cats/${encodeURIComponent(catId)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!response.ok) throw new Error(await describeHttpError(response, "PUT /api/cats"));
+  return response.json();
+}
+
+/** 同步服务端返回的 Cat（名字/颜色立即反映到名册与消息）。 */
+function applyUpdatedCat(updated) {
+  if (!updated || typeof updated !== "object") return;
+  const cats = app.state?.cats ?? [];
+  const index = cats.findIndex((cat) => cat.id === updated.id);
+  if (index >= 0) cats[index] = { ...cats[index], ...updated };
+  renderAll();
+  if (els.settingsModal?.open) renderCatModelList();
+  void refreshState().catch(() => {});
+}
+
+// —— 猫猫档案对话框 ——
+
+const ACCENT_PRESETS = [
+  "#7C9EB2",
+  "#8C6A4F",
+  "#C9A227",
+  "#B08D57",
+  "#D9A066",
+  "#F2C6B4",
+  "#6F4E37",
+  "#A9BFA6",
+];
+
+function toColorInputValue(accent) {
+  const value = String(accent ?? "").trim();
+  if (/^#[0-9a-f]{6}$/i.test(value)) return value;
+  if (/^#[0-9a-f]{3}$/i.test(value)) {
+    return `#${value[1]}${value[1]}${value[2]}${value[2]}${value[3]}${value[3]}`;
+  }
+  return "#D9A066";
+}
+
+function openCatEdit(catId) {
+  const cat = catById(catId);
+  if (!cat || !els.catEditModal) return;
+  catEditState.catId = catId;
+  catEditState.saving = false;
+  catEditState.accent = toColorInputValue(cat.accent);
+  hideCatEditError();
+
+  if (els.catName) els.catName.value = cat.name ?? "";
+  if (els.catTitle) els.catTitle.value = cat.title ?? "";
+  if (els.catPersona) els.catPersona.value = cat.persona ?? "";
+  if (els.catCatchphrase) els.catCatchphrase.value = cat.catchphrase ?? "";
+  if (els.catGreeting) els.catGreeting.value = cat.greeting ?? "";
+  if (els.catAccent) els.catAccent.value = catEditState.accent;
+  if (els.catAccentHex) els.catAccentHex.textContent = catEditState.accent.toUpperCase();
+
+  renderAccentSwatches();
+  updateCatEditPreview();
+  updateCatSaveState();
+  if (!els.catEditModal.open) els.catEditModal.showModal();
+  requestAnimationFrame(() => els.catName?.focus());
+}
+
+function closeCatEdit() {
+  if (els.catEditModal?.open) els.catEditModal.close();
+}
+
+function renderAccentSwatches() {
+  if (!els.catColorSwatches) return;
+  els.catColorSwatches.replaceChildren(
+    ...ACCENT_PRESETS.map((accent) =>
+      h("button", {
+        type: "button",
+        class: "color-swatch",
+        "data-action": "pick-accent",
+        "data-accent": accent,
+        style: `background:${accent}`,
+        "aria-label": `主题色 ${accent}`,
+        "aria-pressed": String(accent.toLowerCase() === catEditState.accent.toLowerCase()),
+      }),
+    ),
+  );
+}
+
+function pickCatAccent(accent) {
+  const value = toColorInputValue(accent);
+  catEditState.accent = value;
+  if (els.catAccent) els.catAccent.value = value;
+  if (els.catAccentHex) els.catAccentHex.textContent = value.toUpperCase();
+  renderAccentSwatches();
+  updateCatEditPreview();
+}
+
+function updateCatEditPreview() {
+  const cat = catById(catEditState.catId);
+  if (!cat) return;
+  const name = els.catName?.value.trim() || cat.name || "猫猫";
+  const title = els.catTitle?.value.trim() || cat.title || "";
+  const accent = els.catAccent?.value || catEditState.accent;
+  catEditState.accent = toColorInputValue(accent);
+  if (els.catAccentHex) els.catAccentHex.textContent = catEditState.accent.toUpperCase();
+  if (els.catEditAvatar) {
+    els.catEditAvatar.innerHTML = avatarSvg(
+      { ...cat, name, accent: catEditState.accent },
+      { size: 54 },
+    );
+  }
+  if (els.catEditNamePreview) els.catEditNamePreview.textContent = name;
+  if (els.catEditSpecies) els.catEditSpecies.textContent = `${cat.species} · ${title}`;
+}
+
+function onCatEditInput(event) {
+  const target = event.target;
+  if (target === els.catName || target === els.catTitle) {
+    updateCatEditPreview();
+  } else if (target === els.catAccent) {
+    pickCatAccent(target.value);
+    return;
+  }
+  hideCatEditError();
+}
+
+function showCatEditError(message) {
+  if (!els.catEditError) return;
+  els.catEditError.textContent = message;
+  els.catEditError.hidden = false;
+}
+
+function hideCatEditError() {
+  if (!els.catEditError) return;
+  els.catEditError.hidden = true;
+  els.catEditError.textContent = "";
+}
+
+function updateCatSaveState() {
+  if (!els.catSaveBtn) return;
+  els.catSaveBtn.disabled = catEditState.saving;
+  els.catSaveBtn.textContent = catEditState.saving ? "保存中…" : "保存档案";
+}
+
+async function saveCatProfile() {
+  if (catEditState.saving) return;
+  const cat = catById(catEditState.catId);
+  if (!cat) return;
+
+  const name = String(els.catName?.value ?? "").trim();
+  if (!name) {
+    showCatEditError("名字不能为空。");
+    els.catName?.focus();
+    return;
+  }
+  const title = String(els.catTitle?.value ?? "").trim();
+  const persona = String(els.catPersona?.value ?? "").trim();
+  const catchphrase = String(els.catCatchphrase?.value ?? "").trim();
+  const greeting = String(els.catGreeting?.value ?? "").trim();
+  const accent = toColorInputValue(els.catAccent?.value || catEditState.accent);
+
+  hideCatEditError();
+  catEditState.saving = true;
+  updateCatSaveState();
+  try {
+    const updated = await putCat(cat.id, {
+      name,
+      title,
+      persona,
+      catchphrase,
+      greeting,
+      accent,
+    });
+    if (updated && typeof updated === "object") applyUpdatedCat(updated);
+    closeCatEdit();
+    toast(`已保存「${updated?.name ?? name}」的档案`);
+  } catch (error) {
+    showCatEditError(`保存失败：${error.message}`);
+  } finally {
+    catEditState.saving = false;
+    updateCatSaveState();
+  }
+}
+
+// ── 设置 · 剧本库 ───────────────────────────────────────────────────────
+
+async function fetchScenarioList() {
+  const response = await fetch("/api/scenarios", {
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(await describeHttpError(response, "GET /api/scenarios"));
+  const payload = await response.json();
+  const raw = Array.isArray(payload?.scenarios)
+    ? payload.scenarios
+    : Array.isArray(payload)
+      ? payload
+      : [];
+  return raw
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const scenario = item.scenario && typeof item.scenario === "object" ? item.scenario : item;
+      const source = (item.source ?? scenario.source) === "custom" ? "custom" : "builtin";
+      return { scenario, source };
+    })
+    .filter(Boolean);
+}
+
+function setScenarioStatus(message) {
+  if (els.scenarioStatus) els.scenarioStatus.textContent = message;
+}
+
+async function loadScenarios(options = {}) {
+  if (scenarioState.loading) return;
+  scenarioState.loading = true;
+  if (options.force) setScenarioStatus("刷新中…");
+  renderScenarioList();
+  updateScenarioButtons();
+  try {
+    const items = await fetchScenarioList();
+    scenarioState.items = items;
+    scenarioState.loaded = true;
+    scenarioState.error = "";
+    setScenarioStatus(`${items.length} 个剧本`);
+  } catch (error) {
+    scenarioState.error = error.message;
+    scenarioState.loaded = true;
+    setScenarioStatus("剧本服务未就绪");
+  } finally {
+    scenarioState.loading = false;
+    renderScenarioList();
+    updateScenarioButtons();
+  }
+}
+
+function renderScenarioList() {
+  const host = els.scenarioList;
+  if (!host) return;
+
+  if (scenarioState.loading && !scenarioState.items.length) {
+    host.replaceChildren(emptyNote("正在读取剧本…"));
+    return;
+  }
+  if (scenarioState.error && !scenarioState.items.length) {
+    host.replaceChildren(
+      h(
+        "div",
+        { class: "empty" },
+        h("strong", { text: "剧本服务未就绪" }),
+        h("span", { text: scenarioState.error }),
+        h("button", {
+          type: "button",
+          class: "btn btn--tiny btn--ghost",
+          "data-action": "reload-scenarios",
+          text: "↻ 重试",
+        }),
+      ),
+    );
+    return;
+  }
+  if (!scenarioState.items.length) {
+    host.replaceChildren(emptyNote("还没有剧本。内置剧本会由服务端提供。"));
+    return;
+  }
+
+  host.replaceChildren(...scenarioState.items.map((item) => scenarioRow(item)));
+}
+
+function scenarioRow(item) {
+  const { scenario, source } = item;
+  const confirming = scenarioState.deleteConfirmId === scenario.id;
+  const deleteError =
+    scenarioState.deleteErrorId === scenario.id ? scenarioState.deleteError : "";
+
+  return h(
+    "div",
+    {
+      class: "scenario-item",
+      "data-scenario-id": scenario.id,
+      "data-source": source,
+    },
+    h(
+      "div",
+      { class: "scenario-item-head" },
+      h("strong", { text: scenario.name || scenario.id }),
+      h("span", {
+        class: "scenario-badge",
+        "data-source": source,
+        text: source === "custom" ? "自定义" : "内置",
+      }),
+      h("span", { class: "scenario-id", text: scenario.id }),
+    ),
+    scenario.sampleBrief ? h("p", { class: "scenario-brief", text: scenario.sampleBrief }) : null,
+    (scenario.tags ?? []).length
+      ? h(
+          "div",
+          { class: "scenario-tags" },
+          ...(scenario.tags ?? []).map((tag) => h("span", { class: "scenario-tag", text: String(tag) })),
+        )
+      : null,
+    h(
+      "div",
+      { class: "scenario-item-actions" },
+      h("button", {
+        type: "button",
+        class: "btn btn--tiny btn--ghost",
+        "data-action": "export-scenario",
+        "data-scenario-id": scenario.id,
+        text: "导出",
+      }),
+      source === "custom"
+        ? confirming
+          ? h(
+              "span",
+              { class: "scenario-confirm" },
+              h("span", { text: "删除后不可恢复，确认？" }),
+              h("button", {
+                type: "button",
+                class: "btn btn--tiny btn--danger",
+                "data-action": "confirm-delete-scenario",
+                "data-scenario-id": scenario.id,
+                text: "确认删除",
+              }),
+              h("button", {
+                type: "button",
+                class: "btn btn--tiny btn--ghost",
+                "data-action": "cancel-delete-scenario",
+                text: "取消",
+              }),
+            )
+          : h("button", {
+              type: "button",
+              class: "btn btn--tiny btn--danger",
+              "data-action": "delete-scenario",
+              "data-scenario-id": scenario.id,
+              text: "删除",
+            })
+        : null,
+    ),
+    deleteError ? h("span", { class: "scenario-item-error", text: deleteError }) : null,
+  );
+}
+
+function updateScenarioButtons() {
+  if (els.scenarioImportToggle) {
+    els.scenarioImportToggle.textContent = scenarioState.importOpen ? "－ 收起导入" : "＋ 导入剧本";
+  }
+  if (els.scenarioImportSubmit) {
+    els.scenarioImportSubmit.disabled = scenarioState.importing;
+    els.scenarioImportSubmit.textContent = scenarioState.importing ? "导入中…" : "导入";
+  }
+  if (els.scenarioReload) els.scenarioReload.disabled = scenarioState.loading;
+}
+
+function toggleScenarioImport() {
+  if (scenarioState.importOpen) {
+    closeScenarioImport();
+    return;
+  }
+  scenarioState.importOpen = true;
+  if (els.scenarioImport) els.scenarioImport.hidden = false;
+  updateScenarioButtons();
+  hideScenarioImportErrors();
+  requestAnimationFrame(() => els.scenarioImportText?.focus());
+}
+
+function closeScenarioImport() {
+  scenarioState.importOpen = false;
+  if (els.scenarioImport) els.scenarioImport.hidden = true;
+  if (els.scenarioImportText) els.scenarioImportText.value = "";
+  if (els.scenarioFile) els.scenarioFile.value = "";
+  if (els.scenarioFileName) els.scenarioFileName.textContent = "";
+  hideScenarioImportErrors();
+  updateScenarioButtons();
+}
+
+function hideScenarioImportErrors() {
+  if (els.scenarioImportError) {
+    els.scenarioImportError.hidden = true;
+    els.scenarioImportError.textContent = "";
+  }
+  if (els.scenarioImportErrorList) {
+    els.scenarioImportErrorList.hidden = true;
+    els.scenarioImportErrorList.replaceChildren();
+  }
+}
+
+function showScenarioImportErrors(messages) {
+  const list = messages.map((message) => String(message ?? "").trim()).filter(Boolean);
+  if (!list.length) return;
+  if (els.scenarioImportError) {
+    const multi = list.length > 1;
+    els.scenarioImportError.textContent = multi ? "导入失败，请检查以下问题：" : "";
+    els.scenarioImportError.hidden = !multi;
+  }
+  if (els.scenarioImportErrorList) {
+    // 服务端 errors 数组逐条列出（单条也直接列出来）。
+    els.scenarioImportErrorList.replaceChildren(
+      ...list.map((message) => h("li", { text: message })),
+    );
+    els.scenarioImportErrorList.hidden = false;
+  }
+}
+
+async function readScenarioFile() {
+  const file = els.scenarioFile?.files?.[0];
+  if (!file) return;
+  hideScenarioImportErrors();
+  try {
+    const text = await file.text();
+    if (els.scenarioImportText) els.scenarioImportText.value = text;
+    if (els.scenarioFileName) els.scenarioFileName.textContent = file.name;
+  } catch (error) {
+    showScenarioImportErrors([`读取文件失败：${error.message}`]);
+  }
+}
+
+async function importScenario() {
+  if (scenarioState.importing) return;
+  hideScenarioImportErrors();
+  const raw = String(els.scenarioImportText?.value ?? "").trim();
+  if (!raw) {
+    showScenarioImportErrors(["先粘贴剧本 JSON，或选择一个 .json 文件。"]);
+    return;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    showScenarioImportErrors([`JSON 解析失败：${error.message}`]);
+    return;
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    showScenarioImportErrors(["剧本必须是一个 JSON 对象。"]);
+    return;
+  }
+  const scenario =
+    parsed.scenario && typeof parsed.scenario === "object" ? parsed.scenario : parsed;
+
+  scenarioState.importing = true;
+  updateScenarioButtons();
+  try {
+    const response = await fetch("/api/scenarios", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scenario }),
+    });
+    if (!response.ok) {
+      let payload = null;
+      try {
+        payload = await response.json();
+      } catch {
+        /* ignore */
+      }
+      const messages =
+        Array.isArray(payload?.errors) && payload.errors.length
+          ? payload.errors.map(String)
+          : [String(payload?.error ?? `POST /api/scenarios → HTTP ${response.status}`)];
+      showScenarioImportErrors(messages);
+      setScenarioStatus(response.status === 409 ? "剧本 id 冲突" : "导入失败");
+      return;
+    }
+    const data = await response.json();
+    const imported = data?.scenario ?? scenario;
+    toast(`剧本「${imported?.name ?? imported?.id ?? "未命名"}」已导入`);
+    closeScenarioImport();
+    await loadScenarios({ force: true });
+  } catch (error) {
+    showScenarioImportErrors([`剧本服务未就绪或导入失败：${error.message}`]);
+  } finally {
+    scenarioState.importing = false;
+    updateScenarioButtons();
+  }
+}
+
+function exportScenario(scenarioId) {
+  const item = scenarioState.items.find((entry) => entry.scenario.id === scenarioId);
+  if (!item) return;
+  const scenario = item.scenario;
+  const json = JSON.stringify(
+    {
+      id: scenario.id,
+      name: scenario.name,
+      sampleBrief: scenario.sampleBrief,
+      tags: scenario.tags ?? [],
+      beats: scenario.beats ?? [],
+    },
+    null,
+    2,
+  );
+  try {
+    const blob = new Blob([json], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${scenario.id}.json`;
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setScenarioStatus(`已导出 ${scenario.id}.json`);
+  } catch {
+    setScenarioStatus("导出失败：浏览器不支持下载");
+  }
+}
+
+function askDeleteScenario(scenarioId) {
+  scenarioState.deleteConfirmId = scenarioId;
+  scenarioState.deleteError = "";
+  scenarioState.deleteErrorId = "";
+  renderScenarioList();
+}
+
+async function deleteScenario(scenarioId) {
+  scenarioState.deleteConfirmId = null;
+  scenarioState.deleteError = "";
+  scenarioState.deleteErrorId = "";
+  setScenarioStatus("正在删除…");
+  renderScenarioList();
+  try {
+    const response = await fetch(`/api/scenarios/${encodeURIComponent(scenarioId)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) throw new Error(await describeHttpError(response, "DELETE /api/scenarios"));
+    toast(`剧本「${scenarioId}」已删除`);
+    await loadScenarios({ force: true });
+  } catch (error) {
+    scenarioState.deleteError = `删除失败：${error.message}`;
+    scenarioState.deleteErrorId = scenarioId;
+    setScenarioStatus("删除失败");
+    renderScenarioList();
+  }
+}
+
+// ── 新任务：场景选择 ────────────────────────────────────────────────────
+
+function resetTaskScenarioSelect() {
+  if (!els.taskScenario) return;
+  scenarioState.taskToken += 1;
+  scenarioState.taskItems = [];
+  els.taskScenario.replaceChildren(h("option", { value: "", text: "自动匹配（按需求）" }));
+  if (els.taskScenarioHint) {
+    els.taskScenarioHint.textContent =
+      "自动匹配：根据需求关键词挑一个演示剧本；也可以指定内置或自定义剧本。";
+  }
+}
+
+async function loadTaskScenarioOptions() {
+  const token = ++scenarioState.taskToken;
+  let items;
+  try {
+    items = await fetchScenarioList();
+  } catch {
+    if (token === scenarioState.taskToken && els.taskScenarioHint) {
+      els.taskScenarioHint.textContent = "场景列表未就绪，将按需求自动匹配。";
+    }
+    return;
+  }
+  if (token !== scenarioState.taskToken || !els.taskScenario) return;
+  scenarioState.taskItems = items;
+  const options = [h("option", { value: "", text: "自动匹配（按需求）" })];
+  for (const item of items) {
+    options.push(
+      h("option", {
+        value: item.scenario.id,
+        text: `${item.scenario.name || item.scenario.id}${item.source === "custom" ? "（自定义）" : ""}`,
+      }),
+    );
+  }
+  els.taskScenario.replaceChildren(...options);
+  updateTaskScenarioHint();
+}
+
+function onTaskScenarioChange() {
+  updateTaskScenarioHint();
+}
+
+function updateTaskScenarioHint() {
+  if (!els.taskScenarioHint) return;
+  const id = els.taskScenario?.value ?? "";
+  if (!id) {
+    els.taskScenarioHint.textContent =
+      "自动匹配：根据需求关键词挑一个演示剧本；也可以指定内置或自定义剧本。";
+    return;
+  }
+  const item = (scenarioState.taskItems ?? []).find((entry) => entry.scenario.id === id);
+  const brief = String(item?.scenario?.sampleBrief ?? "").trim();
+  els.taskScenarioHint.textContent = brief
+    ? `示例需求：${brief}`
+    : "该剧本没有示例需求，按你写的需求运行。";
 }
 
 // ── 杂项 ────────────────────────────────────────────────────────────────

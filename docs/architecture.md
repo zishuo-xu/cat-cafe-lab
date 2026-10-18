@@ -24,6 +24,10 @@
 │    · apiKey 只在内存，从不落盘                 │
 │    · 切换 brain 不需要重启                     │
 ├──────────────────────────────────────────────┤
+│  src/agents/scenario-registry.ts  剧本库       │
+│    · 内置只读 + 自定义导入，数组引用稳定        │
+│    · 校验（cat id / 五栏卡 / verdict）         │
+├──────────────────────────────────────────────┤
 │  src/engine/driver.ts  协作会话驱动            │
 │    · 每房间串行队列                            │
 │    · 阶段推进 / @ 路由 / typing / 延迟         │
@@ -114,9 +118,22 @@ intake ──► planning ──► working ──► reviewing ──► done
 
 ## 持久化
 
-`data/studio.json`（协作状态）和 `data/settings.json`（非敏感设置），都是原子写（tmp + rename）。
-启动时若无文件则种下房间 + 四猫招呼；若有则恢复（并把残留的 typing 清空）。
+`data/studio.json`（协作状态 + 猫猫档案）、`data/settings.json`（非敏感设置）、
+`data/scenarios.json`（导入的自定义剧本），都是原子写（tmp + rename）。
+启动时若无 studio 文件则种下房间 + 四猫招呼；若有则恢复（并把残留的 typing 清空）。
 没有数据库：这个体量的数据用 JSON 足够，且方便直接 `cat` 出来看。
+
+## 下一层：档案 / 每猫模型 / 剧本
+
+- **猫猫档案**存在 `studio.json` 的 `cats` 里。加载时以代码里的 `CATS` 为底，只接受
+  白名单字段的合法覆盖（改名/称号/性格/口头禅/招呼语/主题色），并做重名回退。
+  id / role / avatar / species 不可改，所以 `room.catIds`、@ 路由、历史消息都不受影响。
+- **每猫模型**是 `Cat.llmModel / llmTemperature`：llm-brain 在每次 think 时从当前 `ctx.cat`
+  解析，空值回落全局。这样不用为每只猫维护一个 brain 实例，也不影响 mock 模式。
+- **剧本库**的核心是数组引用稳定：`SCENARIOS` 在启动时一次性交给 driver / HTTP / brain，
+  导入和删除都原地 `push/splice`，所以不需要重启，也不需要重建对象。
+  导入前走 `scenario-validation.ts` 的逐条校验——坏剧本宁可拒绝，也不能把运行时带崩。
+  内置剧本只读；删除只对自定义生效。
 
 ## 真实模式
 
@@ -131,3 +148,4 @@ intake ──► planning ──► working ──► reviewing ──► done
 - **不做前端构建**：零依赖、零构建，打开源码就能改。
 - **不做真实任务执行**：猫交付的是 spec / design / patch 摘要，不是真的改你的仓库。
   这个项目的目标是"协作过程本身"，不是 coding agent。
+- **不做可视化剧本编辑器**：剧本导入/导出 JSON，用你顺手的编辑器改；服务端负责校验。
