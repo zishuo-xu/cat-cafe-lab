@@ -78,10 +78,23 @@ node src/main.ts
 
 | 日期 | provider / model | 冒烟 | 结果 | 备注 |
 |---|---|---|---|---|
-| — | — | A 纯对话 | 未执行 | 需要真实 key |
-| — | — | B 单工具 | 未执行 | |
-| — | — | C 审批 | 未执行 | |
-| — | — | D MCP | 未执行 | |
+| 2026-10-18 | DeepSeek / deepseek-flash | A 纯对话 | ✅ 通过 | 只唤醒被 @ 的宪宪，内容非剧本，含 HttpOnly/XSS 论证 |
+| 2026-10-18 | DeepSeek / deepseek-flash | B 单工具 | ✅ 通过 | 自主 `read_file src/export.js`，回喂后准确回答 `toCsv` 唯一导出 |
+| 2026-10-18 | DeepSeek / deepseek-flash | C 审批（批准） | ✅ 通过 | 自主请求 `run_command npm test` → pending → 批准 → 真实执行 exit 1 → 基于真实输出写下 review |
+| 2026-10-18 | DeepSeek / deepseek-flash | C 审批（拒绝） | ✅ 通过 | rejected 回喂后**没有重复申请**，改为说明「要么批准、要么你贴输出」 |
+| 2026-10-18 | DeepSeek / deepseek-flash | D MCP 工具 | ✅ 通过 | `echo-server__echo` 调用成功，回喂后准确复述 `echo:hello` |
+
+### 实测记录（2026-10-18，deepseek-flash，端口 4320）
+
+- 连接测试：`/models` 211ms，2 个模型可用。
+- 一次任务里模型自己完成 `read_file ×5 → list_files → run_command(pending) → 批准 → review → decision`，
+  工具调用全部来自模型决策，没有剧本台词混入。
+- 拒绝路径表现符合设计：模型明确说「不会重复申请同一个命令」并给出两条替代路径。
+- 观察到的问题：
+  1. 模型会频繁请求 `run_command`（commands 策略下每次都要审批），一次任务里出现 2 次 pending；
+  2. 审批在 review 阶段也会挡一下，节奏变慢；
+  3. 个别任务因为审批被拒后没有继续推进，任务停在 `reviewing/active`（可通过「催一下」或再批准继续）。
+- 建议：日常演示用 `auto`；要演示审批闸门时用 `commands` 并挑「跑一次就够」的任务。
 
 ---
 
