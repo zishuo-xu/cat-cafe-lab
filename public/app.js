@@ -236,6 +236,7 @@ const testCenterState = {
   lastPollAt: 0,
   onlyFailures: false,
   autoScroll: true,
+  followLive: true,
   lineNumbers: true,
   rendered: { runId: "", count: 0, filter: false, lineNumbers: true },
 };
@@ -2369,6 +2370,35 @@ function bindUi() {
     });
   }
 
+  if (els.testCenterModal) {
+    els.testCenterModal.addEventListener("click", (event) => {
+      if (event.target === els.testCenterModal) closeTestCenter();
+    });
+    els.testCenterModal.addEventListener("close", () => {
+      testCenterState.open = false;
+    });
+  }
+  if (els.testRealConfirm) {
+    els.testRealConfirm.addEventListener("click", (event) => {
+      if (event.target === els.testRealConfirm) closeTestRealConfirm();
+    });
+  }
+  els.testLog?.addEventListener("scroll", () => {
+    const near = isTestLogNearBottom();
+    if (near !== testCenterState.autoScroll) {
+      testCenterState.autoScroll = near;
+      updateTestBackBottom();
+      if (els.testLogHint) {
+        const lines = testCenterState.details.get(testCenterState.selectedId)?.lines?.length ?? 0;
+        els.testLogHint.textContent = `${lines} 行 · ${near ? "自动滚动" : "已暂停滚动"} · 最多保留 2000 行`;
+      }
+    }
+  });
+  els.testLineNumbers?.addEventListener("change", () => {
+    testCenterState.lineNumbers = Boolean(els.testLineNumbers.checked);
+    renderTestLog(true);
+  });
+
   if (els.roomMenuModal) {
     els.roomMenuModal.addEventListener("click", (event) => {
       if (event.target === els.roomMenuModal) closeRoomMenu();
@@ -2624,6 +2654,50 @@ function onGlobalClick(event) {
       break;
     case "switch-room":
       if (actionEl.dataset.roomId) setRoom(actionEl.dataset.roomId);
+      break;
+    case "open-test-center":
+      openTestCenter();
+      break;
+    case "close-test-center":
+      closeTestCenter();
+      break;
+    case "run-test-unit":
+      void startTest("unit");
+      break;
+    case "run-test-real":
+      openTestRealConfirm();
+      break;
+    case "run-test-scenario":
+      void startTest("scenario", els.testScenario?.value ?? "basic");
+      break;
+    case "stop-test":
+      void stopSelectedTest();
+      break;
+    case "select-test-run":
+      if (actionEl.dataset.runId) selectTestRun(actionEl.dataset.runId);
+      break;
+    case "refresh-test-runs":
+      void loadTestRuns();
+      break;
+    case "test-return-live":
+      if (testCenterState.liveId) {
+        testCenterState.followLive = true;
+        selectTestRun(testCenterState.liveId);
+      }
+      break;
+    case "test-fail-details":
+      testCenterState.onlyFailures = !testCenterState.onlyFailures;
+      testCenterState.autoScroll = true;
+      renderTestLog(true);
+      break;
+    case "test-scroll-bottom":
+      scrollTestLogToBottom();
+      break;
+    case "close-test-real-confirm":
+      closeTestRealConfirm();
+      break;
+    case "confirm-test-real":
+      void confirmTestReal();
       break;
     case "open-room-menu":
       if (actionEl.dataset.roomId) openRoomMenu(actionEl.dataset.roomId);
@@ -7051,14 +7125,16 @@ function handleTestStreamEvent(event) {
       testCenterState.liveId = [...testCenterState.running][0] ?? null;
     }
     const summary = testRunById(runId);
+    const wasCancelled = summary?.status === "cancelled" || testCenterState.details.get(runId)?.status === "cancelled";
+    const status = wasCancelled ? "cancelled" : event.code === 0 ? "passed" : "failed";
     if (summary) {
-      summary.status = event.code === 0 ? "passed" : "failed";
+      summary.status = status;
       summary.exitCode = event.code ?? undefined;
       summary.finishedAt = Date.now();
     }
     const detail = testCenterState.details.get(runId);
     if (detail) {
-      detail.status = event.code === 0 ? "passed" : "failed";
+      detail.status = status;
       detail.exitCode = event.code ?? undefined;
       detail.finishedAt = Date.now();
       detail.summary = detail.summary ?? summarizeTestLines(detail.lines);
@@ -7093,20 +7169,22 @@ function appendTestLine(runId, line) {
     testCenterState.details.set(runId, detail);
   }
   detail.lines.push(line);
+  let trimmed = false;
   if (detail.lines.length > 2000) {
     detail.lines.splice(0, detail.lines.length - 2000);
+    trimmed = true;
   }
   const summary = testRunById(runId);
   if (summary) summary.lineCount = detail.lines.length;
   if (testCenterState.open && testCenterState.selectedId === runId) {
-    renderTestLog(false);
+    renderTestLog(trimmed);
     renderTestStatus();
     renderTestHistory();
   }
 }
 
 function appendTestSystemLine(text) {
-  const id = testCenterState.selectedId ?? testCenterState.liveId;
+  const id = testCenterState.liveId ?? testCenterState.selectedId;
   if (!id) return;
   appendTestLine(id, {
     at: Date.now(),
@@ -7122,9 +7200,9 @@ function summarizeTestLines(lines) {
   let fail = 0;
   for (const line of lines) {
     const text = String(line.text ?? "");
-    const passMatch = /^#\s*pass\s+(\d+)/i.exec(text);
-    const failMatch = /^#\s*fail\s+(\d+)/i.exec(text);
-    const testsMatch = /^#\s*tests\s+(\d+)/i.exec(text);
+    const passMatch = /^(?:#|ℹ)\s*pass\s+(\d+)/i.exec(text);
+    const failMatch = /^(?:#|ℹ)\s*fail\s+(\d+)/i.exec(text);
+    const testsMatch = /^(?:#|ℹ)\s*tests\s+(\d+)/i.exec(text);
     if (testsMatch) tests = Number(testsMatch[1]);
     if (passMatch) pass = Number(passMatch[1]);
     if (failMatch) fail = Number(failMatch[1]);
@@ -7134,6 +7212,7 @@ function summarizeTestLines(lines) {
 
 async function loadTestRunDetail(runId) {
   if (!runId) return;
+  testCenterState.detailLoading = true;
   try {
     const response = await fetch(`/api/tests/runs/${encodeURIComponent(runId)}`, {
       headers: { Accept: "application/json" },
@@ -7177,6 +7256,8 @@ async function loadTestRunDetail(runId) {
       testCenterState.error = `测试日志读取失败：${error.message}`;
       if (testCenterState.open) renderTestCenter();
     }
+  } finally {
+    testCenterState.detailLoading = false;
   }
 }
 

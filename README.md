@@ -48,7 +48,7 @@ node src/main.ts
 点「＋ 新任务」→ 选「记住我」示例 → 「让猫猫开工」，然后看着就行。
 
 ```bash
-node --test tests/    # 218 个测试
+node --test tests/    # 218 个测试（也可以直接在页面上跑）
 npx tsc --noEmit      # 类型检查
 ```
 
@@ -141,6 +141,29 @@ run_command node --test ...      ✓ exit 0（砚砚放行）
 > 并修复了 6 个只有真实模型才会暴露的问题（推理 token 截断、JSON 尾随文字、
 > intake 阶段工具循环、沙盒参数限制未告知、工具失败无上限、排队误判卡住）。
 > 详见 [真实模型测试报告](docs/real-model-test-report.md)。
+
+---
+
+## 页面内测试中心
+
+测试不用再去终端看——左上角「🧪 测试」按钮直接打开测试中心：
+
+- **跑单元测试**：页面里实时滚出 `node --test` 的输出，几秒出结果（218 项），状态点变绿；
+- **跑真实模型矩阵 / 单场景**：二次确认后跑 `tools/matrix.py`，日志逐行流式显示，
+  中途可以「停止」；没配 key 时面板内明确提示原因；
+- 历史运行可回看完整日志，支持行号、只看失败行、自动滚动与「回到底部」；
+- 关闭抽屉后运行继续，顶部状态点持续显示运行中/通过/失败。
+
+![测试中心运行完成](docs/images/test-center-passed.png)
+
+![未配置真实模型时的提示](docs/images/test-center-real-blocked.png)
+
+后端是 `src/server/test-runner.ts`：只允许 `unit` / `real` / `scenario` 三种运行，
+同一 kind 同时只跑一个，行级事件通过 `/api/tests/stream` 推给前端。
+
+> 有个坑值得记下：如果服务本身是在 `node --test` 里起来的，`NODE_TEST_CONTEXT`
+> 会被子进程继承，导致 `node --test` 以为「递归调用」而跳过所有文件。TestRunner
+> 在 spawn 前会剥掉这个变量。
 
 ---
 
