@@ -411,7 +411,111 @@
             </div>
           </fieldset>
 
-          <!-- 3. LLM 连接 -->
+          <!-- 3. MCP 工具 -->
+          <fieldset class="settings-section" id="settings-mcp-section">
+            <legend class="settings-legend">MCP 工具</legend>
+            <p class="settings-desc">
+              MCP server 是本地进程或 HTTP 服务。连接后它的工具会出现在猫的工具目录里；模型调用默认需要你审批。
+            </p>
+
+            <div class="scenario-toolbar">
+              <button
+                type="button"
+                class="btn btn--ghost btn--tiny"
+                data-action="toggle-mcp-form"
+                id="mcp-form-toggle"
+              >
+                ＋ 添加 MCP Server
+              </button>
+              <button
+                type="button"
+                class="btn btn--ghost btn--tiny"
+                data-action="reload-mcp"
+                id="mcp-reload-btn"
+              >
+                ↻ 刷新
+              </button>
+              <span class="scenario-status" id="mcp-status" role="status" aria-live="polite"></span>
+            </div>
+
+            <div class="scenario-import mcp-form" id="mcp-form" hidden>
+              <div class="field-grid">
+                <div class="field">
+                  <label class="field-label" for="mcp-name">名称</label>
+                  <input id="mcp-name" type="text" maxlength="40" placeholder="例如：本地文件服务" />
+                </div>
+                <div class="field">
+                  <label class="field-label" for="mcp-transport">传输方式</label>
+                  <select id="mcp-transport">
+                    <option value="stdio">stdio（本地进程）</option>
+                    <option value="http">http（远程/本地服务）</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="field-grid" id="mcp-stdio-fields">
+                <div class="field">
+                  <label class="field-label" for="mcp-command">command</label>
+                  <input id="mcp-command" type="text" spellcheck="false" placeholder="node" />
+                </div>
+                <div class="field">
+                  <label class="field-label" for="mcp-args">args（空格分隔）</label>
+                  <input
+                    id="mcp-args"
+                    type="text"
+                    spellcheck="false"
+                    placeholder="/path/to/server.mjs --flag"
+                  />
+                </div>
+              </div>
+
+              <div class="field" id="mcp-http-fields" hidden>
+                <label class="field-label" for="mcp-url">URL</label>
+                <input
+                  id="mcp-url"
+                  type="url"
+                  spellcheck="false"
+                  placeholder="http://127.0.0.1:7331/mcp"
+                />
+              </div>
+
+              <div class="field-grid">
+                <div class="field">
+                  <label class="field-label" for="mcp-risk">风险等级</label>
+                  <select id="mcp-risk">
+                    <option value="needs_approval" selected>需要审批（默认）</option>
+                    <option value="safe">安全（自动放行）</option>
+                  </select>
+                </div>
+                <label class="switch-row">
+                  <input type="checkbox" id="mcp-enabled" role="switch" checked />
+                  <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+                  <span class="switch-text">保存后启用</span>
+                </label>
+              </div>
+
+              <p class="form-error" id="mcp-form-error" role="alert" hidden></p>
+              <div class="scenario-import-row">
+                <button
+                  type="button"
+                  class="btn btn--primary btn--tiny"
+                  data-action="save-mcp"
+                  id="mcp-save-btn"
+                >
+                  保存 MCP Server
+                </button>
+                <button type="button" class="btn btn--ghost btn--tiny" data-action="cancel-mcp">
+                  取消
+                </button>
+              </div>
+            </div>
+
+            <div id="mcp-list" class="mcp-list">
+              <div class="empty"><span>读取 MCP 配置…</span></div>
+            </div>
+          </fieldset>
+
+          <!-- 4. LLM 连接 -->
           <fieldset class="settings-section" id="settings-llm-section">
             <legend class="settings-legend">LLM 连接</legend>
             <p class="settings-desc">
@@ -530,7 +634,7 @@
             </div>
           </fieldset>
 
-          <!-- 4. 猫猫与模型 -->
+          <!-- 5. 猫猫与模型 -->
           <fieldset class="settings-section" id="settings-cats-section">
             <legend class="settings-legend">猫猫与模型</legend>
             <p class="settings-desc">
@@ -541,7 +645,7 @@
             </div>
           </fieldset>
 
-          <!-- 5. 回复节奏 -->
+          <!-- 6. 回复节奏 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">回复节奏</legend>
             <p class="settings-desc">只影响演出与真实模式的打字节奏。</p>
@@ -561,7 +665,7 @@
             </div>
           </fieldset>
 
-          <!-- 6. 剧本库 -->
+          <!-- 7. 剧本库 -->
           <fieldset class="settings-section" id="settings-scenarios-section">
             <legend class="settings-legend">剧本库</legend>
             <p class="settings-desc">
@@ -637,7 +741,7 @@
             </div>
           </fieldset>
 
-          <!-- 7. 数据 -->
+          <!-- 8. 数据 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">数据</legend>
             <div class="settings-danger-row">
@@ -672,7 +776,7 @@
             </div>
           </fieldset>
 
-          <!-- 8. 关于 / 只读 -->
+          <!-- 9. 关于 / 只读 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">关于 / 运行信息</legend>
             <dl class="settings-info" id="settings-info">
@@ -793,6 +897,58 @@
           </button>
         </footer>
       </div>
+    </dialog>
+
+
+    <!-- ── 猫猫工具与技能弹窗 ─────────────────────────────────────── -->
+    <dialog id="cat-access-modal" class="modal modal--access" aria-labelledby="cat-access-title">
+      <form id="cat-access-form" class="modal-card" novalidate>
+        <header class="modal-head">
+          <h2 id="cat-access-title">工具与技能</h2>
+          <button type="button" class="icon-btn" data-action="close-cat-access" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub" id="cat-access-sub">配置这只猫能使用的工具和技能包。</p>
+
+        <div class="access-section">
+          <div class="access-head">
+            <strong>工具权限</strong>
+            <span class="count" id="cat-access-tools-count">0</span>
+            <span class="access-head-actions">
+              <button type="button" class="link-btn" data-action="select-all-tools">全选</button>
+              <button type="button" class="link-btn" data-action="clear-all-tools">清空</button>
+            </span>
+          </div>
+          <p class="field-hint">
+            不勾选任何工具 = 这只猫没有工具权限。MCP 工具同样受权限控制。
+          </p>
+          <div id="cat-access-tools" class="access-list">
+            <div class="empty"><span>读取工具目录…</span></div>
+          </div>
+        </div>
+
+        <div class="access-section">
+          <div class="access-head">
+            <strong>技能包</strong>
+            <span class="count" id="cat-access-skills-count">0</span>
+            <span class="access-head-actions">
+              <button type="button" class="link-btn" data-action="select-all-skills">全选</button>
+              <button type="button" class="link-btn" data-action="clear-all-skills">清空</button>
+            </span>
+          </div>
+          <p class="field-hint">技能包会注入真实模式的 system prompt；未单独配置时使用默认。</p>
+          <div id="cat-access-skills" class="access-list">
+            <div class="empty"><span>读取技能包…</span></div>
+          </div>
+        </div>
+
+        <p class="form-error" id="cat-access-error" role="alert" hidden></p>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-cat-access">取消</button>
+          <button type="submit" class="btn btn--primary" id="cat-access-save">保存权限</button>
+        </footer>
+      </form>
     </dialog>
 
     <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>

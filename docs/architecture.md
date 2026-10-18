@@ -34,9 +34,15 @@
 │    · tool turn → 沙盒执行 / 审批闸门           │
 │    · 故障注入（漏 @）与 nudge 恢复             │
 ├──────────────────────────────────────────────┤
+│  src/tools/registry.ts 工具注册表              │
+│    · 内置 provider + MCP provider              │
 │  src/tools/sandbox.ts  沙盒工具运行时          │
 │    · 路径锁根目录 / 命令白名单 / 10s 超时      │
 │    · read_file / write_file / list / run       │
+│  src/mcp/client.ts     MCP JSON-RPC 客户端     │
+│    · stdio / http，tools/list + tools/call     │
+│  src/skills/registry.ts 技能包                  │
+│    · 按猫注入真实模式 system prompt            │
 │  src/tools/approval.ts 铲屎官审批队列          │
 │    · pending → approve / reject                │
 ├──────────────────────────────────────────────┤
@@ -153,6 +159,33 @@ intake ──► planning ──► working ──► reviewing ──► done
 - 执行失败不抛异常，落 `status:"error"` + exitCode + 输出，让后面的 cat turn 继续解释；
 - 设置面板可以关掉工具执行（`toolsEnabled`）；关掉后 tool turn 变一句说明，协作流程照走。
   注意：mock 剧本里"测试挂了/测试全绿"的台词是写死的，关掉工具后这些台词不再对应真实执行。
+
+## 工具与技能（B 层）
+
+**工具注册表**：`ToolRegistryImpl` 里挂两类 provider——
+
+- `builtin`：沙盒的 4 个工具（`src/tools/builtin.ts` 里带 JSON schema、risk、source）；
+- `mcp:<serverId>`：MCP manager 连接成功后动态注册，工具名统一是 `<serverId>__<toolName>`。
+
+driver 只依赖 `ToolRegistry`，执行时先查内置、再遍历 provider；MCP 工具走
+`McpClient.callTool`。工具是否可用还要过每猫权限：`Cat.tools` 为 `undefined` 表示不限制，
+数组是白名单（空数组 = 一个都不给），未授权工具不执行、不弹审批，直接记一条 error 回喂。
+
+**MCP 客户端**：JSON-RPC 2.0，支持两种 transport——
+
+- stdio：spawn 本地进程，newline-delimited JSON，适合 `npx @modelcontextprotocol/server-*`；
+- http：Streamable HTTP，POST JSON-RPC，兼容 JSON 与 `text/event-stream` 响应，带 `mcp-session-id`。
+
+握手只做 `initialize → notifications/initialized → tools/list`；调用是 `tools/call`，
+结果取 `content[].text` 拼接，`isError` 映射成 error。所有请求 8s 超时，连接失败只记
+`lastError`，不会拖垮工作台。配置持久化在 `data/mcp.json`（用户显式添加，无密钥字段）。
+
+**技能包**：`src/skills/registry.ts` 里四个内置技能（架构拆解 / Review 清单 / 设计系统 / TDD 纪律），
+`Cat.skills` 缺省时按角色回落。driver 用 `skillsForCat(cat)` 填 `TurnContext.skills`，
+llm-brain 把 name + prompt 全文塞进 system prompt；演出模式不调用模型，技能自然不生效。
+
+**安全**：MCP server 是用户自己添加的本地进程/服务；MCP 工具默认 `risk = needs_approval`，
+模型主动调用会进审批队列；审批策略为 `auto` 时才全自动放行。
 
 ## 真实模式的工具调用与审批
 

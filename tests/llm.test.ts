@@ -25,11 +25,14 @@ import type {
   Message,
   Role,
   Room,
+  Skill,
   Task,
+  ToolDefinition,
   ToolRunResult,
   Trigger,
   TurnContext,
 } from "../src/domain/types.ts";
+import { BUILTIN_TOOLS } from "../src/tools/builtin.ts";
 
 // ───────────────────────── 夹具 ─────────────────────────
 
@@ -110,6 +113,9 @@ function makeContext(overrides: Partial<TurnContext> = {}): TurnContext {
     handoffs: [],
     artifacts: [],
     recentToolResults: [],
+    // 默认给内置沙盒工具，覆盖“目录里有的工具”这一常见路径。
+    availableTools: [...BUILTIN_TOOLS],
+    skills: [],
     scenario: null,
     ...overrides,
   };
@@ -902,5 +908,201 @@ describe("llm-brain · 工具调用与 tool_result 回喂", () => {
         assert.match(user, /已写入 src\/remember\.js/);
       },
     );
+  });
+});
+
+describe("llm-brain · 动态工具目录与技能注入", () => {
+  const MESSAGE_CONTENT = JSON.stringify([{ kind: "message", text: "收到。" }]);
+
+  const GITHUB_TOOL: ToolDefinition = {
+    name: "github__list_issues",
+    title: "列出 issue",
+    description: "列出指定仓库的 issue",
+    inputSchema: {
+      type: "object",
+      properties: { repo: { type: "string" }, state: { type: "string" } },
+      required: ["repo"],
+    },
+    risk: "needs_approval",
+    source: "mcp",
+    serverId: "github",
+  };
+  const FS_TOOL: ToolDefinition = {
+    name: "fs__read_text",
+    title: "读取文本文件",
+    description: "读取工作区中的文本文件",
+    inputSchema: {
+      type: "object",
+      properties: { path: { type: "string" } },
+      required: ["path"],
+    },
+    risk: "safe",
+    source: "mcp",
+    serverId: "fs",
+  };
+  const MCP_TOOLS: ToolDefinition[] = [GITHUB_TOOL, FS_TOOL];
+
+  interface RecordedBody {
+    model: string;
+    messages: Array<{ role: string; content: string }>;
+  }
+
+  function bodyOf(request: RecordedRequest): RecordedBody {
+    return JSON.parse(request.body) as RecordedBody;
+  }
+
+  function systemPrompt(body: RecordedBody): string {
+    return body.messages[0]?.content ?? "";
+  }
+
+  async function runOnce(
+    ctx: TurnContext,
+    content = MESSAGE_CONTENT,
+  ): Promise<{ fake: FakeEndpoint; fallbackCalls: () => number; system: string }> {
+    let captured: FakeEndpoint | null = null;
+    let system = "";
+    let fallbackCalls = () => 0;
+    await withFake(
+      (_req, res) => sendOpenAi(res, content),
+      async (fake) => {
+        captured = fake;
+        const fallback = makeFallback();
+        fallbackCalls = fallback.calls;
+        const brain = createLlmBrain(
+          { ...SETTINGS, baseUrl: fake.baseUrl },
+          fallback.brain,
+        );
+        await brain.think(ctx);
+        const request = fake.requests[0];
+        assert.ok(request);
+        system = systemPrompt(bodyOf(request));
+      },
+    );
+    assert.ok(captured);
+    return { fake: captured, fallbackCalls, system };
+  }
+
+  test("MCP 工具目录按 availableTools 渲染：名字不截断、含 schema / risk / source", async () => {
+    const { system } = await runOnce(makeContext({ availableTools: MCP_TOOLS }));
+
+    assert.ok(system.includes("github__list_issues"), "MCP 工具名必须原样出现");
+    assert.ok(system.includes("fs__read_text"), "MCP 工具名必须原样出现");
+    assert.ok(system.includes(JSON.stringify(GITHUB_TOOL.inputSchema)), "应渲染 inputSchema");
+    assert.ok(system.includes(JSON.stringify(FS_TOOL.inputSchema)), "应渲染 inputSchema");
+    assert.match(system, /risk=needs_approval/);
+    assert.match(system, /risk=safe/);
+    assert.match(system, /source=mcp/);
+    assert.match(system, /server=github/);
+    assert.match(system, /列出指定仓库的 issue/);
+    // 目录里没有内置工具，就不要出现它们。
+    assert.ok(!system.includes("read_file"));
+    assert.ok(!system.includes("write_file"));
+  });
+
+  test("目录外的工具 turn 被丢弃，MCP 工具 turn 保留且 input 原样透传", async () => {
+    const content = JSON.stringify([
+      // 内置工具不在本轮目录里 → 丢弃
+      { kind: "tool", tool: "read_file", input: { path: "src/app.js" } },
+      // MCP 工具合法：任意对象 input 原样透传
+      {
+        kind: "tool",
+        tool: "github__list_issues",
+        input: { repo: "cat-cafe", state: "open" },
+        label: "看 issue",
+      },
+      // MCP 工具 input 不是对象 → 丢弃
+      { kind: "tool", tool: "fs__read_text", input: "not-an-object" },
+    ]);
+
+    await withFake(
+      (_req, res) => sendOpenAi(res, content),
+      async (fake) => {
+        const fallback = makeFallback();
+        const brain = createLlmBrain(
+          { ...SETTINGS, baseUrl: fake.baseUrl },
+          fallback.brain,
+        );
+        const turns = await brain.think(makeContext({ availableTools: MCP_TOOLS }));
+
+        assert.equal(fallback.calls(), 0, "还有合法 turn 时不应整轮降级");
+        assert.equal(turns.length, 1);
+        const toolTurn = turns[0];
+        assert.equal(toolTurn?.kind, "tool");
+        if (toolTurn?.kind === "tool") {
+          assert.equal(toolTurn.tool, "github__list_issues");
+          assert.deepEqual(toolTurn.input, { repo: "cat-cafe", state: "open" });
+          assert.equal(toolTurn.label, "看 issue");
+        }
+      },
+    );
+  });
+
+  test("MCP 工具只校验 input 是对象：缺 input 视为 {}，非对象丢弃", async () => {
+    const content = JSON.stringify([
+      { kind: "tool", tool: "github__list_issues" },
+      { kind: "tool", tool: "fs__read_text", input: 42 },
+    ]);
+
+    await withFake(
+      (_req, res) => sendOpenAi(res, content),
+      async (fake) => {
+        const fallback = makeFallback();
+        const brain = createLlmBrain(
+          { ...SETTINGS, baseUrl: fake.baseUrl },
+          fallback.brain,
+        );
+        const turns = await brain.think(makeContext({ availableTools: MCP_TOOLS }));
+
+        assert.equal(fallback.calls(), 0);
+        assert.equal(turns.length, 1);
+        const toolTurn = turns[0];
+        assert.equal(toolTurn?.kind, "tool");
+        if (toolTurn?.kind === "tool") assert.deepEqual(toolTurn.input, {});
+      },
+    );
+  });
+
+  test("availableTools 为空时明确告诉模型没有工具，且不列出内置工具", async () => {
+    const { system } = await runOnce(makeContext({ availableTools: [] }));
+
+    assert.match(system, /没有可用工具/);
+    assert.match(system, /不要编造/);
+    assert.ok(!system.includes("read_file"));
+    assert.ok(!system.includes("inputSchema："));
+    assert.ok(!system.includes("工具使用纪律："));
+  });
+
+  test("ctx.skills 的 name + prompt 全文注入 system prompt，顺序稳定", async () => {
+    const skills: Skill[] = [
+      {
+        id: "skill-review",
+        name: "code-review",
+        description: "严格代码审查",
+        prompt: "先按严重性分级，再给证据；每条问题都要能定位到文件。",
+      },
+      {
+        id: "skill-tdd",
+        name: "tdd",
+        description: "测试先行",
+        prompt: "先写失败测试，再写最小实现。",
+      },
+    ];
+
+    const { system } = await runOnce(makeContext({ skills }));
+
+    assert.ok(system.includes("【你挂载的技能】"));
+    assert.ok(system.includes("### code-review"));
+    assert.ok(system.includes(skills[0]?.prompt ?? ""), "技能 prompt 全文必须注入");
+    assert.ok(system.includes("### tdd"));
+    assert.ok(system.includes(skills[1]?.prompt ?? ""));
+    assert.ok(
+      system.indexOf("### code-review") < system.indexOf("### tdd"),
+      "技能顺序应与 ctx.skills 一致",
+    );
+  });
+
+  test("ctx.skills 为空时不出现技能段", async () => {
+    const { system } = await runOnce(makeContext({ skills: [] }));
+    assert.ok(!system.includes("【你挂载的技能】"));
   });
 });

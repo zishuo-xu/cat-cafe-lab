@@ -15,11 +15,14 @@ import type {
   CatTurn,
   HandoffCard,
   SandboxRunner,
+  Skill,
   Task,
   TaskStage,
   ToolApprovalDecision,
   ToolApprovalMode,
+  ToolDefinition,
   ToolName,
+  ToolRegistry,
   ToolResult,
   ToolRunResult,
   TurnContext,
@@ -75,6 +78,16 @@ function makeStudio(): Studio {
   return new Studio({ cats: CATS.map((cat) => ({ ...cat })), mode: "mock" });
 }
 
+/** 构造带猫档案覆盖（tools / skills）的 Studio，覆盖 tools: undefined 表示「全部允许」。 */
+function makeStudioWith(
+  overrides: Record<CatId, { tools?: string[]; skills?: string[] }>,
+): Studio {
+  return new Studio({
+    cats: CATS.map((cat) => ({ ...cat, ...(overrides[cat.id] ?? {}) })),
+    mode: "mock",
+  });
+}
+
 function makeDriver(
   studio: Studio,
   brain: CatBrain,
@@ -83,6 +96,8 @@ function makeDriver(
     toolsEnabled?: () => boolean;
     approvals?: ApprovalGate;
     approvalMode?: () => ToolApprovalMode;
+    tools?: ToolRegistry;
+    resolveSkill?: (id: string) => Skill | undefined;
   } = {},
 ) {
   return createDriver({
@@ -114,6 +129,48 @@ function fakeSandbox(
     },
   };
 }
+
+interface FakeRegistry extends ToolRegistry {
+  executed: Array<{ name: ToolName; input: Record<string, unknown> }>;
+}
+
+function fakeRegistry(
+  defs: ToolDefinition[],
+  handler: (name: ToolName, input: Record<string, unknown>) => ToolResult = () => ({
+    status: "ok",
+    output: "ok",
+  }),
+): FakeRegistry {
+  const executed: FakeRegistry["executed"] = [];
+  return {
+    executed,
+    list: () => [...defs],
+    get: (name) => defs.find((definition) => definition.name === name),
+    async execute(name, input) {
+      executed.push({ name, input });
+      return handler(name, input);
+    },
+  };
+}
+
+const READ_FILE_DEF: ToolDefinition = {
+  name: "read_file",
+  title: "读取文件",
+  description: "读取沙盒文件",
+  inputSchema: { type: "object" },
+  risk: "safe",
+  source: "sandbox",
+};
+
+const MCP_WEATHER_DEF: ToolDefinition = {
+  name: "mcp.weather",
+  title: "查天气",
+  description: "通过 MCP 查城市天气",
+  inputSchema: { type: "object", properties: { city: { type: "string" } } },
+  risk: "needs_approval",
+  source: "mcp",
+  serverId: "weather-1",
+};
 
 interface FakeApprovalRequest {
   callId: string;
@@ -1098,8 +1155,8 @@ test("tool 默认 label：write_file / read_file / list_files / run_command", as
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@烁烁 去沙盒里看看",
-    mentions: ["shuoshuo"],
+    text: "@金渐层 去沙盒里看看",
+    mentions: ["jinjianceng"],
   });
   await driver.whenIdle();
 
@@ -1305,8 +1362,8 @@ test("审批只对 llm 生效：mode=auto 与 mock 剧本都不进审批、直�
     driver.submit({
       type: "user_message",
       roomId: ROOM_ID,
-      text: "@烁烁 跑一下",
-      mentions: ["shuoshuo"],
+      text: "@金渐层 跑一下",
+      mentions: ["jinjianceng"],
     });
     await driver.whenIdle();
     assert.equal(approvals.requests.length, 0);
@@ -1332,8 +1389,8 @@ test("审批只对 llm 生效：mode=auto 与 mock 剧本都不进审批、直�
     driver.submit({
       type: "user_message",
       roomId: ROOM_ID,
-      text: "@烁烁 跑一下",
-      mentions: ["shuoshuo"],
+      text: "@金渐层 跑一下",
+      mentions: ["jinjianceng"],
     });
     await driver.whenIdle();
     assert.equal(approvals.requests.length, 0);
@@ -1495,8 +1552,8 @@ test("审批策略：commands 只批 run_command，all 连 write_file 也批", a
     driver.submit({
       type: "user_message",
       roomId: ROOM_ID,
-      text: "@烁烁 改文件",
-      mentions: ["shuoshuo"],
+      text: "@金渐层 改文件",
+      mentions: ["jinjianceng"],
     });
     await driver.whenIdle();
     return { approvals, sandbox, studio };
@@ -1515,4 +1572,273 @@ test("审批策略：commands 只批 run_command，all 连 write_file 也批", a
   assert.equal(all.approvals.requests[0]?.mode, "all");
   assert.equal(all.sandbox.calls.length, 1);
   assert.equal(all.studio.state.toolCalls.at(-1)?.status, "ok");
+});
+
+// ───────────────────────── 24. 工具注册表 + MCP 风险审批 ─────────────────────────
+
+test("工具注册表：MCP needs_approval 工具在 commands 下审批，批准后走 registry.execute", async () => {
+  const studio = makeStudioWith({
+    jinjianceng: {
+      tools: ["read_file", "write_file", "list_files", "run_command", "mcp.weather"],
+    },
+  });
+  const registry = fakeRegistry([READ_FILE_DEF, MCP_WEATHER_DEF], (_name, input) => ({
+    status: "ok",
+    output: `${String(input.city)} 晴`,
+  }));
+  const approvals = fakeApprovals("approved");
+  const brain = scriptedBrain((ctx) => {
+    if (ctx.trigger.kind === "user_message") {
+      return [toolTurn("mcp.weather", { city: "上海" })];
+    }
+    if (ctx.trigger.kind === "tool_result") return [message("天气拿到了。")];
+    return [];
+  }, "llm");
+  const driver = makeDriver(studio, brain, {
+    tools: registry,
+    approvals,
+    approvalMode: () => "commands",
+  });
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "@金渐层 查下天气",
+    mentions: ["jinjianceng"],
+  });
+  await driver.whenIdle();
+
+  // 风险来自 ToolDefinition.risk=needs_approval（不是 run_command 特判）。
+  assert.equal(approvals.requests.length, 1);
+  assert.equal(approvals.requests[0]?.tool, "mcp.weather");
+  assert.equal(approvals.requests[0]?.mode, "commands");
+  assert.equal(approvals.requests[0]?.label, `查天气 · {"city":"上海"}`);
+
+  // 执行走 registry，而不是 sandbox。
+  assert.equal(registry.executed.length, 1);
+  assert.equal(registry.executed[0]?.name, "mcp.weather");
+  assert.deepEqual(registry.executed[0]?.input, { city: "上海" });
+
+  const call = studio.state.toolCalls.at(-1);
+  assert.ok(call);
+  assert.equal(call.status, "ok");
+  assert.equal(call.output, "上海 晴");
+  assert.equal(call.label, `查天气 · {"city":"上海"}`);
+
+  assert.equal(brain.calls.length, 2);
+  assert.equal(brain.calls[1]?.trigger.kind, "tool_result");
+  assert.equal(brain.calls[1]?.trigger.toolResults?.[0]?.status, "ok");
+  assert.ok(studio.state.messages.some((m) => m.text === "天气拿到了。"));
+  // 非内置工具的默认结果文案是「标题 + 完成」。
+  assert.ok(
+    studio.state.messages.some((m) => m.kind === "tool" && m.text === "查天气 完成"),
+  );
+});
+
+test("执行优先走工具注册表：同时传 tools 与 sandbox 时内置工具也走 registry", async () => {
+  const studio = makeStudioWith({ jinjianceng: { tools: ["read_file"] } });
+  const registry = fakeRegistry([READ_FILE_DEF], () => ({
+    status: "ok",
+    output: "from registry",
+  }));
+  const sandbox = fakeSandbox(() => ({ status: "ok", output: "from sandbox" }));
+  const brain = scriptedBrain((ctx) =>
+    ctx.trigger.kind === "user_message"
+      ? [toolTurn("read_file", { path: "a.js" })]
+      : [],
+  );
+  const driver = makeDriver(studio, brain, { tools: registry, sandbox });
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "@金渐层 读一下",
+    mentions: ["jinjianceng"],
+  });
+  await driver.whenIdle();
+
+  assert.equal(registry.executed.length, 1);
+  assert.equal(registry.executed[0]?.name, "read_file");
+  assert.equal(sandbox.calls.length, 0, "有注册表时不应再碰 sandbox");
+  assert.equal(studio.state.toolCalls.at(-1)?.output, "from registry");
+});
+
+// ───────────────────────── 25. 每猫工具权限 ─────────────────────────
+
+test("cat.tools 权限：允许的工具执行，未授权的不执行、error 记账并回喂", async () => {
+  const studio = makeStudioWith({ jinjianceng: { tools: ["read_file"] } });
+  const sandbox = fakeSandbox((tool) => ({ status: "ok", output: `ran ${String(tool)}` }));
+  const brain = scriptedBrain((ctx) => {
+    if (ctx.trigger.kind === "user_message") {
+      return [
+        toolTurn("run_command", { cmd: "node", args: ["--test"] }),
+        toolTurn("read_file", { path: "src/remember.js" }),
+        message("先读一下。"),
+      ];
+    }
+    if (ctx.trigger.kind === "tool_result") return [message("看到了。")];
+    return [];
+  }, "llm");
+  const driver = makeDriver(studio, brain, { sandbox });
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "@金渐层 跑测试然后读代码",
+    mentions: ["jinjianceng"],
+  });
+  await driver.whenIdle();
+
+  // 未授权的 run_command 没被真正执行，allowed 的 read_file 执行了。
+  assert.equal(sandbox.calls.length, 1);
+  assert.equal(sandbox.calls[0]?.tool, "read_file");
+
+  const calls = studio.state.toolCalls;
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0]?.tool, "run_command");
+  assert.equal(calls[0]?.status, "error");
+  assert.equal(calls[0]?.output, "金渐层 没有权限使用 run_command");
+  assert.equal(calls[1]?.status, "ok");
+
+  const deniedMessage = studio.state.messages.find((m) => m.toolCallId === calls[0]?.id);
+  assert.ok(deniedMessage);
+  assert.equal(deniedMessage.text, "金渐层 没有权限使用 run_command");
+
+  // 回喂给模型的 toolResults 里也带这条 error。
+  assert.equal(brain.calls.length, 2);
+  const fedBack = brain.calls[1]?.trigger.toolResults ?? [];
+  assert.equal(fedBack.length, 2);
+  assert.equal(fedBack[0]?.status, "error");
+  assert.equal(fedBack[0]?.output, "金渐层 没有权限使用 run_command");
+  assert.ok(studio.state.messages.some((m) => m.text === "看到了。"));
+});
+
+test("cat.tools 空数组：没有任何工具权限（mock 剧本同样受限）", async () => {
+  const studio = makeStudioWith({ jinjianceng: { tools: [] } });
+  const sandbox = fakeSandbox();
+  const brain = scriptedBrain((ctx) =>
+    ctx.trigger.kind === "user_message"
+      ? [toolTurn("read_file", { path: "src/remember.js" }), message("先写方案。")]
+      : [],
+  );
+  const driver = makeDriver(studio, brain, { sandbox });
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "@金渐层 读一下",
+    mentions: ["jinjianceng"],
+  });
+  await driver.whenIdle();
+
+  assert.equal(sandbox.calls.length, 0);
+  const call = studio.state.toolCalls.at(-1);
+  assert.ok(call);
+  assert.equal(call.status, "error");
+  assert.equal(call.output, "金渐层 没有权限使用 read_file");
+  assert.ok(
+    studio.state.messages.some((m) => m.text === "金渐层 没有权限使用 read_file"),
+  );
+  assert.ok(studio.state.messages.some((m) => m.text === "先写方案。"));
+});
+
+// ───────────────────────── 26. availableTools / skills 上下文 ─────────────────────────
+
+test("TurnContext.availableTools / skills：按每猫权限与技能配置注入", async () => {
+  const studio = makeStudioWith({
+    jinjianceng: { tools: ["read_file", "mcp.weather"], skills: ["tdd", "architecture"] },
+    yanyan: { tools: [] },
+    shuoshuo: { tools: undefined, skills: undefined },
+  });
+  const registry = fakeRegistry([READ_FILE_DEF, MCP_WEATHER_DEF]);
+  const brain = scriptedBrain(() => []);
+  const driver = makeDriver(studio, brain, { tools: registry });
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "@金渐层 @宪宪 @烁烁 @砚砚 集合",
+    mentions: ["jinjianceng", "xianxian", "shuoshuo", "yanyan"],
+  });
+  await driver.whenIdle();
+
+  const byCat = new Map(brain.calls.map((call) => [call.cat.id, call]));
+  assert.equal(byCat.size, 4);
+
+  const implementer = byCat.get("jinjianceng");
+  assert.deepEqual(
+    implementer?.availableTools.map((definition) => definition.name),
+    ["read_file", "mcp.weather"],
+  );
+  assert.deepEqual(
+    implementer?.skills.map((skill) => skill.id),
+    ["tdd", "architecture"],
+  );
+  assert.ok((implementer?.skills[0]?.prompt.length ?? 0) > 0);
+
+  // 宪宪在 CATS 里是 read_file/list_files 白名单；假注册表里只有 read_file。
+  const architect = byCat.get("xianxian");
+  assert.deepEqual(
+    architect?.availableTools.map((definition) => definition.name),
+    ["read_file"],
+  );
+  assert.deepEqual(
+    architect?.skills.map((skill) => skill.id),
+    ["architecture"],
+  );
+
+  // skills undefined → skillsForCat 用角色默认。
+  const designer = byCat.get("shuoshuo");
+  assert.deepEqual(
+    designer?.availableTools.map((definition) => definition.name),
+    ["read_file", "mcp.weather"],
+  );
+  assert.deepEqual(
+    designer?.skills.map((skill) => skill.id),
+    ["design-system"],
+  );
+
+  // tools: [] → 一个可用工具都没有。
+  const reviewer = byCat.get("yanyan");
+  assert.deepEqual(reviewer?.availableTools, []);
+  assert.deepEqual(
+    reviewer?.skills.map((skill) => skill.id),
+    ["review-checklist"],
+  );
+
+  assert.equal(registry.executed.length, 0);
+});
+
+test("resolveSkill：cat.skills 里的自定义技能会被解析进 TurnContext.skills", async () => {
+  const studio = makeStudioWith({
+    jinjianceng: { tools: ["read_file"], skills: ["custom-deploy"] },
+  });
+  const registry = fakeRegistry([READ_FILE_DEF]);
+  const brain = scriptedBrain(() => []);
+  const customSkill: Skill = {
+    id: "custom-deploy",
+    name: "部署纪律",
+    description: "自定义技能",
+    prompt: "【技能：部署纪律】先备份再发布。",
+  };
+  const driver = makeDriver(studio, brain, {
+    tools: registry,
+    resolveSkill: (id) => (id === customSkill.id ? customSkill : undefined),
+  });
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "@金渐层 看看技能",
+    mentions: ["jinjianceng"],
+  });
+  await driver.whenIdle();
+
+  const call = brain.calls[0];
+  assert.ok(call);
+  assert.deepEqual(
+    call.skills.map((skill) => skill.id),
+    ["custom-deploy"],
+  );
+  assert.equal(call.skills[0]?.prompt, customSkill.prompt);
 });

@@ -25,6 +25,7 @@ import type {
   TurnContext,
 } from "../src/domain/types.ts";
 import { Sandbox } from "../src/tools/sandbox.ts";
+import { getSkill, listSkills, skillsForCat } from "../src/skills/registry.ts";
 
 const ROOM: Room = {
   id: "room_test",
@@ -97,6 +98,8 @@ function makeCtx(input: {
     memory: input.memory ?? [],
     handoffs: [],
     recentToolResults: [],
+    availableTools: [],
+    skills: [],
     artifacts: input.artifacts ?? [],
     scenario: input.scenario ?? null,
   };
@@ -213,6 +216,112 @@ test("四只猫：id 固定、字段齐全、人格互不重复", () => {
   }
 
   assert.equal(new Set(CATS.map((cat) => cat.catchphrase)).size, CATS.length);
+});
+
+// ───────────────────────── 工具 / 技能默认值 ─────────────────────────
+
+const EXPECTED_CAT_DEFAULTS: Record<string, { tools: string[]; skills: string[] }> = {
+  xianxian: { tools: ["read_file", "list_files"], skills: ["architecture"] },
+  yanyan: { tools: ["read_file", "list_files", "run_command"], skills: ["review-checklist"] },
+  shuoshuo: { tools: ["read_file", "list_files"], skills: ["design-system"] },
+  jinjianceng: {
+    tools: ["read_file", "write_file", "list_files", "run_command"],
+    skills: ["tdd"],
+  },
+};
+
+test("四猫工具/技能默认值：存在、合法、能被技能包解析", () => {
+  const validTools = new Set(["read_file", "write_file", "list_files", "run_command"]);
+
+  for (const cat of CATS) {
+    const expected = EXPECTED_CAT_DEFAULTS[cat.id];
+    assert.ok(expected, `${cat.id} 缺少期望的默认工具/技能`);
+    if (!expected) continue;
+
+    assert.ok(cat.tools, `${cat.id} 缺少 tools 默认值`);
+    assert.ok(cat.skills, `${cat.id} 缺少 skills 默认值`);
+    assert.deepEqual(cat.tools, expected.tools, `${cat.id} 的 tools 默认值不符合契约`);
+    assert.deepEqual(cat.skills, expected.skills, `${cat.id} 的 skills 默认值不符合契约`);
+
+    for (const tool of cat.tools ?? []) {
+      assert.ok(validTools.has(tool), `${cat.id} 配置了未知工具：${tool}`);
+    }
+    for (const id of cat.skills ?? []) {
+      assert.ok(getSkill(id), `${cat.id} 的技能包 id 解析不到：${id}`);
+    }
+
+    // cat.skills 优先：解析结果就是四猫的默认技能包
+    assert.deepEqual(
+      skillsForCat(cat).map((skill) => skill.id),
+      expected.skills,
+      `${cat.id} 的 skillsForCat 结果与默认值不一致`,
+    );
+  }
+
+  // 四猫默认技能包互不重复（各司其职）
+  const allSkillIds = CATS.flatMap((cat) => cat.skills ?? []);
+  assert.equal(new Set(allSkillIds).size, allSkillIds.length);
+  assert.equal(allSkillIds.length, 4);
+});
+
+test("skillsForCat：cat.skills 优先、角色默认兜底、未知 id 忽略", () => {
+  const implementer = catOf("jinjianceng");
+
+  // 1) 自定义 skills 优先于角色默认
+  const custom: Cat = { ...implementer, skills: ["design-system", "architecture"] };
+  assert.deepEqual(
+    skillsForCat(custom).map((skill) => skill.id),
+    ["design-system", "architecture"],
+  );
+
+  // 2) skills 为空数组 → 回落到角色默认
+  assert.deepEqual(
+    skillsForCat({ ...implementer, skills: [] }).map((skill) => skill.id),
+    ["tdd"],
+  );
+
+  // 3) 没配置 skills → 同样回落到角色默认
+  assert.deepEqual(
+    skillsForCat({ ...implementer, skills: undefined }).map((skill) => skill.id),
+    ["tdd"],
+  );
+
+  // 4) 未知 id 被忽略，重复 id 去重
+  assert.deepEqual(
+    skillsForCat({ ...implementer, skills: ["tdd", "ghost", "tdd"] }).map((skill) => skill.id),
+    ["tdd"],
+  );
+
+  // 5) 每个角色的兜底映射与四猫默认一致
+  for (const cat of CATS) {
+    const expected = EXPECTED_CAT_DEFAULTS[cat.id];
+    if (!expected) continue;
+    assert.deepEqual(
+      skillsForCat({ ...cat, skills: undefined }).map((skill) => skill.id),
+      expected.skills,
+      `${cat.id} 的角色默认技能不对`,
+    );
+  }
+});
+
+test("四个技能包：结构完整、prompt 是可照做的规则（60–160 字）", () => {
+  const skills = listSkills();
+  assert.deepEqual(
+    skills.map((skill) => skill.id).sort(),
+    ["architecture", "design-system", "review-checklist", "tdd"],
+  );
+
+  for (const skill of skills) {
+    assert.ok(skill.name.trim().length > 0, `${skill.id} 缺少 name`);
+    assert.ok(skill.description.trim().length > 0, `${skill.id} 缺少 description`);
+
+    const length = [...skill.prompt].length;
+    assert.ok(length >= 60 && length <= 160, `${skill.id} 的 prompt 长度 ${length} 不在 60–160`);
+    assert.ok(skill.prompt.includes("【技能："), `${skill.id} 的 prompt 缺少技能标题`);
+    const rules = skill.prompt.match(/^- /gmu) ?? [];
+    assert.ok(rules.length >= 3, `${skill.id} 至少要有 3 条可照做的规则`);
+    assert.equal(getSkill(skill.id), skill);
+  }
 });
 
 // ───────────────────────── 场景结构 ─────────────────────────

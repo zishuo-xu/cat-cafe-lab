@@ -28,6 +28,7 @@
 - **故障与恢复**：`remember_me` 剧本里埋了一次"交接漏 @"，任务会真卡住——点「催一下」才恢复。
 - **真实工具**：金渐层在独立沙盒里真的写文件、真的跑测试；砚砚的 review 基于真实退出码和失败输出。
 - **真实模式工具调用 + 审批**：模型可以主动请求工具，执行结果回喂给它继续推理；跑命令前可以挂起等铲屎官批准。
+- **工具注册表 + MCP + 技能**：工具不再写死，MCP server 的工具动态注册；每只猫有自己的工具权限和技能包。
 
 ---
 
@@ -46,7 +47,7 @@ node src/main.ts      # 或 pnpm start
 点「＋ 新任务」→ 选「记住我」示例 → 「让猫猫开工」，然后看着就行。
 
 ```bash
-node --test tests/    # 132 个测试
+node --test tests/    # 161 个测试
 npx tsc --noEmit      # 类型检查
 ```
 
@@ -137,6 +138,24 @@ run_command node --test ...      ✓ exit 0（砚砚放行）
 
 > 真实模型效果取决于 provider 是否能稳定输出 JSON 数组；当前用本地假端点端到端验证过完整链路，
 > 失败会自动降级回演出模式。真机接真实 provider 时，建议先用低风险任务试。
+
+---
+
+## 工具与技能（MCP + Skills）
+
+工具从「写死四个」变成了**注册表**：内置沙盒工具是一个 provider，MCP server 是另一个。
+
+- 设置 →「MCP 工具」里添加 server（stdio 命令或 HTTP URL），连接成功后它的工具会出现在
+  `/api/tools` 和猫的工具目录里；MCP 工具默认风险等级 `needs_approval`，模型调用要经过审批。
+- 设置 →「猫猫与模型」→「工具/技能」：给每只猫勾选允许的工具和技能包。
+  默认配置是：宪宪只读、砚砚只读+跑测试、烁烁只读、金渐层读写+跑命令。
+- 技能包会注入真实模式的 system prompt（架构拆解 / Review 清单 / 设计系统 / TDD 纪律）。
+  演出模式不调用模型，技能不生效。
+- MCP server 是你自己添加的本地进程或服务；项目只负责连接、列工具、调用和审批，不内置任何 server。
+
+![MCP server 管理](docs/images/mcp.png)
+
+![每猫工具与技能](docs/images/mcp-access.png)
 
 ---
 
@@ -236,6 +255,8 @@ node src/main.ts
 | 剧本库 | 查看/导出/删除自定义剧本，导入 JSON 剧本 |
 | 工具执行 | 开关沙盒工具（写文件 / 跑命令）；关掉后猫只产出文字方案 |
 | 审批策略 | auto / commands / all；只对真实模式下模型主动发起的工具生效 |
+| MCP 工具 | 添加/启停/测试/删除 MCP server，工具动态进注册表 |
+| 工具与技能 | 每只猫的工具白名单与技能包（技能注入真实模式 prompt） |
 
 底部还有只读的运行信息（版本、端口、数据目录、Node、启动时间、stallMs）。
 只有 `mode / speed / baseUrl / model / temperature` 会落盘到 `data/settings.json`（0600），key 永远只在内存。
@@ -286,7 +307,10 @@ public/            原生 ESM + CSS，无构建、无框架
 src/server/http.ts    REST + SSE + 静态资源
 src/server/studio.ts  唯一状态容器，所有写操作走这里
 src/server/settings-store.ts  运行时设置：模式 / 节奏 / LLM（key 只在内存）
+src/tools/registry.ts 工具注册表：内置 + MCP
 src/tools/sandbox.ts  沙盒：路径锁根目录、命令白名单、10s 超时
+src/mcp/client.ts     MCP JSON-RPC 客户端（stdio / http）
+src/skills/registry.ts 技能包（注入真实模式 prompt）
 src/engine/driver.ts  每房间串行队列：阶段机 / 路由 / 延迟 / 工具执行 / 故障恢复
 src/agents/           brain：mock（剧本）或 llm（真实模型）
 src/domain/types.ts   唯一契约
@@ -306,6 +330,7 @@ src/domain/types.ts   唯一契约
 - **只在自带沙盒里干活**：猫会真的改 `data/workspace/` 里的 mini 项目、跑它的测试，
   但**不会碰你的仓库**。真实模式下模型可以请求工具，但跑命令默认要铲屎官批准。
 - **本地单人**：没有鉴权、没有多用户、没有数据库。JSON 文件就是全部持久化。
+- **MCP server 由你负责**：项目只连接你显式添加的 server；默认没有鉴权配置，也不内置任何 server。
 - **剧本台词不会自动改名**：改猫名后，@ 路由、名册、消息作者都用新名字，但剧本里写死的旧名字不会自动替换（剧本是数据，不是模板变量）。
 - **剧本要自己写**：内置两个（记住我、CSV 导出），也可以在「剧本库」导入 JSON；不写剧本的需求会走通用兜底回复。
 
@@ -318,12 +343,14 @@ cat-cafe-lab/
 ├── src/
 │   ├── domain/        types.ts（契约）、ids.ts
 │   ├── server/        studio.ts、http.ts、settings.ts、settings-store.ts
-│   ├── tools/         sandbox.ts、seed.ts
+│   ├── tools/         registry.ts、sandbox.ts、builtin.ts、approval.ts
+│   ├── mcp/           client.ts、manager.ts
+│   ├── skills/        registry.ts
 │   ├── engine/        driver.ts、stages.ts、mentions.ts
 │   ├── agents/        personas.ts、scenarios.ts、mock-brain.ts、llm-brain.ts
 │   └── main.ts
 ├── public/            index.html、app.js、styles.css、avatars.js
-├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / smoke（132 个）
+├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / smoke（161 个）
 ├── docs/              architecture.md、llm.md、images/
 ├── data/              studio.json、workspace/（gitignore）
 └── PLAN.md            设计与分工记录

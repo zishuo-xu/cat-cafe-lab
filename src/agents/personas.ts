@@ -23,6 +23,8 @@ export const CATS: Cat[] = [
     accent: "#7C9EB2",
     avatar: "ragdoll",
     greeting: "我先把需求接住。谁有异议，随时打断我。",
+    tools: ["read_file", "list_files"],
+    skills: ["architecture"],
   },
   {
     id: "yanyan",
@@ -36,6 +38,8 @@ export const CATS: Cat[] = [
     accent: "#8C6A4F",
     avatar: "mainecoon",
     greeting: "需要 review 的，直接 @ 我。别指望我放水。",
+    tools: ["read_file", "list_files", "run_command"],
+    skills: ["review-checklist"],
   },
   {
     id: "shuoshuo",
@@ -49,6 +53,8 @@ export const CATS: Cat[] = [
     accent: "#C9A227",
     avatar: "siamese",
     greeting: "我先看看交互。好看不是装饰，是让人愿意待着。",
+    tools: ["read_file", "list_files"],
+    skills: ["design-system"],
   },
   {
     id: "jinjianceng",
@@ -62,5 +68,7 @@ export const CATS: Cat[] = [
     accent: "#B08D57",
     avatar: "golden",
     greeting: "有活直接派。我先跑起来，细节回头补。",
+    tools: ["read_file", "write_file", "list_files", "run_command"],
+    skills: ["tdd"],
   },
 ];

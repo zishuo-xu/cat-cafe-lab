@@ -47,6 +47,10 @@ export interface Cat {
   llmModel?: string;
   /** 真实模式下这只猫的温度；缺省时用全局。 */
   llmTemperature?: number;
+  /** 允许使用的工具名；缺省 = 全部允许（内置工具默认全开）。 */
+  tools?: string[];
+  /** 挂载的技能包 id；缺省 = 使用 CATS 里的默认配置。 */
+  skills?: string[];
 }
 
 // ───────────────────────── 房间与消息 ─────────────────────────
@@ -243,6 +247,10 @@ export interface TurnContext {
   artifacts: Artifact[];
   /** 最近的工具回执（真实模式下用来继续推理）。 */
   recentToolResults: ToolRunResult[];
+  /** 这只猫当前可用的工具（已按权限过滤）。 */
+  availableTools: ToolDefinition[];
+  /** 这只猫挂载的技能包。 */
+  skills: Skill[];
   /** 场景数据（mock brain 用于取台词模板）。 */
   scenario: Scenario | null;
 }
@@ -376,8 +384,11 @@ export interface StudioSettings {
 /** 回复节奏：只影响打字/思考延迟，不影响协作逻辑。 */
 export type Speed = "slow" | "normal" | "fast";
 
-/** 沙盒工具。所有路径都相对沙盒根目录。 */
-export type ToolName = "read_file" | "write_file" | "list_files" | "run_command";
+/** 内置沙盒工具。所有路径都相对沙盒根目录。 */
+export type BuiltinToolName = "read_file" | "write_file" | "list_files" | "run_command";
+
+/** 工具名：内置四种 + MCP 注册进来的动态名。 */
+export type ToolName = BuiltinToolName | (string & {});
 
 export interface ToolCall {
   id: string;
@@ -408,6 +419,45 @@ export interface ToolResult {
 /** driver 只依赖这个接口，测试时可以塞一个假的。 */
 export interface SandboxRunner {
   execute(tool: ToolName, input: Record<string, unknown>): Promise<ToolResult>;
+}
+
+/** 工具目录里的一项：内置沙盒工具或 MCP server 暴露的工具。 */
+export interface ToolDefinition {
+  name: ToolName;
+  title: string;
+  description: string;
+  inputSchema: Record<string, unknown>;
+  risk: "safe" | "needs_approval";
+  source: "sandbox" | "mcp";
+  serverId?: string;
+}
+
+/** 工具注册表：driver / brain 只依赖这个。 */
+export interface ToolRegistry {
+  list(): ToolDefinition[];
+  get(name: ToolName): ToolDefinition | undefined;
+  execute(name: ToolName, input: Record<string, unknown>): Promise<ToolResult>;
+}
+
+/** 技能包：一段可注入 system prompt 的方法论。 */
+export interface Skill {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+}
+
+/** MCP server 配置（持久化到 data/mcp.json，不含敏感 key）。 */
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  transport: "stdio" | "http";
+  command?: string;
+  args?: string[];
+  url?: string;
+  enabled: boolean;
+  /** MCP 工具默认风险等级；默认 needs_approval。 */
+  risk?: "safe" | "needs_approval";
 }
 
 /** 一次工具执行的回执，喂回给 brain 做下一步判断。 */
@@ -513,4 +563,8 @@ export type DriverFactory = (deps: {
   /** 审批策略；mock 剧本里的工具默认自动放行。 */
   approvalMode?: () => ToolApprovalMode;
   approvals?: ApprovalGate;
+  /** 工具注册表（内置 + MCP）；不传则回落到 sandbox。 */
+  tools?: ToolRegistry;
+  /** 按 id 解析技能包。 */
+  resolveSkill?: (id: string) => Skill | undefined;
 }) => Driver;

@@ -43,9 +43,12 @@
 
 ### 真实模式与沙盒工具
 
-真实模式下，llm-brain 的输出第 7 种 turn 是 `kind:"tool"`：模型可以请求 read_file / write_file /
-list_files / run_command。driver 执行后以 `trigger.kind="tool_result"` 再叫一次，把 exitCode 和输出
-喂回去（最多连续 3 轮）。
+真实模式下，llm-brain 的输出第 7 种 turn 是 `kind:"tool"`，可用工具来自 `TurnContext.availableTools`：
+内置沙盒四个工具 + 已连接的 MCP server 工具（按每猫权限过滤）。driver 执行后以
+`trigger.kind="tool_result"` 再叫一次，把 exitCode 和输出喂回去（最多连续 3 轮）。
+
+`TurnContext.skills` 里的技能包会以 `### <name>` + prompt 全文注入 system prompt（演出模式不生效）。
+MCP 工具默认风险 `needs_approval`，模型调用会进审批队列。
 
 模型主动发起的命令默认要铲屎官审批（`commands` 策略），拒绝会以 `rejected` 回喂；
 剧本里的工具节拍永远自动放行。详见 README「真实模式：猫会自己决定用工具」。

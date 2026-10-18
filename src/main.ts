@@ -9,6 +9,8 @@ import { createDriver } from "./engine/driver.ts";
 import { createHttpServer } from "./server/http.ts";
 import { Sandbox } from "./tools/sandbox.ts";
 import { ApprovalQueue } from "./tools/approval.ts";
+import { ToolRegistryImpl } from "./tools/registry.ts";
+import { McpManager } from "./mcp/manager.ts";
 import { readSettings } from "./server/settings.ts";
 import { SettingsStore, SwitchableBrain } from "./server/settings-store.ts";
 import { Studio } from "./server/studio.ts";
@@ -22,6 +24,9 @@ const studio = new Studio({ cats: CATS, mode: settings.mode, dataDir });
 const sandbox = new Sandbox(resolve(dataDir, "workspace"));
 sandbox.ensureSeed();
 const approvals = new ApprovalQueue();
+const registry = new ToolRegistryImpl(sandbox);
+const mcp = new McpManager(registry, dataDir);
+await mcp.init();
 // 导入的自定义剧本会原地追加到 SCENARIOS，driver / HTTP 拿到的是同一数组引用。
 initScenarios(dataDir, studio.state.cats.map((cat) => cat.id));
 const mock = createMockBrain(SCENARIOS, {
@@ -49,6 +54,7 @@ const driver = createDriver({
   wait,
   stallMs: settings.stallMs,
   sandbox,
+  tools: registry,
   toolsEnabled: () => settingsStore.toolsOn(),
   approvals,
   approvalMode: () => settingsStore.approvalMode(),
@@ -64,6 +70,8 @@ const server = createHttpServer({
   settingsApi: settingsStore,
   sandbox,
   approvals,
+  tools: registry,
+  mcp,
 });
 
 server.listen(settings.port, "127.0.0.1", () => {
@@ -77,7 +85,10 @@ server.listen(settings.port, "127.0.0.1", () => {
   console.log(`  ${CATS.map((c) => `${c.name}(${c.species})`).join("  ")}`);
   console.log(`  http://127.0.0.1:${settings.port}`);
   console.log(`  mode: ${modeText} · data: ${dataDir}`);
-  console.log(`  sandbox: ${sandbox.root} · tools: ${publicSettings.toolsEnabled ? "on" : "off"}`);
+  const mcpTools = registry.list().filter((tool) => tool.source === "mcp").length;
+  console.log(
+    `  sandbox: ${sandbox.root} · tools: ${publicSettings.toolsEnabled ? "on" : "off"} · mcp tools: ${mcpTools}`,
+  );
   if (publicSettings.llm.hasKey) {
     console.log(`  llm: ${publicSettings.llm.baseUrl} (key: ${publicSettings.llm.keySource})`);
   }
@@ -87,6 +98,7 @@ server.listen(settings.port, "127.0.0.1", () => {
 function shutdown(): void {
   console.log("\n  猫猫下班了，喵。");
   server.close();
+  void mcp.close();
   studio.close();
   setTimeout(() => process.exit(0), 100).unref?.();
 }

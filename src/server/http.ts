@@ -10,6 +10,7 @@ import type {
   ApprovalGate,
   CatId,
   Driver,
+  ToolRegistry,
   RoomId,
   Scenario,
   SettingsApi,
@@ -24,6 +25,8 @@ import {
 } from "../agents/scenario-registry.ts";
 import type { CatPatch, Studio } from "./studio.ts";
 import type { Sandbox } from "../tools/sandbox.ts";
+import type { McpManager, McpInput } from "../mcp/manager.ts";
+import { listSkills } from "../skills/registry.ts";
 
 export interface HttpDeps {
   studio: Studio;
@@ -37,6 +40,10 @@ export interface HttpDeps {
   sandbox?: Sandbox;
   /** 审批闸门；不传则审批接口返回 503。 */
   approvals?: ApprovalGate;
+  /** 工具注册表（GET /api/tools）。 */
+  tools?: ToolRegistry;
+  /** MCP 管理器；不传则 MCP 接口返回 503。 */
+  mcp?: McpManager;
   /** 前端用来判断「卡住」的阈值；不传按 driver.stallMs / 12s。 */
   stallMs?: number;
 }
@@ -145,6 +152,14 @@ function parseCatPatch(body: unknown): CatPatch {
     }
     patch.llmTemperature = temperature;
   }
+  for (const field of ["tools", "skills"] as const) {
+    const value = record[field];
+    if (value === undefined) continue;
+    if (value !== null && (!Array.isArray(value) || value.some((item) => typeof item !== "string"))) {
+      throw new Error(`${field} 必须是字符串数组或 null`);
+    }
+    patch[field] = value as string[] | null;
+  }
   if (Object.keys(patch).length === 0) throw new Error("没有可更新的字段");
   return patch;
 }
@@ -181,7 +196,7 @@ function serveStatic(res: ServerResponse, publicDir: string, pathname: string): 
 }
 
 export function createHttpServer(deps: HttpDeps): Server {
-  const { studio, driver, scenarios, settingsApi, sandbox, approvals } = deps;
+  const { studio, driver, scenarios, settingsApi, sandbox, approvals, tools, mcp } = deps;
   const publicDir = deps.publicDir;
 
   return createServer((req, res) => {
@@ -269,6 +284,78 @@ export function createHttpServer(deps: HttpDeps): Server {
       const state = studio.reset();
       json(res, 200, { ok: true, seq: state.seq });
       return;
+    }
+
+    if (pathname === "/api/tools" && method === "GET") {
+      json(res, 200, { tools: tools?.list() ?? [] });
+      return;
+    }
+
+    if (pathname === "/api/skills" && method === "GET") {
+      json(res, 200, { skills: listSkills() });
+      return;
+    }
+
+    if (pathname === "/api/mcp" && (method === "GET" || method === "POST")) {
+      if (!mcp) {
+        fail(res, 503, "mcp manager not enabled");
+        return;
+      }
+      if (method === "GET") {
+        json(res, 200, { servers: mcp.list() });
+        return;
+      }
+      const body = (await readBody(req)) as McpInput;
+      if (!body || typeof body !== "object") {
+        fail(res, 400, "invalid mcp payload");
+        return;
+      }
+      try {
+        json(res, 201, { server: await mcp.add(body) });
+      } catch (err) {
+        fail(res, 400, err instanceof Error ? err.message : "invalid mcp server");
+      }
+      return;
+    }
+
+    {
+      const mcpMatch = /^\/api\/mcp\/([^/]+)(?:\/(test|toggle))?$/.exec(pathname);
+      if (mcpMatch) {
+        if (!mcp) {
+          fail(res, 503, "mcp manager not enabled");
+          return;
+        }
+        const serverId = decodeURIComponent(mcpMatch[1] ?? "");
+        const action = mcpMatch[2];
+        if (method === "DELETE" && !action) {
+          if (!(await mcp.remove(serverId))) {
+            fail(res, 404, "MCP server 不存在");
+            return;
+          }
+          json(res, 200, { ok: true });
+          return;
+        }
+        if (method === "POST" && action === "test") {
+          const body = (await readBody(req)) as McpInput;
+          json(res, 200, await mcp.test({ ...body, id: serverId }));
+          return;
+        }
+        if (method === "POST" && action === "toggle") {
+          const body = (await readBody(req)) as { enabled?: unknown };
+          if (typeof body.enabled !== "boolean") {
+            fail(res, 400, "enabled 必须是布尔值");
+            return;
+          }
+          try {
+            json(res, 200, { server: await mcp.setEnabled(serverId, body.enabled) });
+          } catch (err) {
+            fail(res, 404, err instanceof Error ? err.message : "MCP server 不存在");
+          }
+          return;
+        }
+        fail(res, 405, "method not allowed");
+        return;
+      }
     }
 
     {

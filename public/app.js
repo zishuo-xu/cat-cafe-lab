@@ -103,6 +103,10 @@ const app = {
   stallMs: FALLBACK_STALL_MS,
   /** 全局 LLM 模型名（来自 /api/settings），用于「跟随全局」标签。 */
   globalModel: "",
+  /** /api/tools 工具目录（用于来源徽标与每猫权限）。 */
+  toolCatalog: [],
+  /** /api/skills 技能目录。 */
+  skillCatalog: [],
 };
 
 /** 设置面板的临时状态（打开时才加载，关闭即丢弃草稿）。 */
@@ -142,6 +146,33 @@ const approvalState = {
   pending: [],
   error: "",
   lastToolSignature: "",
+};
+
+/** MCP server 管理状态。 */
+const mcpState = {
+  loading: false,
+  loaded: false,
+  available: null,
+  servers: [],
+  error: "",
+  formOpen: false,
+  saving: false,
+  busy: {},
+  results: {},
+  deleteConfirmId: "",
+};
+
+/** 每猫工具权限 / 技能弹窗状态。 */
+const catAccessState = {
+  catId: null,
+  tools: [],
+  skills: [],
+  selectedTools: new Set(),
+  selectedSkills: new Set(),
+  loading: false,
+  saving: false,
+  toolsError: "",
+  skillsError: "",
 };
 
 /** 沙盒面板 / 文件查看 / 重置 的临时状态。 */
@@ -494,6 +525,7 @@ async function boot() {
   void refreshGlobalModel();
   void loadWorkspace();
   void loadApprovals();
+  void loadToolCatalog();
   try {
     await refreshState("boot");
   } catch {
@@ -610,6 +642,33 @@ function cacheDom() {
 
   els.needsNodes = $$("[data-needs-me]");
   els.needsCounts = $$("[data-needs-count]");
+
+  els.mcpStatus = $("#mcp-status");
+  els.mcpList = $("#mcp-list");
+  els.mcpForm = $("#mcp-form");
+  els.mcpFormToggle = $("#mcp-form-toggle");
+  els.mcpName = $("#mcp-name");
+  els.mcpTransport = $("#mcp-transport");
+  els.mcpStdioFields = $("#mcp-stdio-fields");
+  els.mcpHttpFields = $("#mcp-http-fields");
+  els.mcpCommand = $("#mcp-command");
+  els.mcpArgs = $("#mcp-args");
+  els.mcpUrl = $("#mcp-url");
+  els.mcpRisk = $("#mcp-risk");
+  els.mcpEnabled = $("#mcp-enabled");
+  els.mcpFormError = $("#mcp-form-error");
+  els.mcpSaveBtn = $("#mcp-save-btn");
+  els.mcpReload = $("#mcp-reload-btn");
+
+  els.catAccessModal = $("#cat-access-modal");
+  els.catAccessForm = $("#cat-access-form");
+  els.catAccessSub = $("#cat-access-sub");
+  els.catAccessTools = $("#cat-access-tools");
+  els.catAccessSkills = $("#cat-access-skills");
+  els.catAccessToolsCount = $("#cat-access-tools-count");
+  els.catAccessSkillsCount = $("#cat-access-skills-count");
+  els.catAccessError = $("#cat-access-error");
+  els.catAccessSave = $("#cat-access-save");
 
   els.sandboxList = $("#sandbox-list");
   els.sandboxCount = $("[data-sandbox-count]");
@@ -1929,6 +1988,56 @@ function bindUi() {
     });
   }
 
+  if (els.mcpTransport) {
+    els.mcpTransport.addEventListener("change", updateMcpTransportFields);
+  }
+  if (els.mcpForm) {
+    els.mcpForm.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && event.target instanceof HTMLInputElement) {
+        event.preventDefault();
+        void saveMcpServer();
+      }
+    });
+  }
+  for (const field of [els.mcpName, els.mcpCommand, els.mcpArgs, els.mcpUrl, els.mcpRisk]) {
+    field?.addEventListener("input", hideMcpFormError);
+  }
+
+  if (els.catAccessForm) {
+    els.catAccessForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void saveCatAccess();
+    });
+  }
+  if (els.catAccessTools) {
+    els.catAccessTools.addEventListener("change", (event) => {
+      const input = event.target;
+      if (!(input instanceof HTMLInputElement) || !input.dataset.toolName) return;
+      if (input.checked) catAccessState.selectedTools.add(input.dataset.toolName);
+      else catAccessState.selectedTools.delete(input.dataset.toolName);
+      updateCatAccessCounts();
+    });
+  }
+  if (els.catAccessSkills) {
+    els.catAccessSkills.addEventListener("change", (event) => {
+      const input = event.target;
+      if (!(input instanceof HTMLInputElement) || !input.dataset.skillId) return;
+      if (input.checked) catAccessState.selectedSkills.add(input.dataset.skillId);
+      else catAccessState.selectedSkills.delete(input.dataset.skillId);
+      updateCatAccessCounts();
+    });
+  }
+  if (els.catAccessModal) {
+    els.catAccessModal.addEventListener("click", (event) => {
+      if (event.target === els.catAccessModal) closeCatAccess();
+    });
+    els.catAccessModal.addEventListener("close", () => {
+      catAccessState.catId = null;
+      catAccessState.saving = false;
+      hideCatAccessError();
+    });
+  }
+
   if (els.taskScenario) {
     els.taskScenario.addEventListener("change", onTaskScenarioChange);
   }
@@ -2070,6 +2179,69 @@ function onGlobalClick(event) {
       break;
     case "focus-needs-me":
       focusNeedsMe();
+      break;
+    case "toggle-mcp-form":
+      if (mcpState.formOpen) closeMcpForm();
+      else openMcpForm();
+      break;
+    case "cancel-mcp":
+      closeMcpForm();
+      break;
+    case "save-mcp":
+      void saveMcpServer();
+      break;
+    case "reload-mcp":
+      void loadMcp();
+      break;
+    case "test-mcp":
+      if (actionEl.dataset.id) void testMcpServer(actionEl.dataset.id);
+      break;
+    case "toggle-mcp":
+      if (actionEl.dataset.id) {
+        void toggleMcpServer(actionEl.dataset.id, actionEl.dataset.enabled !== "true");
+      }
+      break;
+    case "delete-mcp":
+      if (actionEl.dataset.id) askDeleteMcp(actionEl.dataset.id);
+      break;
+    case "confirm-delete-mcp":
+      if (actionEl.dataset.id) void confirmDeleteMcp(actionEl.dataset.id);
+      break;
+    case "cancel-delete-mcp":
+      mcpState.deleteConfirmId = "";
+      renderMcpList();
+      break;
+    case "edit-cat-access":
+      if (actionEl.dataset.catId) openCatAccess(actionEl.dataset.catId);
+      break;
+    case "close-cat-access":
+      closeCatAccess();
+      break;
+    case "select-all-tools": {
+      const names = new Set(catAccessState.tools.map((tool) => tool.name));
+      for (const name of catAccessState.selectedTools) names.add(name);
+      catAccessState.selectedTools = names;
+      renderCatAccessTools();
+      updateCatAccessCounts();
+      break;
+    }
+    case "clear-all-tools":
+      catAccessState.selectedTools = new Set();
+      renderCatAccessTools();
+      updateCatAccessCounts();
+      break;
+    case "select-all-skills": {
+      const ids = new Set(catAccessState.skills.map((skill) => skill.id));
+      for (const id of catAccessState.selectedSkills) ids.add(id);
+      catAccessState.selectedSkills = ids;
+      renderCatAccessSkills();
+      updateCatAccessCounts();
+      break;
+    }
+    case "clear-all-skills":
+      catAccessState.selectedSkills = new Set();
+      renderCatAccessSkills();
+      updateCatAccessCounts();
       break;
     case "open-sandbox-file":
       if (actionEl.dataset.path) void openSandboxFile(actionEl.dataset.path);
@@ -2552,6 +2724,8 @@ async function openSettings() {
 
   if (!modal.open) modal.showModal();
   void loadScenarios();
+  void loadMcp();
+  void loadToolCatalog();
   await loadSettings();
 }
 
@@ -3109,6 +3283,13 @@ function catModelRow(cat) {
         "data-mode": app.state?.mode === "llm" ? "llm" : "mock",
         title: model.title,
         text: model.text,
+      }),
+      h("button", {
+        type: "button",
+        class: "btn btn--tiny btn--ghost",
+        "data-action": "edit-cat-access",
+        "data-cat-id": cat.id,
+        text: "工具/技能",
       }),
       h("button", {
         type: "button",
@@ -3893,6 +4074,7 @@ function toolCardNode(call, message) {
       { class: "tool-head" },
       h("span", { class: "tool-icon", "data-role": "icon", "aria-hidden": "true", text: "🧰" }),
       h("span", { class: "tool-label", "data-role": "label", text: call?.label ?? "工具调用" }),
+      h("span", { class: "tool-source", "data-role": "source", hidden: true }),
       h("span", {
         class: "tool-status",
         "data-role": "status",
@@ -3981,6 +4163,16 @@ function updateToolCard(card, call, options = {}) {
 
   if (icon) icon.textContent = meta.icon;
   if (label) label.textContent = call?.label ?? "工具调用";
+  const sourceEl = card.querySelector('[data-role="source"]');
+  const source = toolSourceInfo(call?.tool);
+  if (sourceEl) {
+    sourceEl.hidden = !source;
+    if (source) {
+      sourceEl.dataset.source = source.kind;
+      sourceEl.textContent = source.label;
+      sourceEl.title = source.title;
+    }
+  }
   if (statusEl) {
     statusEl.dataset.status = status;
     statusEl.textContent = toolStatusLabel(call);
@@ -4555,6 +4747,764 @@ function updateToolsHint() {
   els.settingsToolsHint.textContent = checked
     ? "开启：猫可以读/写工作区文件并运行命令；关闭：只产出文字。"
     : "已关闭：猫不会写文件或运行命令，只会产出文字。";
+}
+
+
+// ── 工具目录 / 来源徽标 ─────────────────────────────────────────────────
+
+const BUILTIN_TOOL_NAMES = Object.keys(TOOL_META);
+
+function toolSourceInfo(toolName) {
+  if (!toolName) return null;
+  const def = (app.toolCatalog ?? []).find((tool) => tool.name === toolName);
+  if (def?.source === "mcp") {
+    const server = def.serverId ? ` · ${def.serverId}` : "";
+    return { kind: "mcp", label: `MCP${server}`, title: `来自 MCP server${def.serverId ? `：${def.serverId}` : ""}` };
+  }
+  if (def?.source === "sandbox" || BUILTIN_TOOL_NAMES.includes(toolName)) {
+    return { kind: "sandbox", label: "沙盒", title: "内置沙盒工具" };
+  }
+  return null;
+}
+
+async function loadToolCatalog() {
+  try {
+    const response = await fetch("/api/tools", {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET /api/tools"));
+    const payload = await response.json();
+    app.toolCatalog = Array.isArray(payload?.tools) ? payload.tools : [];
+  } catch {
+    app.toolCatalog = [];
+  }
+  updateAllToolSourceBadges();
+}
+
+function updateAllToolSourceBadges() {
+  if (!els.timeline) return;
+  for (const card of $$(".tool-card[data-tool-call-id]", els.timeline)) {
+    const call = toolCallById(card.dataset.toolCallId);
+    if (call) updateToolCard(card, call);
+  }
+}
+
+// ── 设置 · MCP 工具管理 ────────────────────────────────────────────────
+
+function setMcpStatus(message) {
+  if (els.mcpStatus) els.mcpStatus.textContent = message;
+}
+
+async function loadMcp() {
+  if (mcpState.loading) return;
+  mcpState.loading = true;
+  if (!mcpState.loaded) setMcpStatus("读取 MCP 配置…");
+  renderMcpList();
+  try {
+    const response = await fetch("/api/mcp", {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (response.status === 503 || response.status === 404) {
+      throw new Error("MCP 服务未就绪");
+    }
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET /api/mcp"));
+    const payload = await response.json();
+    mcpState.servers = Array.isArray(payload?.servers) ? payload.servers : [];
+    mcpState.available = true;
+    mcpState.error = "";
+    mcpState.loaded = true;
+    setMcpStatus(`${mcpState.servers.length} 个 MCP server`);
+  } catch (error) {
+    mcpState.available = false;
+    mcpState.error = error.message || "MCP 服务未就绪";
+    mcpState.servers = [];
+    mcpState.loaded = true;
+    setMcpStatus("MCP 服务未就绪");
+  } finally {
+    mcpState.loading = false;
+    renderMcpList();
+  }
+}
+
+function renderMcpList() {
+  const host = els.mcpList;
+  if (!host) return;
+
+  if (mcpState.loading && !mcpState.loaded) {
+    host.replaceChildren(emptyNote("读取 MCP 配置…"));
+    return;
+  }
+  if (mcpState.available === false) {
+    host.replaceChildren(
+      h(
+        "div",
+        { class: "empty" },
+        h("strong", { text: "MCP 服务未就绪" }),
+        h("span", {
+          text:
+            mcpState.error && mcpState.error !== "MCP 服务未就绪"
+              ? mcpState.error
+              : "接口 503 / 404；服务端启用 MCP 后可以重试。",
+        }),
+        h("button", {
+          type: "button",
+          class: "btn btn--ghost btn--tiny",
+          "data-action": "reload-mcp",
+          text: "↻ 重试",
+        }),
+      ),
+    );
+    return;
+  }
+  if (!mcpState.servers.length) {
+    host.replaceChildren(
+      emptyNote("还没有 MCP server。点「＋ 添加 MCP Server」接入本地进程或 HTTP 服务。"),
+    );
+    return;
+  }
+  host.replaceChildren(...mcpState.servers.map((server) => mcpRow(server)));
+}
+
+const MCP_STATUS_LABEL = {
+  connected: "已连接",
+  error: "连接错误",
+  disconnected: "已停用",
+  connecting: "连接中",
+};
+
+function mcpRow(server) {
+  const busy = mcpState.busy[server.id] || "";
+  const result = mcpState.results[server.id];
+  const confirming = mcpState.deleteConfirmId === server.id;
+  const statusLabel = MCP_STATUS_LABEL[server.status] ?? server.status;
+  const risk = server.risk ?? "needs_approval";
+  const meta =
+    server.transport === "stdio"
+      ? [server.command, ...(server.args ?? [])].filter(Boolean).join(" ")
+      : server.url ?? "";
+
+  const actions = h("span", { class: "mcp-actions" });
+  if (confirming) {
+    actions.append(
+      h(
+        "span",
+        { class: "mcp-confirm" },
+        h("span", { text: "删除后工具会立刻下线，确认？" }),
+        h("button", {
+          type: "button",
+          class: "btn btn--tiny btn--danger",
+          "data-action": "confirm-delete-mcp",
+          "data-id": server.id,
+          text: "确认删除",
+        }),
+        h("button", {
+          type: "button",
+          class: "btn btn--tiny btn--ghost",
+          "data-action": "cancel-delete-mcp",
+          text: "取消",
+        }),
+      ),
+    );
+  } else {
+    actions.append(
+      h("button", {
+        type: "button",
+        class: "btn btn--tiny btn--ghost",
+        "data-action": "toggle-mcp",
+        "data-id": server.id,
+        "data-enabled": String(server.enabled),
+        disabled: Boolean(busy),
+        text: busy === "toggle" ? "处理中…" : server.enabled ? "停用" : "启用",
+      }),
+      h("button", {
+        type: "button",
+        class: "btn btn--tiny btn--ghost",
+        "data-action": "test-mcp",
+        "data-id": server.id,
+        disabled: Boolean(busy),
+        text: busy === "test" ? "测试中…" : "测试",
+      }),
+      h("button", {
+        type: "button",
+        class: "btn btn--tiny btn--danger",
+        "data-action": "delete-mcp",
+        "data-id": server.id,
+        text: "删除",
+      }),
+    );
+  }
+
+  return h(
+    "div",
+    {
+      class: `mcp-row${server.status === "error" ? " is-error" : ""}`,
+      "data-mcp-id": server.id,
+    },
+    h(
+      "div",
+      { class: "mcp-head" },
+      h("span", {
+        class: "mcp-status-dot",
+        "data-state": server.status,
+        title: statusLabel,
+        "aria-label": statusLabel,
+      }),
+      h("span", { class: "mcp-name", text: server.name }),
+      h("span", { class: "mcp-badge", text: server.transport }),
+      h("span", {
+        class: "mcp-badge",
+        "data-kind": "risk",
+        "data-risk": risk,
+        text: risk === "safe" ? "安全" : "需审批",
+      }),
+      h("span", {
+        class: "mcp-tool-count",
+        text: `${server.toolCount ?? 0} 个工具 · ${statusLabel}`,
+      }),
+      actions,
+    ),
+    meta ? h("p", { class: "mcp-meta", text: meta }) : null,
+    server.lastError ? h("p", { class: "mcp-last-error", text: server.lastError }) : null,
+    result ? h("p", { class: "mcp-result", "data-tone": result.tone, text: result.text }) : null,
+  );
+}
+
+function openMcpForm() {
+  mcpState.formOpen = true;
+  if (els.mcpForm) els.mcpForm.hidden = false;
+  if (els.mcpFormToggle) els.mcpFormToggle.textContent = "－ 收起表单";
+  hideMcpFormError();
+  requestAnimationFrame(() => els.mcpName?.focus());
+}
+
+function closeMcpForm() {
+  mcpState.formOpen = false;
+  if (els.mcpForm) els.mcpForm.hidden = true;
+  if (els.mcpFormToggle) els.mcpFormToggle.textContent = "＋ 添加 MCP Server";
+  if (els.mcpName) els.mcpName.value = "";
+  if (els.mcpCommand) els.mcpCommand.value = "";
+  if (els.mcpArgs) els.mcpArgs.value = "";
+  if (els.mcpUrl) els.mcpUrl.value = "";
+  if (els.mcpRisk) els.mcpRisk.value = "needs_approval";
+  if (els.mcpEnabled) els.mcpEnabled.checked = true;
+  if (els.mcpTransport) els.mcpTransport.value = "stdio";
+  updateMcpTransportFields();
+  hideMcpFormError();
+}
+
+function updateMcpTransportFields() {
+  const transport = els.mcpTransport?.value ?? "stdio";
+  if (els.mcpStdioFields) els.mcpStdioFields.hidden = transport !== "stdio";
+  if (els.mcpHttpFields) els.mcpHttpFields.hidden = transport !== "http";
+}
+
+function showMcpFormError(message) {
+  if (!els.mcpFormError) return;
+  els.mcpFormError.textContent = message;
+  els.mcpFormError.hidden = false;
+}
+
+function hideMcpFormError() {
+  if (!els.mcpFormError) return;
+  els.mcpFormError.hidden = true;
+  els.mcpFormError.textContent = "";
+}
+
+async function saveMcpServer() {
+  if (mcpState.saving) return;
+  hideMcpFormError();
+  const name = els.mcpName?.value.trim() ?? "";
+  const transport = els.mcpTransport?.value === "http" ? "http" : "stdio";
+  if (!name) {
+    showMcpFormError("先给 MCP server 起个名字。");
+    els.mcpName?.focus();
+    return;
+  }
+  const body = {
+    name,
+    transport,
+    risk: els.mcpRisk?.value === "safe" ? "safe" : "needs_approval",
+    enabled: els.mcpEnabled ? Boolean(els.mcpEnabled.checked) : true,
+  };
+  if (transport === "stdio") {
+    const command = els.mcpCommand?.value.trim() ?? "";
+    if (!command) {
+      showMcpFormError("stdio server 需要填 command（例如 node）。");
+      els.mcpCommand?.focus();
+      return;
+    }
+    body.command = command;
+    body.args = String(els.mcpArgs?.value ?? "")
+      .split(/\s+/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  } else {
+    const url = els.mcpUrl?.value.trim() ?? "";
+    if (!/^https?:\/\//i.test(url)) {
+      showMcpFormError("http server 需要以 http:// 或 https:// 开头的 URL。");
+      els.mcpUrl?.focus();
+      return;
+    }
+    body.url = url;
+  }
+
+  mcpState.saving = true;
+  if (els.mcpSaveBtn) {
+    els.mcpSaveBtn.disabled = true;
+    els.mcpSaveBtn.textContent = "保存中…";
+  }
+  try {
+    const response = await fetch("/api/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(await describeHttpError(response, "POST /api/mcp"));
+    const payload = await response.json();
+    const server = payload?.server;
+    toast(`MCP server「${server?.name ?? name}」已${server?.enabled === false ? "添加" : "连接"}`);
+    closeMcpForm();
+    await loadMcp();
+    void loadToolCatalog();
+  } catch (error) {
+    showMcpFormError(`添加失败：${error.message}`);
+  } finally {
+    mcpState.saving = false;
+    if (els.mcpSaveBtn) {
+      els.mcpSaveBtn.disabled = false;
+      els.mcpSaveBtn.textContent = "保存 MCP Server";
+    }
+  }
+}
+
+async function testMcpServer(serverId) {
+  if (mcpState.busy[serverId]) return;
+  mcpState.busy[serverId] = "test";
+  delete mcpState.results[serverId];
+  renderMcpList();
+  try {
+    const response = await fetch(`/api/mcp/${encodeURIComponent(serverId)}/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(payload?.error ?? `POST /api/mcp/${serverId}/test → HTTP ${response.status}`);
+    }
+    const tools = Array.isArray(payload?.tools) ? payload.tools : [];
+    if (payload?.ok === false || payload?.error) {
+      mcpState.results[serverId] = { tone: "error", text: `✗ ${payload?.error ?? "连接失败"}` };
+    } else {
+      const names = tools.slice(0, 3).map((tool) => tool.name).filter(Boolean).join("、");
+      mcpState.results[serverId] = {
+        tone: "ok",
+        text: `✓ 连接成功 · ${tools.length} 个工具${names ? `（${names}${tools.length > 3 ? "…" : ""}）` : ""}`,
+      };
+    }
+  } catch (error) {
+    mcpState.results[serverId] = { tone: "error", text: `✗ 测试失败：${error.message}` };
+  } finally {
+    delete mcpState.busy[serverId];
+    renderMcpList();
+  }
+}
+
+async function toggleMcpServer(serverId, enabled) {
+  if (mcpState.busy[serverId]) return;
+  mcpState.busy[serverId] = "toggle";
+  renderMcpList();
+  try {
+    const response = await fetch(`/api/mcp/${encodeURIComponent(serverId)}/toggle`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.error ?? `POST /api/mcp/${serverId}/toggle → HTTP ${response.status}`);
+    }
+    toast(`MCP server 已${enabled ? "启用" : "停用"}`);
+    await loadMcp();
+    void loadToolCatalog();
+  } catch (error) {
+    mcpState.results[serverId] = { tone: "error", text: `✗ 切换失败：${error.message}` };
+    renderMcpList();
+  } finally {
+    delete mcpState.busy[serverId];
+    renderMcpList();
+  }
+}
+
+function askDeleteMcp(serverId) {
+  mcpState.deleteConfirmId = serverId;
+  renderMcpList();
+}
+
+async function confirmDeleteMcp(serverId) {
+  if (mcpState.busy[serverId]) return;
+  mcpState.deleteConfirmId = "";
+  mcpState.busy[serverId] = "delete";
+  renderMcpList();
+  try {
+    const response = await fetch(`/api/mcp/${encodeURIComponent(serverId)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.error ?? `DELETE /api/mcp/${serverId} → HTTP ${response.status}`);
+    }
+    toast("MCP server 已删除");
+    await loadMcp();
+    void loadToolCatalog();
+  } catch (error) {
+    mcpState.results[serverId] = { tone: "error", text: `✗ 删除失败：${error.message}` };
+    renderMcpList();
+  } finally {
+    delete mcpState.busy[serverId];
+    renderMcpList();
+  }
+}
+
+// ── 每猫工具权限 / 技能 ────────────────────────────────────────────────
+
+function openCatAccess(catId) {
+  const cat = catById(catId);
+  if (!cat || !els.catAccessModal) return;
+
+  catAccessState.catId = catId;
+  catAccessState.tools = [];
+  catAccessState.skills = [];
+  catAccessState.selectedTools = new Set();
+  catAccessState.selectedSkills = new Set();
+  catAccessState.loading = true;
+  catAccessState.saving = false;
+  catAccessState.toolsError = "";
+  catAccessState.skillsError = "";
+
+  if (els.catAccessSub) {
+    els.catAccessSub.textContent = `${cat.name} · ${cat.species} · 配置它能使用的工具与技能包。`;
+  }
+  hideCatAccessError();
+  updateCatAccessCounts();
+  updateCatAccessSave();
+  renderCatAccessLists();
+  if (!els.catAccessModal.open) els.catAccessModal.showModal();
+  void loadCatAccessCatalogs(cat);
+}
+
+async function loadCatAccessCatalogs(cat) {
+  const [toolsResult, skillsResult] = await Promise.allSettled([
+    fetchJson("/api/tools", "GET /api/tools"),
+    fetchJson("/api/skills", "GET /api/skills"),
+  ]);
+
+  if (toolsResult.status === "fulfilled") {
+    catAccessState.tools = Array.isArray(toolsResult.value?.tools) ? toolsResult.value.tools : [];
+    app.toolCatalog = catAccessState.tools;
+  } else {
+    catAccessState.tools = [];
+    catAccessState.toolsError = toolsResult.reason?.message ?? "工具目录未就绪";
+  }
+  if (skillsResult.status === "fulfilled") {
+    catAccessState.skills = Array.isArray(skillsResult.value?.skills) ? skillsResult.value.skills : [];
+    app.skillCatalog = catAccessState.skills;
+  } else {
+    catAccessState.skills = [];
+    catAccessState.skillsError = skillsResult.reason?.message ?? "技能目录未就绪";
+  }
+
+  const catalogToolNames = catAccessState.tools.map((tool) => tool.name);
+  const toolNames = new Set(catalogToolNames);
+  if (Array.isArray(cat.tools)) {
+    for (const name of cat.tools) toolNames.add(name);
+    catAccessState.selectedTools = new Set(cat.tools.filter((name) => typeof name === "string"));
+  } else {
+    catAccessState.selectedTools = new Set(catalogToolNames);
+  }
+
+  const catalogSkillIds = catAccessState.skills.map((skill) => skill.id);
+  const skillIds = new Set(catalogSkillIds);
+  if (Array.isArray(cat.skills)) {
+    for (const id of cat.skills) skillIds.add(id);
+    catAccessState.selectedSkills = new Set(cat.skills.filter((id) => typeof id === "string"));
+  } else {
+    catAccessState.selectedSkills = new Set();
+  }
+
+  catAccessState.loading = false;
+  renderCatAccessLists();
+  updateCatAccessCounts();
+  updateCatAccessSave();
+  updateAllToolSourceBadges();
+}
+
+function renderCatAccessLists() {
+  renderCatAccessTools();
+  renderCatAccessSkills();
+  updateCatAccessCounts();
+}
+
+function renderCatAccessTools() {
+  const host = els.catAccessTools;
+  if (!host) return;
+  if (catAccessState.loading) {
+    host.replaceChildren(emptyNote("读取工具目录…"));
+    return;
+  }
+  if (catAccessState.toolsError) {
+    host.replaceChildren(
+      h(
+        "div",
+        { class: "empty" },
+        h("strong", { text: "工具目录未就绪" }),
+        h("span", { text: catAccessState.toolsError }),
+      ),
+    );
+    return;
+  }
+
+  const catalog = catAccessState.tools;
+  const catalogNames = new Set(catalog.map((tool) => tool.name));
+  const stale = [...catAccessState.selectedTools].filter((name) => !catalogNames.has(name));
+  const groups = [];
+
+  const sandboxTools = catalog.filter((tool) => tool.source !== "mcp");
+  if (sandboxTools.length) groups.push({ label: "沙盒工具", items: sandboxTools });
+
+  const mcpTools = catalog.filter((tool) => tool.source === "mcp");
+  if (mcpTools.length) {
+    const byServer = new Map();
+    for (const tool of mcpTools) {
+      const key = tool.serverId ?? "mcp";
+      if (!byServer.has(key)) byServer.set(key, []);
+      byServer.get(key).push(tool);
+    }
+    for (const [serverId, items] of byServer) {
+      groups.push({ label: `MCP · ${serverId}`, items });
+    }
+  }
+
+  if (stale.length) {
+    groups.push({
+      label: "已下线工具",
+      items: stale.map((name) => ({
+        name,
+        title: name,
+        description: "当前工具目录里已不存在；取消勾选后保存即可移除。",
+        risk: "needs_approval",
+        source: "unknown",
+      })),
+    });
+  }
+
+  if (!groups.length) {
+    host.replaceChildren(emptyNote("工具目录是空的。"));
+    return;
+  }
+
+  const nodes = [];
+  for (const group of groups) {
+    nodes.push(h("div", { class: "access-group-label", text: group.label }));
+    for (const tool of group.items) {
+      const source =
+        tool.source === "mcp"
+          ? `MCP${tool.serverId ? ` · ${tool.serverId}` : ""}`
+          : tool.source === "unknown"
+            ? "已下线"
+            : "沙盒";
+      nodes.push(
+        h(
+          "label",
+          { class: "access-item" },
+          h("input", {
+            type: "checkbox",
+            "data-tool-name": tool.name,
+            checked: catAccessState.selectedTools.has(tool.name),
+          }),
+          h(
+            "span",
+            { class: "access-item-main" },
+            h(
+              "span",
+              { class: "access-item-name" },
+              h("span", { text: tool.title || tool.name }),
+              h("span", {
+                class: "tool-source",
+                "data-source": tool.source === "mcp" ? "mcp" : "sandbox",
+                text: source,
+              }),
+              h("span", {
+                class: "mcp-badge",
+                "data-kind": "risk",
+                "data-risk": tool.risk ?? "needs_approval",
+                text: (tool.risk ?? "needs_approval") === "safe" ? "安全" : "需审批",
+              }),
+            ),
+            h("span", { class: "access-item-desc", text: tool.description || "" }),
+            h("span", { class: "access-item-desc", text: tool.name }),
+          ),
+        ),
+      );
+    }
+  }
+  host.replaceChildren(...nodes);
+}
+
+function renderCatAccessSkills() {
+  const host = els.catAccessSkills;
+  if (!host) return;
+  if (catAccessState.loading) {
+    host.replaceChildren(emptyNote("读取技能包…"));
+    return;
+  }
+  if (catAccessState.skillsError) {
+    host.replaceChildren(
+      h(
+        "div",
+        { class: "empty" },
+        h("strong", { text: "技能目录未就绪" }),
+        h("span", { text: catAccessState.skillsError }),
+      ),
+    );
+    return;
+  }
+
+  const catalog = catAccessState.skills;
+  const catalogIds = new Set(catalog.map((skill) => skill.id));
+  const stale = [...catAccessState.selectedSkills].filter((id) => !catalogIds.has(id));
+  const items = [
+    ...catalog.map((skill) => ({
+      id: skill.id,
+      name: skill.name,
+      description: skill.description,
+      stale: false,
+    })),
+    ...stale.map((id) => ({
+      id,
+      name: id,
+      description: "当前技能目录里不存在；取消勾选后保存即可移除。",
+      stale: true,
+    })),
+  ];
+
+  if (!items.length) {
+    host.replaceChildren(emptyNote("技能包目录是空的。"));
+    return;
+  }
+
+  host.replaceChildren(
+    ...items.map((skill) =>
+      h(
+        "label",
+        { class: "access-item" },
+        h("input", {
+          type: "checkbox",
+          "data-skill-id": skill.id,
+          checked: catAccessState.selectedSkills.has(skill.id),
+        }),
+        h(
+          "span",
+          { class: "access-item-main" },
+          h(
+            "span",
+            { class: "access-item-name" },
+            h("span", { text: skill.name }),
+            skill.stale
+              ? h("span", { class: "tool-source", "data-source": "sandbox", text: "已下线" })
+              : null,
+          ),
+          h("span", { class: "access-item-desc", text: skill.description || "" }),
+        ),
+      ),
+    ),
+  );
+}
+
+function updateCatAccessCounts() {
+  const totalTools = new Set([
+    ...catAccessState.tools.map((tool) => tool.name),
+    ...catAccessState.selectedTools,
+  ]).size;
+  const totalSkills = new Set([
+    ...catAccessState.skills.map((skill) => skill.id),
+    ...catAccessState.selectedSkills,
+  ]).size;
+  if (els.catAccessToolsCount) {
+    els.catAccessToolsCount.textContent = `${catAccessState.selectedTools.size} / ${totalTools}`;
+  }
+  if (els.catAccessSkillsCount) {
+    els.catAccessSkillsCount.textContent = `${catAccessState.selectedSkills.size} / ${totalSkills}`;
+  }
+}
+
+function updateCatAccessSave() {
+  if (!els.catAccessSave) return;
+  const blocked = catAccessState.loading ||
+    Boolean(catAccessState.toolsError) ||
+    Boolean(catAccessState.skillsError);
+  els.catAccessSave.disabled = Boolean(catAccessState.saving) || blocked;
+  els.catAccessSave.textContent = catAccessState.saving ? "保存中…" : "保存权限";
+}
+
+function showCatAccessError(message) {
+  if (!els.catAccessError) return;
+  els.catAccessError.textContent = message;
+  els.catAccessError.hidden = false;
+}
+
+function hideCatAccessError() {
+  if (!els.catAccessError) return;
+  els.catAccessError.hidden = true;
+  els.catAccessError.textContent = "";
+}
+
+function closeCatAccess() {
+  if (els.catAccessModal?.open) els.catAccessModal.close();
+}
+
+async function saveCatAccess() {
+  if (catAccessState.saving) return;
+  const cat = catById(catAccessState.catId);
+  if (!cat) return;
+  if (catAccessState.toolsError || catAccessState.skillsError) {
+    showCatAccessError("工具/技能目录未就绪，暂时不能保存。");
+    return;
+  }
+  hideCatAccessError();
+  catAccessState.saving = true;
+  updateCatAccessSave();
+  try {
+    const response = await fetch(`/api/cats/${encodeURIComponent(cat.id)}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        tools: [...catAccessState.selectedTools],
+        skills: [...catAccessState.selectedSkills],
+      }),
+    });
+    if (!response.ok) throw new Error(await describeHttpError(response, "PUT /api/cats"));
+    const updated = await response.json();
+    if (updated && typeof updated === "object") applyUpdatedCat(updated);
+    closeCatAccess();
+    toast(`已更新「${updated?.name ?? cat.name}」的工具与技能`);
+  } catch (error) {
+    showCatAccessError(`保存失败：${error.message}`);
+  } finally {
+    catAccessState.saving = false;
+    updateCatAccessSave();
+  }
+}
+
+async function fetchJson(path, label) {
+  const response = await fetch(path, {
+    headers: { Accept: "application/json" },
+    cache: "no-store",
+  });
+  if (!response.ok) throw new Error(await describeHttpError(response, label));
+  return response.json();
 }
 
 // ── 杂项 ────────────────────────────────────────────────────────────────

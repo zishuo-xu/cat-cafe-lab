@@ -54,6 +54,9 @@
 验收：至少接一个真实 MCP server（filesystem 或 fetch），猫能通过它读文件/取网页；
 关闭 MCP 时整套流程仍能跑。
 
+状态：**已完成**（2026-10-18）。实现：ToolRegistry（内置 + MCP provider）、stdio/http MCP 客户端、
+/MCP 管理 API 与设置 UI、每猫工具白名单、四个技能包注入真实模式 prompt；161 个测试全绿。
+
 ---
 
 ## C. 真实仓库 / 多工作区

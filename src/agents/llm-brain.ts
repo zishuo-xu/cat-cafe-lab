@@ -25,8 +25,9 @@ import type {
   ReviewFinding,
   ReviewVerdict,
   Role,
+  Skill,
   TaskStage,
-  ToolName,
+  ToolDefinition,
   ToolRunResult,
   Trigger,
   TurnContext,
@@ -50,13 +51,6 @@ const ARTIFACT_KINDS: readonly ArtifactKind[] = [
 ];
 const MEMORY_KINDS: readonly MemoryKind[] = ["decision", "lesson", "preference"];
 const REVIEW_VERDICTS: readonly ReviewVerdict[] = ["approve", "request_changes"];
-/** 沙盒工具白名单；与 src/tools/sandbox.ts 保持一致。 */
-const TOOL_NAMES: readonly ToolName[] = [
-  "read_file",
-  "write_file",
-  "list_files",
-  "run_command",
-];
 
 const ROLE_LABEL: Record<Role, string> = {
   architect: "主架构师 / 主理猫",
@@ -299,13 +293,18 @@ function parseToolTurn(
   ctx: TurnContext,
 ): CatTurn | null {
   const rawTool = item.tool;
-  if (typeof rawTool !== "string" || !TOOL_NAMES.includes(rawTool as ToolName)) {
-    // 未知工具直接丢弃，保留同轮其他合法 turn。
+  if (typeof rawTool !== "string") return null;
+  const tool = rawTool.trim();
+  if (!tool) return null;
+
+  // 只允许本轮目录里真实存在的工具（含 MCP 动态注册的工具）。
+  const definition = ctx.availableTools.find((candidate) => candidate.name === tool);
+  if (!definition) {
+    // 不在 tools/list 里的工具直接丢弃，保留同轮其他合法 turn。
     return null;
   }
-  const tool = rawTool as ToolName;
 
-  const input = parseToolInput(tool, item.input);
+  const input = parseToolInput(definition, item.input);
   if (!input) return null;
 
   const turn: CatTurn = { kind: "tool", tool, input };
@@ -427,14 +426,25 @@ function parseMemoryTurn(item: Record<string, unknown>): CatTurn | null {
  * - run_command { cmd, args? }（args 必须是字符串数组，缺省 []）
  * 只做结构校验；路径越界 / 命令白名单留给沙盒，让它把错误回执喂回来。
  */
+/**
+ * 工具 input 校验：
+ * - 内置沙盒工具按 src/tools/sandbox.ts 的契约做结构校验；
+ * - MCP 工具的 schema 由对应 server 负责，这里只要求 input 是对象（原样透传）。
+ * 只做结构校验；路径越界 / 命令白名单留给执行层，让它把错误回执喂回来。
+ */
 function parseToolInput(
-  tool: ToolName,
+  definition: ToolDefinition,
   value: unknown,
 ): Record<string, unknown> | null {
+  if (definition.source === "mcp") {
+    if (value === undefined) return {};
+    return isRecord(value) ? { ...value } : null;
+  }
+
   if (value !== undefined && !isRecord(value)) return null;
   const input = value ?? {};
 
-  switch (tool) {
+  switch (definition.name) {
     case "read_file": {
       const path = requiredText(input.path);
       return path ? { path } : null;
@@ -462,6 +472,9 @@ function parseToolInput(
       }
       return { cmd, args };
     }
+    default:
+      // 未来新增的沙盒工具：只要求 input 是对象。
+      return { ...input };
   }
 }
 
@@ -593,7 +606,7 @@ function resolveTemperature(ctx: TurnContext, globalTemperature: number): number
 }
 
 function buildSystemPrompt(ctx: TurnContext, model: string): string {
-  const { cat, room, task } = ctx;
+  const { cat, room, task, availableTools, skills } = ctx;
   const selfId = cat.id;
   const others = room.catIds.filter((id) => id !== selfId);
 
@@ -609,7 +622,7 @@ function buildSystemPrompt(ctx: TurnContext, model: string): string {
       ].join("\n")
     : "【当前任务】没有进行中的任务，你只是在房间里聊天。";
 
-  return [
+  const sections: string[] = [
     `你是「${cat.name}」（${cat.species}），猫咖里的${ROLE_LABEL[cat.role] ?? cat.title}。`,
     `性格：${cat.persona}`,
     `口头禅：${cat.catchphrase}`,
@@ -628,20 +641,10 @@ function buildSystemPrompt(ctx: TurnContext, model: string): string {
     '4. {"kind":"review","verdict":"approve|request_changes","title":"结论标题","findings":[{"severity":"blocker|minor","title":"问题","detail":"细节"}],"text":"说明","mentions":["catId"]}',
     '5. {"kind":"decision","artifact":{"title":"标题","body":"正文"},"text":"说明","memory":[{"kind":"decision|lesson|preference","title":"标题","body":"正文","tags":["标签"]}]}',
     '6. {"kind":"memory","memory":{"kind":"decision|lesson|preference","title":"标题","body":"正文","tags":["标签"]},"text":"说明"}',
-    '7. {"kind":"tool","tool":"read_file|write_file|list_files|run_command","input":{...},"label":"人话摘要","text":"说明"}',
+    '7. {"kind":"tool","tool":"工具名","input":{...},"label":"人话摘要","text":"说明"}',
     "",
-    "【工具目录】（只有在确实需要读写沙盒文件 / 跑命令时才用；普通讨论不需要工具）",
-    '1. read_file —— 读取沙盒工作区里的文件。input 示例：{"path":"src/app.js"}',
-    '2. write_file —— 写入或覆盖文件（会真实改动文件内容）。input 示例：{"path":"src/remember.js","content":"完整文件内容"}',
-    '3. list_files —— 列出沙盒里的文件与大小。input 示例：{}',
-    '4. run_command —— 在工作区执行命令（仅白名单 node / npm，不走 shell）。input 示例：{"cmd":"node","args":["--version"]}',
-    "路径必须相对沙盒根目录，禁止绝对路径和 ..；write_file 的 content 必须是完整文件内容。",
-    "风险：write_file 会真实改文件，run_command 会真实执行命令，这两个工具每次执行都可能需要铲屎官审批；被拒绝时回执 status=rejected。",
-    "工具使用纪律：",
-    '- 一轮可以同时请求多个工具，会按数组顺序执行；执行完会用 trigger.kind="tool_result" 把回执再发给你一次。',
-    "- 工具调用最多连续 3 轮，之后必须给出结论或交接，不要无限试探。",
-    "- 收到 status=rejected 时不要重复申请同一个命令 / 同一个写入；换方案，或直接向铲屎官说明被拒原因与替代做法。",
-    "- 读文件、看目录这类低风险操作尽量一轮批量做完，不要一轮一个。",
+    "【工具目录】",
+    ...renderToolCatalog(availableTools),
     "",
     "【规则】",
     "- kind 只能是 message / tool / handoff / artifact / review / decision / memory；其他一律不要输出。",
@@ -651,7 +654,70 @@ function buildSystemPrompt(ctx: TurnContext, model: string): string {
     "- 需要别人做事就用 handoff；别人给了你产物、轮到你评审就用 review；任务收尾用 decision 把结论记进共享记忆。",
     "- 信息不足时先用 message 追问，不要编造事实。",
     "- delayMs 可选，单位毫秒，范围 0~8000，表示开口前的停顿。",
-  ].join("\n");
+  ];
+
+  if (availableTools.length > 0) {
+    sections.push(
+      "",
+      "工具使用纪律：",
+      '- 一轮可以同时请求多个工具，会按数组顺序执行；执行完会用 trigger.kind="tool_result" 把回执再发给你一次。',
+      "- 工具调用最多连续 3 轮，之后必须给出结论或交接，不要无限试探。",
+      "- 收到 status=rejected 时不要重复申请同一个命令 / 同一个写入；换方案，或直接向铲屎官说明被拒原因与替代做法。",
+      "- 读文件、看目录这类低风险操作尽量一轮批量做完，不要一轮一个。",
+    );
+  }
+
+  const skillsBlock = renderSkills(skills);
+  if (skillsBlock) sections.push("", skillsBlock);
+
+  return sections.join("\n");
+}
+
+/** 渲染【工具目录】。空目录必须明确说没有工具，防止模型编造。 */
+function renderToolCatalog(tools: ToolDefinition[]): string[] {
+  if (tools.length === 0) {
+    return [
+      '本轮没有可用工具。不要编造工具名、不要假装执行，也不要输出 kind="tool" 的 turn；只能基于已有信息回答，或直接说明你需要什么能力。',
+    ];
+  }
+
+  const lines: string[] = [];
+  for (const def of tools) {
+    const serverTag = def.source === "mcp" ? `｜server=${def.serverId ?? "?"}` : "";
+    lines.push(
+      `- ${def.name}｜${def.title}｜source=${def.source}${serverTag}｜risk=${def.risk}`,
+    );
+    lines.push(`  用途：${def.description}`);
+    lines.push(`  inputSchema：${safeJson(def.inputSchema)}`);
+  }
+
+  lines.push(
+    "",
+    "工具名必须与上面完全一致；MCP 工具名形如 serverId__toolName，原样使用，不要改写或截断。",
+  );
+
+  const hasSandbox = tools.some((def) => def.source === "sandbox");
+  if (hasSandbox) {
+    lines.push(
+      "沙盒工具路径必须相对沙盒根目录，禁止绝对路径和 ..；write_file 的 content 必须是完整文件内容。",
+      "风险：write_file 会真实改文件，run_command 会真实执行命令。",
+    );
+  }
+  lines.push(
+    "风险：risk=needs_approval 的工具每次执行都可能需要铲屎官审批，被拒绝时回执 status=rejected；risk=safe 一般直接执行。",
+    "调用工具是为了拿真实信息或产生真实结果；普通讨论不需要工具。",
+  );
+  return lines;
+}
+
+/** 渲染【你挂载的技能】；按 ctx.skills 顺序原样注入 prompt 全文。 */
+function renderSkills(skills: Skill[]): string | null {
+  if (skills.length === 0) return null;
+  const lines: string[] = ["【你挂载的技能】"];
+  for (const skill of skills) {
+    lines.push("", `### ${skill.name}`, skill.prompt);
+  }
+  return lines.join("\n");
 }
 
 function buildUserPrompt(ctx: TurnContext): string {
@@ -781,6 +847,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function clip(input: string, max: number): string {
   const flat = input.replace(/\s+/g, " ").trim();
   return flat.length > max ? `${flat.slice(0, max)}…` : flat;
+}
+
+/** 工具 schema 序列化；异常 schema 不能把整个 prompt 搞崩。 */
+function safeJson(value: Record<string, unknown>): string {
+  try {
+    return JSON.stringify(value) ?? "{}";
+  } catch {
+    return "{}";
+  }
 }
 
 function positiveInt(value: number | undefined, fallback: number): number {

@@ -72,6 +72,10 @@ export interface CatPatch {
   accent?: string;
   llmModel?: string | null;
   llmTemperature?: number | null;
+  /** 工具白名单；null 表示恢复默认（全部允许）。 */
+  tools?: string[] | null;
+  /** 技能包 id 列表；null 表示恢复默认。 */
+  skills?: string[] | null;
 }
 
 type Listener = (state: StudioState) => void;
@@ -480,6 +484,26 @@ export class Studio {
         next.llmTemperature = temperature;
       }
     }
+    if (patch.tools !== undefined) {
+      if (patch.tools === null) {
+        delete next.tools;
+      } else {
+        if (patch.tools.length > 24 || patch.tools.some((tool) => typeof tool !== "string" || tool.length > 80)) {
+          throw new Error("tools 必须是最多 24 个工具名的数组");
+        }
+        next.tools = [...new Set(patch.tools)];
+      }
+    }
+    if (patch.skills !== undefined) {
+      if (patch.skills === null) {
+        delete next.skills;
+      } else {
+        if (patch.skills.length > 12 || patch.skills.some((skill) => typeof skill !== "string" || skill.length > 40)) {
+          throw new Error("skills 必须是最多 12 个技能 id 的数组");
+        }
+        next.skills = [...new Set(patch.skills)];
+      }
+    }
 
     this.state.cats[index] = next;
     this.notify();
@@ -685,6 +709,22 @@ function sanitizeCatOverrides(record: Record<string, unknown>): Partial<Cat> {
     llmTemperature <= 2
   ) {
     patch.llmTemperature = llmTemperature;
+  }
+  const tools = record["tools"];
+  if (
+    Array.isArray(tools) &&
+    tools.length <= 24 &&
+    tools.every((tool) => typeof tool === "string" && tool.length <= 80)
+  ) {
+    patch.tools = [...new Set(tools as string[])];
+  }
+  const skills = record["skills"];
+  if (
+    Array.isArray(skills) &&
+    skills.length <= 12 &&
+    skills.every((skill) => typeof skill === "string" && skill.length <= 40)
+  ) {
+    patch.skills = [...new Set(skills as string[])];
   }
   return patch;
 }

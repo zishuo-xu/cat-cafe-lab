@@ -36,17 +36,21 @@ import type {
   Room,
   RoomId,
   SandboxRunner,
+  Skill,
   Task,
   TaskId,
   TaskStage,
   ToolApprovalMode,
+  ToolDefinition,
   ToolName,
+  ToolRegistry,
   ToolResult,
   ToolRunResult,
   Trigger,
   TurnContext,
 } from "../domain/types.ts";
 import type { Studio } from "../server/studio.ts";
+import { skillsForCat } from "../skills/registry.ts";
 import { handoffMentions, normalizeMentions, routeUserMessage } from "./mentions.ts";
 import {
   architectOf,
@@ -84,6 +88,8 @@ function defaultToolLabel(tool: ToolTurn["tool"], input: Record<string, unknown>
       const args = inputList(input, "args");
       return args.length > 0 ? `运行 ${cmd} ${args.join(" ")}` : `运行 ${cmd}`;
     }
+    default:
+      return `调用 ${String(tool)}`;
   }
 }
 
@@ -105,6 +111,10 @@ function defaultToolText(
       return `读了 ${inputText(input, "path") || "文件"}`;
     case "list_files":
       return "看了一眼沙盒目录";
+    default:
+      return result.status === "ok"
+        ? `${String(tool)} 完成`
+        : `${String(tool)} 失败：${result.output.slice(0, 80)}`;
   }
 }
 
@@ -120,6 +130,59 @@ function inputList(input: Record<string, unknown>, key: string): string[] {
     : [];
 }
 
+/** 内置沙盒工具：它们的 label / text 有专有措辞；其他（MCP）走通用摘要。 */
+const BUILTIN_TOOL_NAMES = new Set<ToolName>([
+  "read_file",
+  "write_file",
+  "list_files",
+  "run_command",
+]);
+
+function isBuiltinTool(tool: ToolName): boolean {
+  return BUILTIN_TOOL_NAMES.has(tool);
+}
+
+/** 把工具入参压成一段可读摘要（非内置工具 label 用）。 */
+function summarizeInput(input: Record<string, unknown>): string {
+  try {
+    const json = JSON.stringify(input);
+    if (!json || json === "{}") return "";
+    return json.length > 60 ? `${json.slice(0, 60)}…` : json;
+  } catch {
+    return "";
+  }
+}
+
+/** tool turn 的 label：显式 > 内置专有措辞 > 注册表标题 + 入参摘要。 */
+function toolLabelFor(turn: ToolTurn, definition: ToolDefinition | undefined): string {
+  const explicit = turn.label?.trim();
+  if (explicit) return explicit;
+  if (isBuiltinTool(turn.tool) || !definition) {
+    return defaultToolLabel(turn.tool, turn.input);
+  }
+  const title = definition.title || String(turn.tool);
+  const summary = summarizeInput(turn.input);
+  return summary ? `${title} · ${summary}` : title;
+}
+
+/** tool 消息的默认文案：内置专有措辞；非内置用注册表标题 + 结果。 */
+function toolTextFor(
+  turn: ToolTurn,
+  definition: ToolDefinition | undefined,
+  result: ToolResult,
+): string {
+  if (isBuiltinTool(turn.tool) || !definition) {
+    return defaultToolText(turn.tool, turn.input, result);
+  }
+  const title = definition.title || String(turn.tool);
+  return result.status === "ok" ? `${title} 完成` : `${title} 失败：${result.output.slice(0, 80)}`;
+}
+
+/** driver 只依赖 execute 这一件事；registry 与 sandbox 都能满足。 */
+interface ToolExecutor {
+  execute(tool: ToolName, input: Record<string, unknown>): Promise<ToolResult>;
+}
+
 /** ToolCall / ToolResult → 回喂给 brain 的 ToolRunResult。 */
 function toRunResult(callId: string, tool: ToolName, result: ToolResult): ToolRunResult {
   const runResult: ToolRunResult = {
@@ -132,8 +195,8 @@ function toRunResult(callId: string, tool: ToolName, result: ToolResult): ToolRu
   return runResult;
 }
 
-/** 执行工具；SandboxRunner 约定不抛，注入实现万一抛了也记成 error。 */
-async function executeSafely(runner: SandboxRunner, turn: ToolTurn): Promise<ToolResult> {
+/** 执行工具；SandboxRunner / ToolRegistry 约定不抛，注入实现万一抛了也记成 error。 */
+async function executeSafely(runner: ToolExecutor, turn: ToolTurn): Promise<ToolResult> {
   try {
     return await runner.execute(turn.tool, turn.input);
   } catch (err) {
@@ -211,10 +274,17 @@ export function createDriver(deps: {
   approvalMode?: () => ToolApprovalMode;
   /** 审批闸门；不传则不审批。仅 brain.mode === "llm" 时生效。 */
   approvals?: ApprovalGate;
+  /** 工具注册表（内置 + MCP）；优先于 sandbox 执行。 */
+  tools?: ToolRegistry;
+  /** 按 id 解析技能包（自定义技能）；缺省回落到内置技能表。 */
+  resolveSkill?: (id: string) => Skill | undefined;
 }): Driver {
-  const { studio, brain, sandbox, approvals } = deps;
+  const { studio, brain, sandbox, approvals, tools } = deps;
   const toolsEnabled = deps.toolsEnabled;
   const approvalMode = deps.approvalMode;
+  const resolveSkill = deps.resolveSkill;
+  /** 有注册表就只走注册表（MCP 工具也在里面）；否则回落 sandbox。 */
+  const executor: ToolExecutor | undefined = tools ?? sandbox;
   const wait =
     deps.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const stallMs = deps.stallMs ?? DEFAULT_STALL_MS;
@@ -622,8 +692,8 @@ export function createDriver(deps: {
       return null;
     }
 
-    // 2) 没接沙盒（测试 / 降级模式）：同样只说明，不报错。
-    if (!sandbox) {
+    // 2) 没接注册表 / 沙盒（测试 / 降级模式）：同样只说明，不报错。
+    if (!executor) {
       studio.appendMessage({
         roomId: room.id,
         author: cat.id,
@@ -635,10 +705,30 @@ export function createDriver(deps: {
       return null;
     }
 
-    const label = turn.label?.trim() || defaultToolLabel(turn.tool, turn.input);
+    const definition = tools?.get(turn.tool);
+    const label = toolLabelFor(turn, definition);
+
+    // 3) 每猫权限：未授权工具不执行，error 记账并回喂给模型，流程继续。
+    if (!toolAllowed(cat, turn.tool)) {
+      const denied: ToolResult = {
+        status: "error",
+        output: `${cat.name} 没有权限使用 ${turn.tool}`,
+      };
+      const call = studio.addToolCall({
+        catId: cat.id,
+        tool: turn.tool,
+        args: turn.input,
+        label,
+        ...taskField,
+      });
+      studio.finishToolCall(call.id, denied);
+      appendToolMessage(room, cat, task, turn, call.id, denied, definition, denied.output);
+      return toRunResult(call.id, turn.tool, denied);
+    }
+
     const approval = approvalFor(turn.tool);
 
-    // 3a) 模型发起 + 命中审批策略：先挂 pending，等铲屎官决定。
+    // 4a) 模型发起 + 命中审批策略：先挂 pending，等铲屎官决定。
     if (approval) {
       const call = studio.addToolCall({
         catId: cat.id,
@@ -686,19 +776,20 @@ export function createDriver(deps: {
           turn,
           call.id,
           rejected,
+          definition,
           "铲屎官拒绝了这次执行，我换个办法。",
         );
         return toRunResult(call.id, turn.tool, rejected);
       }
 
       studio.startToolCall(call.id);
-      const result = await executeSafely(sandbox, turn);
+      const result = await executeSafely(executor, turn);
       studio.finishToolCall(call.id, result);
-      appendToolMessage(room, cat, task, turn, call.id, result);
+      appendToolMessage(room, cat, task, turn, call.id, result, definition);
       return toRunResult(call.id, turn.tool, result);
     }
 
-    // 3b) 自动放行（mock 剧本 / mode=auto / 非 commands 工具）。
+    // 4b) 自动放行（mock 剧本 / mode=auto / risk=safe 的工具）。
     const call = studio.addToolCall({
       catId: cat.id,
       tool: turn.tool,
@@ -707,9 +798,9 @@ export function createDriver(deps: {
       ...taskField,
     });
 
-    const result = await executeSafely(sandbox, turn);
+    const result = await executeSafely(executor, turn);
     studio.finishToolCall(call.id, result);
-    appendToolMessage(room, cat, task, turn, call.id, result);
+    appendToolMessage(room, cat, task, turn, call.id, result, definition);
     return toRunResult(call.id, turn.tool, result);
   }
 
@@ -720,13 +811,14 @@ export function createDriver(deps: {
     turn: ToolTurn,
     callId: string,
     result: ToolResult,
+    definition?: ToolDefinition,
     fallbackText?: string,
   ): void {
     studio.appendMessage({
       roomId: room.id,
       author: cat.id,
       kind: "tool",
-      text: turn.text ?? fallbackText ?? defaultToolText(turn.tool, turn.input, result),
+      text: turn.text ?? fallbackText ?? toolTextFor(turn, definition, result),
       mentions: normalizeMentions(turn.mentions, studio.state.cats),
       toolCallId: callId,
       ...(task ? { taskId: task.id } : {}),
@@ -1074,10 +1166,45 @@ export function createDriver(deps: {
       handoffs: task ? studio.state.handoffs.filter((h) => h.taskId === task.id) : [],
       artifacts: task ? studio.state.artifacts.filter((a) => a.taskId === task.id) : [],
       recentToolResults: recentToolResults(task),
+      availableTools: availableToolsFor(cat),
+      skills: resolveSkillsForCat(cat),
       scenario: task
         ? SCENARIOS.find((scenario) => scenario.id === task.scenarioId) ?? null
         : null,
     };
+  }
+
+  /** 可用工具：注册表全集按 cat.tools 过滤（undefined = 全部，[] = 一个都没有）。 */
+  function availableToolsFor(cat: Cat): ToolDefinition[] {
+    const all = tools?.list() ?? [];
+    if (!cat.tools) return all;
+    const allowed = new Set(cat.tools);
+    return all.filter((definition) => allowed.has(definition.name));
+  }
+
+  /** 每猫工具权限：undefined = 全部允许；数组（含空数组）= 白名单。 */
+  function toolAllowed(cat: Cat, tool: ToolName): boolean {
+    if (!cat.tools) return true;
+    return cat.tools.includes(tool);
+  }
+
+  /**
+   * 每猫技能包：内置技能表 skillsForCat() 为主；
+   * 注入了 resolveSkill 时，再用它补 cat.skills 里的自定义技能。
+   */
+  function resolveSkillsForCat(cat: Cat): Skill[] {
+    const builtin = skillsForCat(cat);
+    if (!resolveSkill) return builtin;
+    const skills = [...builtin];
+    const seen = new Set(skills.map((skill) => skill.id));
+    for (const id of cat.skills ?? []) {
+      if (seen.has(id)) continue;
+      const skill = resolveSkill(id);
+      if (!skill) continue;
+      seen.add(id);
+      skills.push(skill);
+    }
+    return skills;
   }
 
   function taskArtifacts(taskId: TaskId): Artifact[] {
@@ -1122,8 +1249,13 @@ export function createDriver(deps: {
     if (brain.mode !== "llm" || !approvals) return null;
     const mode = readApprovalMode();
     if (mode === "auto") return null;
-    if (mode === "commands") return tool === "run_command" ? "commands" : null;
-    return "all";
+    if (mode === "all") return "all";
+    // commands：风险优先看注册表 ToolDefinition.risk；没有注册表时按
+    // run_command 需审批（保持旧行为）、其他工具 safe 兜底。
+    const definition = tools?.get(tool);
+    const risk =
+      definition?.risk ?? (tool === "run_command" ? "needs_approval" : "safe");
+    return risk === "needs_approval" ? "commands" : null;
   }
 
   function readApprovalMode(): ToolApprovalMode {
