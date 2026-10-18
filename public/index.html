@@ -59,6 +59,21 @@
           </button>
         </header>
 
+        <section class="card card--rooms" aria-labelledby="rooms-title">
+          <div class="card-head">
+            <h2 id="rooms-title">房间</h2>
+            <span class="count" data-room-count>0</span>
+            <button
+              type="button"
+              class="btn btn--tiny btn--primary"
+              data-action="new-room"
+            >
+              ＋ 新房间
+            </button>
+          </div>
+          <div id="room-list" class="room-list" role="list"></div>
+        </section>
+
         <section class="card card--roster" aria-labelledby="roster-title">
           <div class="card-head">
             <h2 id="roster-title">猫猫名册</h2>
@@ -88,7 +103,16 @@
       <section class="panel panel--chat" aria-label="房间消息流">
         <header class="chat-head">
           <div class="chat-head-main">
-            <h2 class="room-name" data-room-name>猫咖 · 客厅</h2>
+            <button
+              type="button"
+              class="room-name room-name--switch"
+              data-action="open-room-picker"
+              title="切换房间"
+              aria-haspopup="dialog"
+            >
+              <span data-room-name>猫咖 · 客厅</span>
+              <span class="room-chevron" aria-hidden="true">⌄</span>
+            </button>
             <p class="room-topic" data-room-topic>把需求丢进来，猫猫们会在同一张桌子上把它做出来。</p>
           </div>
           <div class="chat-head-status">
@@ -197,6 +221,24 @@
           <p class="work-sub">任务进度 · 交接卡 · 产物 · 沙盒 · 共享记忆</p>
         </header>
         <div class="work-scroll">
+          <section class="card card--current-workspace" aria-labelledby="current-workspace-title">
+            <div class="card-head">
+              <h2 id="current-workspace-title">当前工作区</h2>
+              <span class="count" data-current-workspace-policy></span>
+              <button
+                type="button"
+                class="btn btn--tiny btn--ghost"
+                data-action="open-current-git"
+                id="current-workspace-git-btn"
+              >
+                查看 git
+              </button>
+            </div>
+            <div id="current-workspace-body" class="current-workspace-body">
+              <div class="empty"><span>读取工作区…</span></div>
+            </div>
+          </section>
+
           <section class="card" aria-labelledby="progress-title">
             <div class="card-head">
               <h2 id="progress-title">任务进度</h2>
@@ -223,7 +265,7 @@
 
           <section class="card" aria-labelledby="sandbox-title">
             <div class="card-head">
-              <h2 id="sandbox-title">沙盒</h2>
+              <h2 id="sandbox-title" data-sandbox-title>沙盒</h2>
               <span class="count" data-sandbox-count>0</span>
               <button
                 type="button"
@@ -294,6 +336,7 @@
           </button>
         </header>
         <p class="modal-sub">用一句话说清要做什么。宪宪会先接住，再把活拆给其他猫。</p>
+        <p class="field-hint" id="new-task-room-hint">将在当前房间创建。</p>
         <label class="field">
           <span class="field-label">需求（至少 4 个字）</span>
           <textarea
@@ -515,7 +558,97 @@
             </div>
           </fieldset>
 
-          <!-- 4. LLM 连接 -->
+          <!-- 4. 工作区 -->
+          <fieldset class="settings-section" id="settings-workspaces-section">
+            <legend class="settings-legend">工作区</legend>
+            <p class="settings-desc">
+              每个房间绑定一个目录。真实仓库默认只读；切到读写后模型会直接修改真实文件，请谨慎授权。
+            </p>
+
+            <div class="scenario-toolbar">
+              <button
+                type="button"
+                class="btn btn--ghost btn--tiny"
+                data-action="toggle-workspace-form"
+                id="workspace-form-toggle"
+              >
+                ＋ 添加工作区
+              </button>
+              <button
+                type="button"
+                class="btn btn--ghost btn--tiny"
+                data-action="reload-workspaces"
+                id="workspaces-reload-btn"
+              >
+                ↻ 刷新
+              </button>
+              <span class="scenario-status" id="workspaces-status" role="status" aria-live="polite"></span>
+            </div>
+
+            <div class="scenario-import workspace-form" id="workspace-form" hidden>
+              <div class="field-grid">
+                <div class="field">
+                  <label class="field-label" for="workspace-name">名称</label>
+                  <input id="workspace-name" type="text" maxlength="40" placeholder="例如：我的前端仓库" />
+                </div>
+                <div class="field">
+                  <label class="field-label" for="workspace-path">绝对路径</label>
+                  <input
+                    id="workspace-path"
+                    type="text"
+                    spellcheck="false"
+                    placeholder="/Users/you/project"
+                  />
+                </div>
+              </div>
+
+              <div class="field">
+                <span class="field-label">权限</span>
+                <div class="workspace-policy-options" role="radiogroup" aria-label="工作区权限">
+                  <label class="policy-option">
+                    <input type="radio" name="workspace-policy" value="read-only" checked />
+                    <span class="policy-option-main">
+                      <span class="policy-option-title">只读</span>
+                      <small>可以看文件与 git，禁止写入/跑命令</small>
+                    </span>
+                  </label>
+                  <label class="policy-option" data-policy="read-write">
+                    <input type="radio" name="workspace-policy" value="read-write" />
+                    <span class="policy-option-main">
+                      <span class="policy-option-title">读写（危险）</span>
+                      <small>写入会修改真实文件，需要二次确认</small>
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              <label class="confirm-row" id="workspace-confirm-row" hidden>
+                <input type="checkbox" id="workspace-confirm" />
+                <span>我确认写入会修改真实文件</span>
+              </label>
+
+              <p class="form-error" id="workspace-form-error" role="alert" hidden></p>
+              <div class="scenario-import-row">
+                <button
+                  type="button"
+                  class="btn btn--primary btn--tiny"
+                  data-action="save-workspace"
+                  id="workspace-save-btn"
+                >
+                  添加工作区
+                </button>
+                <button type="button" class="btn btn--ghost btn--tiny" data-action="cancel-workspace">
+                  取消
+                </button>
+              </div>
+            </div>
+
+            <div id="workspace-list" class="workspace-list">
+              <div class="empty"><span>读取工作区…</span></div>
+            </div>
+          </fieldset>
+
+          <!-- 5. LLM 连接 -->
           <fieldset class="settings-section" id="settings-llm-section">
             <legend class="settings-legend">LLM 连接</legend>
             <p class="settings-desc">
@@ -634,7 +767,7 @@
             </div>
           </fieldset>
 
-          <!-- 5. 猫猫与模型 -->
+          <!-- 6. 猫猫与模型 -->
           <fieldset class="settings-section" id="settings-cats-section">
             <legend class="settings-legend">猫猫与模型</legend>
             <p class="settings-desc">
@@ -645,7 +778,7 @@
             </div>
           </fieldset>
 
-          <!-- 6. 回复节奏 -->
+          <!-- 7. 回复节奏 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">回复节奏</legend>
             <p class="settings-desc">只影响演出与真实模式的打字节奏。</p>
@@ -665,7 +798,7 @@
             </div>
           </fieldset>
 
-          <!-- 7. 剧本库 -->
+          <!-- 8. 剧本库 -->
           <fieldset class="settings-section" id="settings-scenarios-section">
             <legend class="settings-legend">剧本库</legend>
             <p class="settings-desc">
@@ -741,7 +874,7 @@
             </div>
           </fieldset>
 
-          <!-- 8. 数据 -->
+          <!-- 9. 数据 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">数据</legend>
             <div class="settings-danger-row">
@@ -776,7 +909,7 @@
             </div>
           </fieldset>
 
-          <!-- 9. 关于 / 只读 -->
+          <!-- 10. 关于 / 只读 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">关于 / 运行信息</legend>
             <dl class="settings-info" id="settings-info">
@@ -949,6 +1082,104 @@
           <button type="submit" class="btn btn--primary" id="cat-access-save">保存权限</button>
         </footer>
       </form>
+    </dialog>
+
+    <!-- ── 房间切换弹窗 ─────────────────────────────────────────── -->
+    <dialog id="room-picker-modal" class="modal modal--rooms" aria-labelledby="room-picker-title">
+      <div class="modal-card">
+        <header class="modal-head">
+          <h2 id="room-picker-title">切换房间</h2>
+          <button type="button" class="icon-btn" data-action="close-room-picker" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub">每个房间绑定一个工作区；消息、任务和工作台按房间隔离。</p>
+        <div id="room-picker-list" class="room-list"></div>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-room-picker">取消</button>
+          <button type="button" class="btn btn--primary" data-action="new-room" data-from-picker="1">
+            ＋ 新房间
+          </button>
+        </footer>
+      </div>
+    </dialog>
+
+    <!-- ── 新房间弹窗 ─────────────────────────────────────────────── -->
+    <dialog id="new-room-modal" class="modal" aria-labelledby="new-room-title">
+      <form id="new-room-form" class="modal-card" novalidate>
+        <header class="modal-head">
+          <h2 id="new-room-title">新房间</h2>
+          <button type="button" class="icon-btn" data-action="close-new-room" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub">房间会绑定一个工作区。进去之后，消息、任务和文件都只看这个房间。</p>
+        <label class="field">
+          <span class="field-label">房间名</span>
+          <input
+            id="new-room-name"
+            type="text"
+            maxlength="30"
+            placeholder="例如：前端仓库 · 只读"
+            required
+          />
+        </label>
+        <div class="field">
+          <label class="field-label" for="new-room-workspace">绑定工作区</label>
+          <select id="new-room-workspace"></select>
+          <span class="field-hint" id="new-room-workspace-hint">
+            真实仓库默认只读；需要写入请先在设置里授权。
+          </span>
+        </div>
+        <label class="field">
+          <span class="field-label">房间说明（可选）</span>
+          <input id="new-room-topic" type="text" maxlength="80" placeholder="这个房间用来做什么？" />
+        </label>
+        <p class="form-error" id="new-room-error" role="alert" hidden></p>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-new-room">取消</button>
+          <button type="submit" class="btn btn--primary" id="create-room-btn" disabled>
+            创建并进入
+          </button>
+        </footer>
+      </form>
+    </dialog>
+
+    <!-- ── 只读 git 面板 ─────────────────────────────────────────── -->
+    <dialog id="git-modal" class="modal modal--git" aria-labelledby="git-title">
+      <div class="modal-card git-card">
+        <header class="modal-head">
+          <div class="settings-head-text">
+            <h2 id="git-title">Git 状态</h2>
+            <p class="modal-sub" id="git-sub">只读查询，不会修改仓库。</p>
+          </div>
+          <button type="button" class="icon-btn" data-action="close-git" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="form-error" id="git-error" role="alert" hidden></p>
+        <div id="git-meta" class="git-meta"></div>
+        <section class="git-section">
+          <h3>status</h3>
+          <pre id="git-status-pre" class="git-pre">读取中…</pre>
+        </section>
+        <details class="git-section git-diff" id="git-diff-details">
+          <summary>diff（展开时加载）</summary>
+          <pre id="git-diff-pre" class="git-pre">未加载</pre>
+        </details>
+        <section class="git-section">
+          <h3>文件 <span class="count" id="git-file-count"></span></h3>
+          <div id="git-file-list" class="git-file-list">
+            <div class="empty"><span>读取文件…</span></div>
+          </div>
+        </section>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-git">关闭</button>
+          <button type="button" class="btn btn--primary" data-action="refresh-git" id="git-refresh-btn">
+            刷新
+          </button>
+        </footer>
+      </div>
     </dialog>
 
     <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>

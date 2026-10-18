@@ -94,7 +94,16 @@ const app = {
   /** artifactId -> 是否展开（重建右栏后恢复用户的展开状态） */
   expanded: new Set(),
   timeline: { ids: [], lastTaskId: null, initialized: false },
-  sig: { roster: null, tasks: null, progress: null, handoffs: null, artifacts: null, memory: null },
+  sig: {
+    roster: null,
+    tasks: null,
+    progress: null,
+    handoffs: null,
+    artifacts: null,
+    memory: null,
+    rooms: null,
+    currentWorkspace: null,
+  },
   mention: { open: false, items: [], index: 0, tokenStart: -1, lastKey: "" },
   sse: null,
   sseOpened: false,
@@ -107,6 +116,8 @@ const app = {
   toolCatalog: [],
   /** /api/skills 技能目录。 */
   skillCatalog: [],
+  /** 当前选中/打开的房间选择弹窗状态。 */
+  roomPickerOpen: false,
 };
 
 /** 设置面板的临时状态（打开时才加载，关闭即丢弃草稿）。 */
@@ -146,6 +157,40 @@ const approvalState = {
   pending: [],
   error: "",
   lastToolSignature: "",
+};
+
+/** 工作区 / 房间 / git 面板状态。 */
+const workspaceState = {
+  loading: false,
+  loaded: false,
+  available: null,
+  list: [],
+  error: "",
+  git: {},
+  gitLoading: {},
+  formOpen: false,
+  saving: false,
+  deleteConfirmId: "",
+  rowErrors: {},
+  expanded: new Set(),
+  panel: {
+    id: null,
+    open: false,
+    loading: false,
+    error: "",
+    info: null,
+    diff: "",
+    diffLoading: false,
+    diffError: "",
+    files: [],
+    filesLoading: false,
+    filesError: "",
+  },
+};
+
+const roomState = {
+  creating: false,
+  workspacesReady: false,
 };
 
 /** MCP server 管理状态。 */
@@ -320,9 +365,69 @@ function roomMessages() {
   return room ? messages.filter((message) => message.roomId === room.id) : messages;
 }
 
+// ── 工作区 / 房间作用域 ─────────────────────────────────────────────────
+
+const DEFAULT_WORKSPACE_ID = "ws_sandbox";
+const DEFAULT_WORKSPACE = {
+  id: DEFAULT_WORKSPACE_ID,
+  name: "猫咖沙盒",
+  root: "",
+  policy: "read-write",
+  kind: "sandbox",
+  isGit: false,
+  createdAt: 0,
+  roomCount: 1,
+  bound: true,
+};
+
+function currentWorkspaceId() {
+  return currentRoom()?.workspaceId || DEFAULT_WORKSPACE_ID;
+}
+
+function workspaceById(id) {
+  if (!id) return null;
+  return (workspaceState.list ?? []).find((workspace) => workspace.id === id) ?? null;
+}
+
+function currentWorkspace() {
+  const id = currentWorkspaceId();
+  const found = workspaceById(id);
+  if (found) return found;
+  if (id === DEFAULT_WORKSPACE_ID) {
+    return workspaceState.available === false ? null : DEFAULT_WORKSPACE;
+  }
+  return null;
+}
+
+function workspacePolicyLabel(policy) {
+  return policy === "read-write" ? "读写" : "只读";
+}
+
+function workspaceRoomBadge(room) {
+  const workspace = workspaceById(room.workspaceId ?? DEFAULT_WORKSPACE_ID);
+  if (!workspace) {
+    if (workspaceState.available === false) return { text: "工作区未就绪", policy: "read-only" };
+    return { text: "猫咖沙盒", policy: "read-write" };
+  }
+  return {
+    text:
+      workspace.kind === "sandbox"
+        ? "猫咖沙盒"
+        : `${workspace.name} · ${workspacePolicyLabel(workspace.policy)}`,
+    policy: workspace.policy,
+  };
+}
+
+/** 当前房间的任务（消息 / 任务 / 工作台按 roomId 隔离）。 */
+function roomTasks() {
+  const room = currentRoom();
+  const tasks = app.state?.tasks ?? [];
+  return room ? tasks.filter((task) => task.roomId === room.id) : tasks;
+}
+
 /** 最后一个未完成的任务（猫猫「工作中」状态以此为准）。 */
 function latestActiveTask() {
-  const tasks = app.state?.tasks ?? [];
+  const tasks = roomTasks();
   for (let index = tasks.length - 1; index >= 0; index -= 1) {
     if (tasks[index].status !== "done") return tasks[index];
   }
@@ -331,7 +436,7 @@ function latestActiveTask() {
 
 /** 工作台 / 进度条展示的任务：优先用户点选的任务，否则最新未完成任务 / 最新任务。 */
 function activeTask() {
-  const tasks = app.state?.tasks ?? [];
+  const tasks = roomTasks();
   if (app.selectedTaskId) {
     const selected = tasks.find((task) => task.id === app.selectedTaskId);
     if (selected) return selected;
@@ -523,7 +628,7 @@ async function boot() {
 
   void refreshHealth();
   void refreshGlobalModel();
-  void loadWorkspace();
+  void loadWorkspaces().finally(() => void loadWorkspace());
   void loadApprovals();
   void loadToolCatalog();
   try {
@@ -544,6 +649,47 @@ function cacheDom() {
   els.modes = $$("[data-mode]");
   els.roomName = $("[data-room-name]");
   els.roomTopic = $("[data-room-topic]");
+  els.roomList = $("#room-list");
+  els.roomCount = $("[data-room-count]");
+  els.roomPickerModal = $("#room-picker-modal");
+  els.roomPickerList = $("#room-picker-list");
+  els.newRoomModal = $("#new-room-modal");
+  els.newRoomForm = $("#new-room-form");
+  els.newRoomName = $("#new-room-name");
+  els.newRoomWorkspace = $("#new-room-workspace");
+  els.newRoomTopic = $("#new-room-topic");
+  els.newRoomError = $("#new-room-error");
+  els.createRoomBtn = $("#create-room-btn");
+  els.newRoomWorkspaceHint = $("#new-room-workspace-hint");
+  els.currentWorkspaceBody = $("#current-workspace-body");
+  els.currentWorkspacePolicy = $("[data-current-workspace-policy]");
+  els.currentWorkspaceGitBtn = $("#current-workspace-git-btn");
+  els.sandboxTitle = $("[data-sandbox-title]");
+  els.sandboxResetBtn = $("#sandbox-reset-btn");
+  els.workspaceList = $("#workspace-list");
+  els.workspacesStatus = $("#workspaces-status");
+  els.workspaceForm = $("#workspace-form");
+  els.workspaceFormToggle = $("#workspace-form-toggle");
+  els.workspaceName = $("#workspace-name");
+  els.workspacePath = $("#workspace-path");
+  els.workspacePolicyInputs = $$('input[name="workspace-policy"]');
+  els.workspaceConfirmRow = $("#workspace-confirm-row");
+  els.workspaceConfirm = $("#workspace-confirm");
+  els.workspaceFormError = $("#workspace-form-error");
+  els.workspaceSaveBtn = $("#workspace-save-btn");
+  els.workspacesReload = $("#workspaces-reload-btn");
+  els.gitModal = $("#git-modal");
+  els.gitTitle = $("#git-title");
+  els.gitSub = $("#git-sub");
+  els.gitError = $("#git-error");
+  els.gitMeta = $("#git-meta");
+  els.gitStatusPre = $("#git-status-pre");
+  els.gitDiffDetails = $("#git-diff-details");
+  els.gitDiffPre = $("#git-diff-pre");
+  els.gitFileList = $("#git-file-list");
+  els.gitFileCount = $("#git-file-count");
+  els.gitRefreshBtn = $("#git-refresh-btn");
+  els.newTaskRoomHint = $("#new-task-room-hint");
   els.connBanner = $("#conn-banner");
   els.roster = $("#cat-roster");
   els.rosterCount = $("[data-roster-count]");
@@ -806,9 +952,11 @@ function setConn(next) {
 
 function renderAll() {
   paintChrome();
+  renderRooms();
   renderRoster();
   renderTasks();
   renderWorkspace();
+  renderCurrentWorkspace();
   renderTimeline();
   syncToolCards();
   renderSandbox();
@@ -968,10 +1116,11 @@ function typingDots() {
 function renderTasks() {
   const host = els.taskList;
   if (!host) return;
-  const tasks = [...(app.state?.tasks ?? [])].sort((a, b) => b.createdAt - a.createdAt);
+  const tasks = [...roomTasks()].sort((a, b) => b.createdAt - a.createdAt);
   if (els.taskCount) els.taskCount.textContent = String(tasks.length);
 
   const sig =
+    `${app.roomId}|` +
     tasks.map((task) => [task.id, task.status, task.stage, task.owner, task.updatedAt].join(":")).join("|") +
     `|sel:${app.selectedTaskId ?? ""}`;
   if (sig === app.sig.tasks) return;
@@ -1212,10 +1361,13 @@ function renderArtifacts() {
 function renderMemory() {
   const host = els.memory;
   if (!host) return;
-  const memories = [...(app.state?.memory ?? [])].sort((a, b) => b.createdAt - a.createdAt);
+  const taskIds = new Set(roomTasks().map((task) => task.id));
+  const memories = [...(app.state?.memory ?? [])]
+    .filter((entry) => entry.sourceTaskId && taskIds.has(entry.sourceTaskId))
+    .sort((a, b) => b.createdAt - a.createdAt);
   if (els.memoryCount) els.memoryCount.textContent = String(memories.length);
 
-  const key = memories.map((entry) => entry.id).join(",") || "none";
+  const key = `${app.roomId}:` + (memories.map((entry) => entry.id).join(",") || "none");
   if (key === app.sig.memory) return;
   app.sig.memory = key;
 
@@ -1560,7 +1712,9 @@ function renderTimeline() {
     timeline.initialized = false;
   }
 
-  let rebuild = timeline.ids.length > messages.length;
+  let rebuild =
+    timeline.ids.length > messages.length ||
+    (timeline.ids.length === 0 && host.children.length > 0);
   if (!rebuild) {
     for (let index = 0; index < timeline.ids.length; index += 1) {
       if (timeline.ids[index] !== messages[index].id) {
@@ -2003,6 +2157,62 @@ function bindUi() {
     field?.addEventListener("input", hideMcpFormError);
   }
 
+  if (els.newRoomForm) {
+    els.newRoomForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      void createRoom();
+    });
+  }
+  els.newRoomName?.addEventListener("input", () => {
+    hideNewRoomError();
+    updateNewRoomState();
+  });
+  els.newRoomWorkspace?.addEventListener("change", updateNewRoomState);
+  if (els.roomPickerModal) {
+    els.roomPickerModal.addEventListener("click", (event) => {
+      if (event.target === els.roomPickerModal) closeRoomPicker();
+    });
+  }
+  if (els.newRoomModal) {
+    els.newRoomModal.addEventListener("click", (event) => {
+      if (event.target === els.newRoomModal) closeNewRoom();
+    });
+    els.newRoomModal.addEventListener("close", () => {
+      roomState.creating = false;
+      hideNewRoomError();
+    });
+  }
+
+  for (const input of els.workspacePolicyInputs ?? []) {
+    input.addEventListener("change", () => {
+      hideWorkspaceFormError();
+      updateWorkspaceFormState();
+    });
+  }
+  for (const field of [els.workspaceName, els.workspacePath]) {
+    field?.addEventListener("input", hideWorkspaceFormError);
+  }
+  if (els.gitDiffDetails) {
+    els.gitDiffDetails.addEventListener("toggle", () => {
+      if (
+        els.gitDiffDetails.open &&
+        workspaceState.panel.id &&
+        !workspaceState.panel.diff &&
+        !workspaceState.panel.diffLoading
+      ) {
+        void loadGitDiff(workspaceState.panel.id);
+      }
+    });
+  }
+  if (els.gitModal) {
+    els.gitModal.addEventListener("click", (event) => {
+      if (event.target === els.gitModal) closeGitPanel();
+    });
+    els.gitModal.addEventListener("close", () => {
+      workspaceState.panel.open = false;
+    });
+  }
+
   if (els.catAccessForm) {
     els.catAccessForm.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -2179,6 +2389,75 @@ function onGlobalClick(event) {
       break;
     case "focus-needs-me":
       focusNeedsMe();
+      break;
+    case "switch-room":
+      if (actionEl.dataset.roomId) setRoom(actionEl.dataset.roomId);
+      break;
+    case "open-room-picker":
+      openRoomPicker();
+      break;
+    case "close-room-picker":
+      closeRoomPicker();
+      break;
+    case "new-room":
+      void openNewRoom();
+      break;
+    case "close-new-room":
+      closeNewRoom();
+      break;
+    case "toggle-workspace-form":
+      if (workspaceState.formOpen) closeWorkspaceForm();
+      else openWorkspaceForm();
+      break;
+    case "cancel-workspace":
+      closeWorkspaceForm();
+      break;
+    case "reload-workspaces":
+      void loadWorkspaces();
+      break;
+    case "save-workspace":
+      void saveWorkspace();
+      break;
+    case "toggle-workspace-path":
+      if (actionEl.dataset.workspaceId) {
+        const id = actionEl.dataset.workspaceId;
+        if (workspaceState.expanded.has(id)) workspaceState.expanded.delete(id);
+        else workspaceState.expanded.add(id);
+        renderWorkspacesSettings();
+      }
+      break;
+    case "open-workspace-git":
+      if (actionEl.dataset.workspaceId) void openGitPanel(actionEl.dataset.workspaceId);
+      break;
+    case "refresh-workspace-git":
+      if (actionEl.dataset.workspaceId) void loadWorkspaceGit(actionEl.dataset.workspaceId);
+      break;
+    case "delete-workspace":
+      if (actionEl.dataset.workspaceId) askDeleteWorkspace(actionEl.dataset.workspaceId);
+      break;
+    case "confirm-delete-workspace":
+      if (actionEl.dataset.workspaceId) void confirmDeleteWorkspace(actionEl.dataset.workspaceId);
+      break;
+    case "cancel-delete-workspace":
+      workspaceState.deleteConfirmId = "";
+      renderWorkspacesSettings();
+      break;
+    case "open-current-git": {
+      const workspace = currentWorkspace();
+      if (workspace) void openGitPanel(workspace.id);
+      else toast("工作区服务未就绪", "warn");
+      break;
+    }
+    case "close-git":
+      closeGitPanel();
+      break;
+    case "refresh-git":
+      void refreshGitPanel();
+      break;
+    case "open-workspace-file":
+      if (actionEl.dataset.workspaceId && actionEl.dataset.path) {
+        void openWorkspaceFile(actionEl.dataset.workspaceId, actionEl.dataset.path);
+      }
       break;
     case "toggle-mcp-form":
       if (mcpState.formOpen) closeMcpForm();
@@ -2594,6 +2873,12 @@ function insertMention(catId) {
 function openNewTaskModal() {
   if (!els.modal) return;
   hideFormError();
+  if (els.newTaskRoomHint) {
+    const room = currentRoom();
+    els.newTaskRoomHint.textContent = room
+      ? `将在「${room.name}」创建；任务和消息只属于这个房间。`
+      : "将在当前房间创建。";
+  }
   if (els.brief) {
     els.brief.value = "";
     for (const chip of els.modalChips ?? []) chip.classList.remove("is-active");
@@ -2726,6 +3011,7 @@ async function openSettings() {
   void loadScenarios();
   void loadMcp();
   void loadToolCatalog();
+  void loadWorkspaces();
   await loadSettings();
 }
 
@@ -4501,25 +4787,61 @@ function syncToolCards() {
   }
 }
 
-// ── 沙盒面板 / 文件查看 ────────────────────────────────────────────────
+// ── 沙盒 / 工作区文件面板 / 文件查看 ───────────────────────────────────
+
+function updateSandboxWorkspaceChrome() {
+  const workspace = currentWorkspace();
+  const isSandbox = !workspace || workspace.kind === "sandbox";
+  if (els.sandboxTitle) {
+    els.sandboxTitle.textContent = isSandbox ? "沙盒" : "工作区文件";
+  }
+  if (els.sandboxResetBtn) {
+    els.sandboxResetBtn.title = isSandbox
+      ? "清空并重种内置沙盒文件"
+      : "当前工作区不是内置沙盒，不能重置";
+  }
+}
 
 async function loadWorkspace() {
   if (sandboxState.loading) return;
+  const workspace = currentWorkspace();
+  const requestedWorkspaceId = workspace?.id ?? null;
   sandboxState.loading = true;
+  if (sandboxState.workspaceId !== requestedWorkspaceId) {
+    sandboxState.files = [];
+    sandboxState.loaded = false;
+    sandboxState.error = "";
+  }
+  sandboxState.workspaceId = requestedWorkspaceId;
+  updateSandboxWorkspaceChrome();
   renderSandbox();
   try {
-    const response = await fetch("/api/workspace/tree", {
-      headers: { Accept: "application/json" },
-      cache: "no-store",
-    });
-    if (response.status === 503) {
-      const error = new Error("沙盒服务未就绪（HTTP 503），接入后会自动恢复。");
-      error.status = 503;
-      throw error;
+    let payload;
+    let endpoint;
+    if (workspace && workspaceState.available !== false) {
+      endpoint = `/api/workspaces/${encodeURIComponent(workspace.id)}/files`;
+      const response = await fetch(endpoint, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error(await describeHttpError(response, `GET ${endpoint}`));
+      payload = await response.json();
+    } else {
+      endpoint = "/api/workspace/tree";
+      const response = await fetch(endpoint, {
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      });
+      if (response.status === 503) {
+        const error = new Error("沙盒服务未就绪（HTTP 503），接入后会自动恢复。");
+        error.status = 503;
+        throw error;
+      }
+      if (!response.ok) throw new Error(await describeHttpError(response, endpoint));
+      payload = await response.json();
     }
-    if (!response.ok) throw new Error(await describeHttpError(response, "GET /api/workspace/tree"));
-    const payload = await response.json();
-    sandboxState.root = String(payload?.root ?? "");
+    if (requestedWorkspaceId !== (currentWorkspace()?.id ?? null)) return;
+    sandboxState.root = String(payload?.root ?? workspace?.root ?? "");
     sandboxState.files = Array.isArray(payload?.files)
       ? payload.files
           .filter((file) => file && typeof file.path === "string")
@@ -4531,8 +4853,9 @@ async function loadWorkspace() {
     sandboxState.resetError = "";
     sandboxState.loaded = true;
   } catch (error) {
+    if (requestedWorkspaceId !== (currentWorkspace()?.id ?? null)) return;
     sandboxState.available = false;
-    sandboxState.error = error.message || "沙盒未启用";
+    sandboxState.error = error.message || "工作区文件读取失败";
     sandboxState.files = [];
     sandboxState.loaded = true;
   } finally {
@@ -4561,13 +4884,18 @@ function formatBytes(size) {
 function renderSandbox() {
   const host = els.sandboxList;
   if (!host) return;
+  const workspace = currentWorkspace();
+  const isSandbox = !workspace || workspace.kind === "sandbox";
   if (els.sandboxCount) els.sandboxCount.textContent = String(sandboxState.files.length);
+  updateSandboxWorkspaceChrome();
 
   if (els.sandboxError) {
     els.sandboxError.hidden = !sandboxState.resetError;
     els.sandboxError.textContent = sandboxState.resetError || "";
   }
-  if (els.sandboxResetBtn) els.sandboxResetBtn.hidden = sandboxState.resetConfirm;
+  if (els.sandboxResetBtn) {
+    els.sandboxResetBtn.hidden = sandboxState.resetConfirm || !isSandbox;
+  }
   if (els.sandboxResetConfirm) els.sandboxResetConfirm.hidden = !sandboxState.resetConfirm;
   if (els.sandboxConfirmReset) {
     els.sandboxConfirmReset.disabled = sandboxState.resetting;
@@ -4576,7 +4904,7 @@ function renderSandbox() {
   if (els.sandboxRefresh) els.sandboxRefresh.disabled = sandboxState.loading;
 
   if (sandboxState.loading && !sandboxState.loaded) {
-    host.replaceChildren(emptyNote("读取沙盒…"));
+    host.replaceChildren(emptyNote(isSandbox ? "读取沙盒…" : "读取工作区文件…"));
     return;
   }
   if (sandboxState.error) {
@@ -4584,7 +4912,7 @@ function renderSandbox() {
       h(
         "div",
         { class: "empty" },
-        h("strong", { text: "沙盒未启用" }),
+        h("strong", { text: isSandbox ? "沙盒未启用" : "工作区文件未就绪" }),
         h("span", { text: sandboxState.error }),
         h("button", {
           type: "button",
@@ -4597,7 +4925,13 @@ function renderSandbox() {
     return;
   }
   if (!sandboxState.files.length) {
-    host.replaceChildren(emptyNote("沙盒还是空的。猫猫写文件后会出现在这里。"));
+    host.replaceChildren(
+      emptyNote(
+        isSandbox
+          ? "沙盒还是空的。猫猫写文件后会出现在这里。"
+          : "这个工作区还没有文件。",
+      ),
+    );
     return;
   }
 
@@ -4632,6 +4966,12 @@ function setSandboxResetConfirm(show) {
 
 async function resetSandbox() {
   if (sandboxState.resetting) return;
+  const workspace = currentWorkspace();
+  if (workspace && workspace.kind !== "sandbox") {
+    sandboxState.resetError = "当前工作区不是内置沙盒，不能重置。";
+    renderSandbox();
+    return;
+  }
   sandboxState.resetting = true;
   sandboxState.resetError = "";
   renderSandbox();
@@ -4657,6 +4997,7 @@ async function resetSandbox() {
 
 async function openSandboxFile(path) {
   if (!els.sandboxFileModal) return;
+  const workspace = currentWorkspace();
   sandboxState.file = { open: true, loading: true, path, content: "", error: "" };
 
   const title = $("#sandbox-file-title");
@@ -4672,12 +5013,16 @@ async function openSandboxFile(path) {
   if (!els.sandboxFileModal.open) els.sandboxFileModal.showModal();
 
   try {
-    const response = await fetch(
-      `/api/workspace/file?path=${encodeURIComponent(path)}`,
-      { headers: { Accept: "application/json" }, cache: "no-store" },
-    );
-    if (response.status === 503) throw new Error("沙盒未启用（GET /api/workspace/file → HTTP 503）");
-    if (!response.ok) throw new Error(await describeHttpError(response, "GET /api/workspace/file"));
+    const endpoint =
+      workspace && workspaceState.available !== false
+        ? `/api/workspaces/${encodeURIComponent(workspace.id)}/file?path=${encodeURIComponent(path)}`
+        : `/api/workspace/file?path=${encodeURIComponent(path)}`;
+    const response = await fetch(endpoint, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (response.status === 503) throw new Error("文件服务未就绪（HTTP 503）");
+    if (!response.ok) throw new Error(await describeHttpError(response, `GET ${endpoint}`));
     const payload = await response.json();
     sandboxState.file.content = String(payload?.content ?? "");
     sandboxState.file.path = String(payload?.path ?? path);
@@ -4749,6 +5094,932 @@ function updateToolsHint() {
     : "已关闭：猫不会写文件或运行命令，只会产出文字。";
 }
 
+
+
+// ── 房间切换 ───────────────────────────────────────────────────────────
+
+function renderRooms() {
+  const rooms = app.state?.rooms ?? [];
+  const workspaceSig = (workspaceState.list ?? [])
+    .map((workspace) => `${workspace.id}:${workspace.policy}:${workspace.roomCount}:${workspace.kind}`)
+    .join(",");
+  const sig =
+    `${app.roomId}|${workspaceState.available}|` +
+    rooms.map((room) => `${room.id}:${room.name}:${room.workspaceId ?? ""}`).join("|") +
+    `|ws:${workspaceSig}`;
+  if (sig === app.sig.rooms) return;
+  app.sig.rooms = sig;
+
+  if (els.roomCount) els.roomCount.textContent = String(rooms.length);
+  if (!els.roomList) return;
+  if (!rooms.length) {
+    els.roomList.replaceChildren(emptyNote("等房间数据…"));
+    return;
+  }
+  els.roomList.replaceChildren(...rooms.map((room) => roomItem(room)));
+}
+
+function roomItem(room) {
+  const active = room.id === app.roomId;
+  const badge = workspaceRoomBadge(room);
+  return h(
+    "button",
+    {
+      type: "button",
+      class: `room-item${active ? " is-active" : ""}`,
+      "data-action": "switch-room",
+      "data-room-id": room.id,
+      "aria-pressed": active ? "true" : "false",
+      title: `${room.name} · ${badge.text}`,
+      role: "listitem",
+    },
+    h(
+      "span",
+      { class: "room-item-main" },
+      h("span", { class: "room-item-name", text: room.name }),
+      h("span", {
+        class: "room-item-badge",
+        "data-policy": badge.policy,
+        text: badge.text,
+      }),
+    ),
+    active ? h("span", { class: "room-item-check", "aria-hidden": "true", text: "●" }) : null,
+  );
+}
+
+function renderRoomPicker() {
+  if (!els.roomPickerList) return;
+  const rooms = app.state?.rooms ?? [];
+  els.roomPickerList.replaceChildren(
+    ...(rooms.length ? rooms.map((room) => roomItem(room)) : [emptyNote("还没有房间")]),
+  );
+}
+
+function openRoomPicker() {
+  if (!els.roomPickerModal) return;
+  renderRoomPicker();
+  if (!els.roomPickerModal.open) els.roomPickerModal.showModal();
+}
+
+function closeRoomPicker() {
+  if (els.roomPickerModal?.open) els.roomPickerModal.close();
+}
+
+function setRoom(roomId, options = {}) {
+  if (!roomId) return;
+  const room = (app.state?.rooms ?? []).find((item) => item.id === roomId);
+  if (!room) return;
+  if (roomId !== app.roomId) {
+    app.roomId = roomId;
+    app.selectedTaskId = null;
+    app.timeline = { ids: [], lastTaskId: null, initialized: false };
+    toolCardNodes.clear();
+    if (els.timeline) els.timeline.replaceChildren();
+    app.expanded.clear();
+    app.sig.tasks = null;
+    app.sig.progress = null;
+    app.sig.handoffs = null;
+    app.sig.artifacts = null;
+    app.sig.memory = null;
+    app.sig.currentWorkspace = null;
+    resetUnread();
+  }
+  closeRoomPicker();
+  renderAll();
+  if (options.scroll !== false) scrollToBottom(false);
+  ensureCurrentWorkspaceData();
+  if (isCompactViewport() && options.tab !== false) setTab("chat");
+}
+
+function updateNewRoomState() {
+  const name = els.newRoomName?.value.trim() ?? "";
+  const workspaceId = els.newRoomWorkspace?.value ?? "";
+  const valid = name.length >= 1 && name.length <= 30 && Boolean(workspaceId);
+  if (els.createRoomBtn) {
+    els.createRoomBtn.disabled = roomState.creating || !valid;
+    els.createRoomBtn.textContent = roomState.creating ? "创建中…" : "创建并进入";
+  }
+}
+
+function hideNewRoomError() {
+  if (!els.newRoomError) return;
+  els.newRoomError.hidden = true;
+  els.newRoomError.textContent = "";
+}
+
+function showNewRoomError(message) {
+  if (!els.newRoomError) return;
+  els.newRoomError.textContent = message;
+  els.newRoomError.hidden = false;
+}
+
+function populateNewRoomWorkspaces() {
+  if (!els.newRoomWorkspace) return;
+  const selected = els.newRoomWorkspace.value;
+  const options = [];
+  for (const workspace of workspaceState.list ?? []) {
+    options.push(
+      h("option", {
+        value: workspace.id,
+        text:
+          workspace.kind === "sandbox"
+            ? `${workspace.name}（内置沙盒）`
+            : `${workspace.name} · ${workspacePolicyLabel(workspace.policy)}`,
+      }),
+    );
+  }
+  if (!options.length) {
+    options.push(
+      h("option", {
+        value: "",
+        text: workspaceState.available === false ? "工作区服务未就绪" : "（没有可用工作区）",
+      }),
+    );
+  }
+  els.newRoomWorkspace.replaceChildren(...options);
+  const preferred = selected ||
+    currentRoom()?.workspaceId ||
+    options[0]?.value ||
+    "";
+  if ([...els.newRoomWorkspace.options].some((option) => option.value === preferred)) {
+    els.newRoomWorkspace.value = preferred;
+  }
+  if (els.newRoomWorkspaceHint) {
+    els.newRoomWorkspaceHint.textContent =
+      workspaceState.available === false
+        ? "工作区服务未就绪，暂时无法创建房间。你可以稍后重试。"
+        : "每个房间绑定一个工作区；真实仓库默认只读，需要写入请先在设置里授权。";
+  }
+  updateNewRoomState();
+}
+
+async function openNewRoom() {
+  closeRoomPicker();
+  if (!els.newRoomModal) return;
+  hideNewRoomError();
+  roomState.creating = false;
+  if (els.newRoomName) els.newRoomName.value = "";
+  if (els.newRoomTopic) els.newRoomTopic.value = "";
+  updateNewRoomState();
+  if (!els.newRoomModal.open) els.newRoomModal.showModal();
+  if (!workspaceState.loaded) await loadWorkspaces();
+  populateNewRoomWorkspaces();
+  updateNewRoomState();
+  requestAnimationFrame(() => els.newRoomName?.focus());
+}
+
+function closeNewRoom() {
+  if (els.newRoomModal?.open) els.newRoomModal.close();
+}
+
+async function createRoom() {
+  if (roomState.creating) return;
+  hideNewRoomError();
+  const name = els.newRoomName?.value.trim() ?? "";
+  const workspaceId = els.newRoomWorkspace?.value ?? "";
+  const topic = els.newRoomTopic?.value.trim() ?? "";
+  if (name.length < 1 || name.length > 30) {
+    showNewRoomError("房间名需要 1–30 个字符。");
+    els.newRoomName?.focus();
+    return;
+  }
+  if (!workspaceId) {
+    showNewRoomError("先选一个工作区；工作区服务未就绪时暂时不能创建房间。");
+    return;
+  }
+  roomState.creating = true;
+  updateNewRoomState();
+  try {
+    const response = await fetch("/api/rooms", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, workspaceId, ...(topic ? { topic } : {}) }),
+    });
+    if (!response.ok) throw new Error(await readApiError(response));
+    const room = await response.json();
+    closeNewRoom();
+    await refreshState().catch(() => {});
+    if (app.state && !(app.state.rooms ?? []).some((item) => item.id === room.id)) {
+      app.state.rooms = [...(app.state.rooms ?? []), room];
+    }
+    setRoom(room.id);
+    void loadWorkspaces();
+    toast(`已创建房间「${room.name}」`);
+  } catch (error) {
+    showNewRoomError(`创建失败：${error.message}`);
+  } finally {
+    roomState.creating = false;
+    updateNewRoomState();
+  }
+}
+
+// ── 工作区 ─────────────────────────────────────────────────────────────
+
+function setWorkspacesStatus(text) {
+  if (els.workspacesStatus) els.workspacesStatus.textContent = text;
+}
+
+async function loadWorkspaces(options = {}) {
+  if (workspaceState.loading) return;
+  workspaceState.loading = true;
+  if (!workspaceState.loaded && !options.silent) setWorkspacesStatus("读取工作区…");
+  renderWorkspacesSettings();
+  renderCurrentWorkspace();
+  try {
+    const response = await fetch("/api/workspaces", {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (response.status === 503 || response.status === 404) {
+      throw new Error("工作区服务未就绪");
+    }
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET /api/workspaces"));
+    const payload = await response.json();
+    workspaceState.list = Array.isArray(payload?.workspaces) ? payload.workspaces : [];
+    workspaceState.available = true;
+    workspaceState.error = "";
+    workspaceState.loaded = true;
+    setWorkspacesStatus(`${workspaceState.list.length} 个工作区`);
+  } catch (error) {
+    workspaceState.available = false;
+    workspaceState.error = error.message || "工作区服务未就绪";
+    workspaceState.list = [];
+    workspaceState.loaded = true;
+    setWorkspacesStatus("工作区服务未就绪");
+  } finally {
+    workspaceState.loading = false;
+    renderRooms();
+    renderWorkspacesSettings();
+    renderCurrentWorkspace();
+    if (els.newRoomModal?.open) populateNewRoomWorkspaces();
+    updateSandboxWorkspaceChrome();
+  }
+  if (workspaceState.available) {
+    await Promise.all(
+      workspaceState.list
+        .filter((workspace) => workspace.isGit)
+        .map((workspace) => loadWorkspaceGit(workspace.id, { silent: true })),
+    );
+    const current = currentWorkspace();
+    if (current?.isGit && !workspaceState.git[current.id]) {
+      void loadWorkspaceGit(current.id, { silent: true });
+    }
+  }
+}
+
+function gitBadgeFor(workspace) {
+  if (!workspace) return "—";
+  if (!workspace.isGit) return "非 git";
+  const info = workspaceState.git[workspace.id];
+  if (workspaceState.gitLoading[workspace.id] && !info) return "git…";
+  if (!info) return "git 未读取";
+  if (info.error) return "git 错误";
+  const branch = info.branch || "detached";
+  return `${branch} · ${info.clean === true ? "clean" : info.clean === false ? "dirty" : "?"}`;
+}
+
+async function loadWorkspaceGit(workspaceId, options = {}) {
+  const workspace = workspaceById(workspaceId);
+  if (!workspace || !workspace.isGit) return;
+  if (workspaceState.gitLoading[workspaceId]) return;
+  workspaceState.gitLoading[workspaceId] = true;
+  if (!options.silent) {
+    renderWorkspacesSettings();
+    renderCurrentWorkspace();
+  }
+  try {
+    const response = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/git`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET workspace git"));
+    workspaceState.git[workspaceId] = await response.json();
+  } catch (error) {
+    workspaceState.git[workspaceId] = {
+      workspaceId,
+      isGit: true,
+      error: error.message || "git 读取失败",
+    };
+  } finally {
+    delete workspaceState.gitLoading[workspaceId];
+    renderWorkspacesSettings();
+    renderCurrentWorkspace();
+    if (workspaceState.panel.open && workspaceState.panel.id === workspaceId) {
+      renderGitPanel();
+    }
+  }
+}
+
+function renderWorkspacesSettings() {
+  const host = els.workspaceList;
+  if (!host) return;
+  if (workspaceState.loading && !workspaceState.loaded) {
+    host.replaceChildren(emptyNote("读取工作区…"));
+    return;
+  }
+  if (workspaceState.available === false) {
+    host.replaceChildren(
+      h(
+        "div",
+        { class: "empty" },
+        h("strong", { text: "工作区服务未就绪" }),
+        h("span", {
+          text:
+            workspaceState.error && workspaceState.error !== "工作区服务未就绪"
+              ? workspaceState.error
+              : "接口 503 / 404；工作区服务就绪后可以重试。",
+        }),
+        h("button", {
+          type: "button",
+          class: "btn btn--ghost btn--tiny",
+          "data-action": "reload-workspaces",
+          text: "↻ 重试",
+        }),
+      ),
+    );
+    return;
+  }
+  if (!workspaceState.list.length) {
+    host.replaceChildren(emptyNote("还没有工作区。默认房间会使用内置沙盒。"));
+    return;
+  }
+  host.replaceChildren(...workspaceState.list.map((workspace) => workspaceRowNode(workspace)));
+}
+
+function workspaceRowNode(workspace) {
+  const roomCount = Number.isFinite(workspace.roomCount)
+    ? Number(workspace.roomCount)
+    : (app.state?.rooms ?? []).filter((room) => room.workspaceId === workspace.id).length;
+  const isSandbox = workspace.kind === "sandbox" || workspace.id === DEFAULT_WORKSPACE_ID;
+  const bound = roomCount > 0;
+  const expanded = workspaceState.expanded.has(workspace.id);
+  const gitInfo = workspaceState.git[workspace.id];
+  const deleteDisabled = isSandbox || bound;
+  const rowError = workspaceState.rowErrors[workspace.id];
+
+  return h(
+    "div",
+    {
+      class: "workspace-row",
+      "data-workspace-id": workspace.id,
+      "data-policy": workspace.policy,
+    },
+    h(
+      "div",
+      { class: "workspace-head" },
+      h("span", { class: "workspace-name", text: workspace.name }),
+      h("span", {
+        class: "workspace-policy-badge",
+        "data-policy": workspace.policy,
+        text: workspacePolicyLabel(workspace.policy),
+      }),
+      h("span", {
+        class: "workspace-policy-badge",
+        text: isSandbox ? "内置沙盒" : workspace.isGit ? "git 仓库" : "目录",
+      }),
+      h("span", {
+        class: "workspace-git-badge",
+        "data-clean": gitInfo?.clean === false ? "false" : gitInfo?.clean === true ? "true" : "",
+        text: gitBadgeFor(workspace),
+      }),
+      h("span", {
+        class: "workspace-delete-hint",
+        text: isSandbox
+          ? "内置不可删"
+          : bound
+            ? `${roomCount} 个房间正在用`
+            : "",
+      }),
+    ),
+    h(
+      "div",
+      { class: `workspace-path${expanded ? " is-expanded" : ""}` },
+      h("code", { text: workspace.root, title: workspace.root }),
+      h("button", {
+        type: "button",
+        class: "workspace-path-toggle",
+        "data-action": "toggle-workspace-path",
+        "data-workspace-id": workspace.id,
+        text: expanded ? "收起" : "展开",
+      }),
+    ),
+    h(
+      "div",
+      { class: "workspace-meta" },
+      h("span", { text: `绑定房间：${roomCount}` }),
+      gitInfo?.lastCommit ? h("span", { text: `· ${gitInfo.lastCommit}` }) : null,
+      workspace.isGit
+        ? h("span", { text: `· ${gitBadgeFor(workspace)}` })
+        : null,
+    ),
+    workspace.policy === "read-write"
+      ? h("p", { class: "workspace-warning", text: "⚠ 写入会改真实文件" })
+      : null,
+    workspace.isGit && gitInfo?.error ? h("p", { class: "mcp-last-error", text: gitInfo.error }) : null,
+    rowError ? h("p", { class: "mcp-last-error", text: rowError }) : null,
+    h(
+      "div",
+      { class: "workspace-actions" },
+      h("button", {
+        type: "button",
+        class: "btn btn--tiny btn--ghost",
+        "data-action": "open-workspace-git",
+        "data-workspace-id": workspace.id,
+        text: "查看 git / 文件",
+      }),
+      workspace.isGit
+        ? h("button", {
+            type: "button",
+            class: "btn btn--tiny btn--ghost",
+            "data-action": "refresh-workspace-git",
+            "data-workspace-id": workspace.id,
+            text: "刷新 git",
+          })
+        : null,
+      h("button", {
+        type: "button",
+        class: "btn btn--tiny btn--danger",
+        "data-action": "delete-workspace",
+        "data-workspace-id": workspace.id,
+        disabled: deleteDisabled,
+        title: isSandbox
+          ? "内置沙盒工作区不可删除"
+          : bound
+            ? "还有房间绑定这个工作区，先解绑再删除"
+            : "删除工作区",
+        text: "删除",
+      }),
+      workspaceState.deleteConfirmId === workspace.id
+        ? h(
+            "span",
+            { class: "mcp-confirm" },
+            h("span", { text: "确认从列表删除？" }),
+            h("button", {
+              type: "button",
+              class: "btn btn--tiny btn--danger",
+              "data-action": "confirm-delete-workspace",
+              "data-workspace-id": workspace.id,
+              text: "确认删除",
+            }),
+            h("button", {
+              type: "button",
+              class: "btn btn--tiny btn--ghost",
+              "data-action": "cancel-delete-workspace",
+              text: "取消",
+            }),
+          )
+        : null,
+    ),
+  );
+}
+
+function openWorkspaceForm() {
+  workspaceState.formOpen = true;
+  if (els.workspaceForm) els.workspaceForm.hidden = false;
+  if (els.workspaceFormToggle) els.workspaceFormToggle.textContent = "－ 收起表单";
+  hideWorkspaceFormError();
+  updateWorkspaceFormState();
+  requestAnimationFrame(() => els.workspaceName?.focus());
+}
+
+function closeWorkspaceForm() {
+  workspaceState.formOpen = false;
+  if (els.workspaceForm) els.workspaceForm.hidden = true;
+  if (els.workspaceFormToggle) els.workspaceFormToggle.textContent = "＋ 添加工作区";
+  if (els.workspaceName) els.workspaceName.value = "";
+  if (els.workspacePath) els.workspacePath.value = "";
+  if (els.workspaceConfirm) els.workspaceConfirm.checked = false;
+  const readOnly = (els.workspacePolicyInputs ?? []).find((input) => input.value === "read-only");
+  if (readOnly) readOnly.checked = true;
+  updateWorkspaceFormState();
+  hideWorkspaceFormError();
+}
+
+function workspacePolicyValue() {
+  const checked = (els.workspacePolicyInputs ?? []).find((input) => input.checked);
+  return checked?.value === "read-write" ? "read-write" : "read-only";
+}
+
+function updateWorkspaceFormState() {
+  const policy = workspacePolicyValue();
+  if (els.workspaceConfirmRow) els.workspaceConfirmRow.hidden = policy !== "read-write";
+  if (els.workspaceConfirm && policy !== "read-write") els.workspaceConfirm.checked = false;
+  if (els.workspaceSaveBtn) {
+    els.workspaceSaveBtn.disabled = workspaceState.saving;
+    els.workspaceSaveBtn.textContent = workspaceState.saving ? "保存中…" : "添加工作区";
+  }
+}
+
+function showWorkspaceFormError(message) {
+  if (!els.workspaceFormError) return;
+  els.workspaceFormError.textContent = message;
+  els.workspaceFormError.hidden = false;
+}
+
+function hideWorkspaceFormError() {
+  if (!els.workspaceFormError) return;
+  els.workspaceFormError.textContent = "";
+  els.workspaceFormError.hidden = true;
+}
+
+function isAbsolutePath(path) {
+  return path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
+}
+
+async function saveWorkspace() {
+  if (workspaceState.saving) return;
+  hideWorkspaceFormError();
+  const name = els.workspaceName?.value.trim() ?? "";
+  const path = els.workspacePath?.value.trim() ?? "";
+  const policy = workspacePolicyValue();
+  if (name.length < 1 || name.length > 40) {
+    showWorkspaceFormError("名称需要 1–40 个字符。");
+    els.workspaceName?.focus();
+    return;
+  }
+  if (!isAbsolutePath(path)) {
+    showWorkspaceFormError("路径必须是绝对路径（例如 /Users/you/project）。");
+    els.workspacePath?.focus();
+    return;
+  }
+  if (policy === "read-write" && !els.workspaceConfirm?.checked) {
+    showWorkspaceFormError("读写工作区需要先勾选「我确认写入会修改真实文件」。");
+    els.workspaceConfirm?.focus();
+    return;
+  }
+
+  workspaceState.saving = true;
+  updateWorkspaceFormState();
+  try {
+    const body = { name, path, policy };
+    if (policy === "read-write") body.confirm = true;
+    const response = await fetch("/api/workspaces", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) throw new Error(await readApiError(response));
+    const payload = await response.json();
+    closeWorkspaceForm();
+    await loadWorkspaces();
+    toast(`工作区「${payload?.workspace?.name ?? name}」已添加`);
+  } catch (error) {
+    showWorkspaceFormError(`添加失败：${error.message}`);
+  } finally {
+    workspaceState.saving = false;
+    updateWorkspaceFormState();
+  }
+}
+
+function askDeleteWorkspace(workspaceId) {
+  workspaceState.deleteConfirmId = workspaceId;
+  renderWorkspacesSettings();
+}
+
+async function confirmDeleteWorkspace(workspaceId) {
+  workspaceState.deleteConfirmId = "";
+  delete workspaceState.rowErrors[workspaceId];
+  try {
+    const response = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) throw new Error(await readApiError(response));
+    await loadWorkspaces();
+    toast("工作区已删除");
+  } catch (error) {
+    workspaceState.rowErrors[workspaceId] = `删除失败：${error.message}`;
+    renderWorkspacesSettings();
+  }
+}
+
+// ── 右栏：当前工作区 / git 面板 ────────────────────────────────────────
+
+function renderCurrentWorkspace() {
+  const body = els.currentWorkspaceBody;
+  if (!body) return;
+  const workspace = currentWorkspace();
+  const id = workspace?.id ?? currentWorkspaceId();
+  const info = workspace ? workspaceState.git[workspace.id] : null;
+  const sig =
+    `${app.roomId}|${id}|${workspace?.name ?? ""}|${workspace?.policy ?? ""}|` +
+    `${workspace?.isGit ?? ""}|${info?.branch ?? ""}|${info?.clean ?? ""}|${info?.error ?? ""}|` +
+    `${workspaceState.available}`;
+  if (sig === app.sig.currentWorkspace) return;
+  app.sig.currentWorkspace = sig;
+
+  if (els.currentWorkspacePolicy) {
+    els.currentWorkspacePolicy.textContent = workspace
+      ? workspacePolicyLabel(workspace.policy)
+      : "";
+  }
+
+  if (!workspace) {
+    body.replaceChildren(
+      h(
+        "div",
+        { class: "empty" },
+        h("strong", { text: "工作区服务未就绪" }),
+        h("span", { text: workspaceState.error || "接口 503 / 404" }),
+        h("button", {
+          type: "button",
+          class: "btn btn--ghost btn--tiny",
+          "data-action": "reload-workspaces",
+          text: "↻ 重试",
+        }),
+      ),
+    );
+    return;
+  }
+
+  const children = [
+    h(
+      "div",
+      { class: "current-workspace-name" },
+      h("span", { text: workspace.name }),
+      h("span", {
+        class: "workspace-policy-badge",
+        "data-policy": workspace.policy,
+        text: workspacePolicyLabel(workspace.policy),
+      }),
+      workspace.kind === "sandbox"
+        ? h("span", { class: "workspace-policy-badge", text: "内置沙盒" })
+        : null,
+    ),
+    h("p", { class: "current-workspace-path", text: workspace.root }),
+  ];
+
+  if (workspace.isGit) {
+    const loading = workspaceState.gitLoading[workspace.id] && !info;
+    children.push(
+      h(
+        "div",
+        { class: "current-workspace-git" },
+        h("span", { text: "git" }),
+        h("span", { class: "git-branch", text: info?.branch || (loading ? "读取中…" : "—") }),
+        info
+          ? h("span", {
+              class: "current-workspace-clean",
+              "data-clean": info.clean === false ? "false" : info.clean === true ? "true" : "",
+              text: info.clean === false ? "dirty" : info.clean === true ? "clean" : "?",
+            })
+          : null,
+        info?.lastCommit ? h("span", { text: info.lastCommit }) : null,
+      ),
+    );
+    if (info?.error) {
+      children.push(h("p", { class: "workspace-warning", text: info.error }));
+    }
+  } else {
+    children.push(
+      h("div", { class: "current-workspace-git" }, h("span", { text: "非 git 工作区" })),
+    );
+  }
+
+  if (workspace.policy === "read-write" && workspace.kind !== "sandbox") {
+    children.push(
+      h("span", { class: "current-workspace-warning", text: "⚠ 写入会改真实文件" }),
+    );
+  }
+  body.replaceChildren(...children);
+  if (els.currentWorkspaceGitBtn) {
+    els.currentWorkspaceGitBtn.textContent = workspace.isGit ? "查看 git" : "查看文件";
+  }
+}
+
+function ensureCurrentWorkspaceData() {
+  const workspace = currentWorkspace();
+  if (!workspace) {
+    renderCurrentWorkspace();
+    return;
+  }
+  if (workspace.isGit && !workspaceState.git[workspace.id] && !workspaceState.gitLoading[workspace.id]) {
+    void loadWorkspaceGit(workspace.id, { silent: true });
+  }
+  updateSandboxWorkspaceChrome();
+  void loadWorkspace();
+}
+
+async function openGitPanel(workspaceId) {
+  const workspace = workspaceById(workspaceId) ?? (workspaceId === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : null);
+  if (!workspace) {
+    toast("工作区不存在", "warn");
+    return;
+  }
+  workspaceState.panel = {
+    id: workspace.id,
+    open: true,
+    loading: true,
+    error: "",
+    info: workspaceState.git[workspace.id] ?? null,
+    diff: "",
+    diffLoading: false,
+    diffError: "",
+    files: [],
+    filesLoading: true,
+    filesError: "",
+  };
+  if (els.gitTitle) {
+    els.gitTitle.textContent = workspace.isGit ? `Git · ${workspace.name}` : `文件 · ${workspace.name}`;
+  }
+  if (els.gitSub) els.gitSub.textContent = `${workspace.root} · 只读查询`;
+  if (els.gitDiffDetails) els.gitDiffDetails.open = false;
+  renderGitPanel();
+  if (!els.gitModal?.open) els.gitModal?.showModal();
+  await Promise.allSettled([
+    workspace.isGit ? loadWorkspaceGit(workspace.id, { silent: true }) : Promise.resolve(),
+    loadGitFiles(workspace.id),
+  ]);
+  workspaceState.panel.loading = false;
+  renderGitPanel();
+}
+
+function closeGitPanel() {
+  if (els.gitModal?.open) els.gitModal.close();
+}
+
+function renderGitPanel() {
+  const panel = workspaceState.panel;
+  if (!panel.id) return;
+  const workspace = workspaceById(panel.id) ?? (panel.id === DEFAULT_WORKSPACE_ID ? DEFAULT_WORKSPACE : null);
+  const info = workspaceState.git[panel.id] ?? null;
+  panel.info = info;
+  if (els.gitError) {
+    els.gitError.hidden = !panel.error;
+    els.gitError.textContent = panel.error || "";
+  }
+
+  if (els.gitMeta) {
+    const nodes = [];
+    if (!workspace) {
+      nodes.push(h("span", { text: "工作区不存在" }));
+    } else {
+      nodes.push(h("span", { class: "git-branch", text: workspace.name }));
+      nodes.push(h("span", { text: workspacePolicyLabel(workspace.policy) }));
+      if (!workspace.isGit) nodes.push(h("span", { text: "非 git 工作区" }));
+      if (info?.branch) nodes.push(h("span", { text: `分支 ${info.branch}` }));
+      if (info && info.clean !== undefined) {
+        nodes.push(
+          h("span", {
+            class: "git-clean",
+            "data-clean": info.clean ? "true" : "false",
+            text: info.clean ? "clean" : "dirty",
+          }),
+        );
+      }
+      if (info?.lastCommit) nodes.push(h("span", { text: info.lastCommit }));
+      if (info?.diffStat) nodes.push(h("span", { text: info.diffStat.split("\n").slice(-1)[0] }));
+      if (info?.error) nodes.push(h("span", { class: "workspace-warning", text: info.error }));
+    }
+    els.gitMeta.replaceChildren(...nodes);
+  }
+
+  if (els.gitStatusPre) {
+    els.gitStatusPre.textContent = !workspace
+      ? "—"
+      : !workspace.isGit
+        ? "不是 git 仓库；仍然可以查看文件。"
+        : panel.loading && !info
+          ? "读取中…"
+          : info?.error
+            ? info.error
+            : info?.status || "（没有未提交变更）";
+  }
+
+  if (els.gitDiffPre) {
+    els.gitDiffPre.textContent = panel.diffError
+      ? panel.diffError
+      : panel.diffLoading
+        ? "读取 diff…"
+        : panel.diff || "展开后加载 diff。";
+  }
+
+  if (els.gitFileList) {
+    if (panel.filesLoading) {
+      els.gitFileList.replaceChildren(emptyNote("读取文件…"));
+    } else if (panel.filesError) {
+      els.gitFileList.replaceChildren(emptyNote(panel.filesError));
+    } else if (!panel.files.length) {
+      els.gitFileList.replaceChildren(emptyNote("工作区没有文件。"));
+    } else {
+      els.gitFileList.replaceChildren(
+        ...panel.files.map((file) =>
+          h("button", {
+            type: "button",
+            class: "git-file",
+            "data-action": "open-workspace-file",
+            "data-workspace-id": panel.id,
+            "data-path": file.path,
+            text: file.path,
+            title: `${file.path} · ${formatBytes(file.size ?? 0)}`,
+          }),
+        ),
+      );
+    }
+    if (els.gitFileCount) els.gitFileCount.textContent = String(panel.files.length);
+  }
+}
+
+async function loadGitDiff(workspaceId) {
+  const panel = workspaceState.panel;
+  if (!panel || panel.id !== workspaceId || panel.diffLoading) return;
+  panel.diffLoading = true;
+  panel.diffError = "";
+  renderGitPanel();
+  try {
+    const response = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/git/diff`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET workspace git diff"));
+    const payload = await response.json();
+    if (payload?.ok === false) {
+      panel.diffError = payload?.error ? `diff 不可用：${payload.error}` : "diff 不可用";
+    } else {
+      panel.diff = String(payload?.diff ?? "");
+    }
+  } catch (error) {
+    panel.diffError = `diff 读取失败：${error.message}`;
+  } finally {
+    panel.diffLoading = false;
+    renderGitPanel();
+  }
+}
+
+async function loadGitFiles(workspaceId) {
+  const panel = workspaceState.panel;
+  if (!panel || panel.id !== workspaceId) return;
+  panel.filesLoading = true;
+  panel.filesError = "";
+  renderGitPanel();
+  try {
+    const response = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/files`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET workspace files"));
+    const payload = await response.json();
+    panel.files = Array.isArray(payload?.files) ? payload.files : [];
+  } catch (error) {
+    panel.filesError = `文件读取失败：${error.message}`;
+  } finally {
+    panel.filesLoading = false;
+    renderGitPanel();
+  }
+}
+
+async function refreshGitPanel() {
+  const panel = workspaceState.panel;
+  if (!panel.id) return;
+  if (panel.info?.isGit !== false) await loadWorkspaceGit(panel.id, { silent: true });
+  await loadGitFiles(panel.id);
+  if (els.gitDiffDetails?.open) await loadGitDiff(panel.id);
+  renderGitPanel();
+}
+
+async function openWorkspaceFile(workspaceId, path) {
+  if (!els.sandboxFileModal) return;
+  sandboxState.file = { open: true, loading: true, path, content: "", error: "" };
+  const title = $("#sandbox-file-title");
+  if (title) title.textContent = path;
+  if (els.sandboxFilePath) els.sandboxFilePath.textContent = path;
+  if (els.sandboxFileSize) els.sandboxFileSize.textContent = "";
+  if (els.sandboxFileError) {
+    els.sandboxFileError.hidden = true;
+    els.sandboxFileError.textContent = "";
+  }
+  if (els.sandboxFileContent) els.sandboxFileContent.textContent = "读取中…";
+  if (els.sandboxCopyBtn) els.sandboxCopyBtn.disabled = true;
+  if (!els.sandboxFileModal.open) els.sandboxFileModal.showModal();
+  try {
+    const response = await fetch(
+      `/api/workspaces/${encodeURIComponent(workspaceId)}/file?path=${encodeURIComponent(path)}`,
+      { headers: { Accept: "application/json" }, cache: "no-store" },
+    );
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET workspace file"));
+    const payload = await response.json();
+    sandboxState.file.content = String(payload?.content ?? "");
+    sandboxState.file.path = String(payload?.path ?? path);
+    if (title) title.textContent = sandboxState.file.path;
+    if (els.sandboxFilePath) els.sandboxFilePath.textContent = sandboxState.file.path;
+    if (els.sandboxFileContent) {
+      els.sandboxFileContent.textContent = sandboxState.file.content || "（空文件）";
+    }
+    if (els.sandboxFileSize) {
+      const bytes = new TextEncoder().encode(sandboxState.file.content).length;
+      els.sandboxFileSize.textContent = formatBytes(bytes);
+    }
+    if (els.sandboxCopyBtn) els.sandboxCopyBtn.disabled = false;
+  } catch (error) {
+    sandboxState.file.error = error.message;
+    if (els.sandboxFileError) {
+      els.sandboxFileError.textContent = error.message;
+      els.sandboxFileError.hidden = false;
+    }
+    if (els.sandboxFileContent) els.sandboxFileContent.textContent = "（无法读取）";
+  } finally {
+    sandboxState.file.loading = false;
+  }
+}
 
 // ── 工具目录 / 来源徽标 ─────────────────────────────────────────────────
 

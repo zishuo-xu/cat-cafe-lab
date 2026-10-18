@@ -60,6 +60,8 @@ export interface Room {
   name: string;
   topic: string;
   catIds: CatId[];
+  /** 绑定的工作区 id；缺省用内置沙盒。 */
+  workspaceId?: string;
   createdAt: number;
 }
 
@@ -445,6 +447,32 @@ export interface Skill {
   name: string;
   description: string;
   prompt: string;
+}
+
+// ───────────────────────── 工作区（C 阶段） ─────────────────────────
+
+export type WorkspacePolicy = "read-only" | "read-write";
+
+export interface Workspace {
+  id: string;
+  name: string;
+  /** 绝对路径；默认工作区是 data/workspace。 */
+  root: string;
+  policy: WorkspacePolicy;
+  kind: "sandbox" | "repo";
+  isGit: boolean;
+  createdAt: number;
+}
+
+export interface WorkspaceGitInfo {
+  workspaceId: string;
+  isGit: boolean;
+  branch?: string;
+  clean?: boolean;
+  status?: string;
+  diffStat?: string;
+  lastCommit?: string;
+  error?: string;
 }
 
 /** MCP server 配置（持久化到 data/mcp.json，不含敏感 key）。 */

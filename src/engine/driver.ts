@@ -276,6 +276,8 @@ export function createDriver(deps: {
   approvals?: ApprovalGate;
   /** 工具注册表（内置 + MCP）；优先于 sandbox 执行。 */
   tools?: ToolRegistry;
+  /** 按房间取工作区沙盒（C 阶段多工作区）；不传则回落到 sandbox。 */
+  sandboxFor?: (roomId: RoomId) => SandboxRunner | undefined;
   /** 按 id 解析技能包（自定义技能）；缺省回落到内置技能表。 */
   resolveSkill?: (id: string) => Skill | undefined;
 }): Driver {
@@ -283,8 +285,24 @@ export function createDriver(deps: {
   const toolsEnabled = deps.toolsEnabled;
   const approvalMode = deps.approvalMode;
   const resolveSkill = deps.resolveSkill;
-  /** 有注册表就只走注册表（MCP 工具也在里面）；否则回落 sandbox。 */
+  /** 兜底执行器：注册表优先，其次 sandbox。 */
   const executor: ToolExecutor | undefined = tools ?? sandbox;
+
+  /**
+   * 按「房间 + 工具来源」选执行器：
+   * - MCP 工具走注册表；
+   * - 内置沙盒工具优先用房间绑定的工作区沙盒（C 阶段）；
+   * - 没有房间沙盒时回落到全局 executor。
+   */
+  function executorFor(roomId: RoomId, tool: ToolName): ToolExecutor | undefined {
+    const definition = tools?.get(tool);
+    if (definition?.source === "mcp") return tools ?? undefined;
+    const roomSandbox = deps.sandboxFor?.(roomId);
+    if (roomSandbox) {
+      return { execute: (name, input) => roomSandbox.execute(name, input) };
+    }
+    return executor;
+  }
   const wait =
     deps.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const stallMs = deps.stallMs ?? DEFAULT_STALL_MS;
@@ -692,8 +710,10 @@ export function createDriver(deps: {
       return null;
     }
 
+    const runner = executorFor(room.id, turn.tool);
+
     // 2) 没接注册表 / 沙盒（测试 / 降级模式）：同样只说明，不报错。
-    if (!executor) {
+    if (!runner) {
       studio.appendMessage({
         roomId: room.id,
         author: cat.id,
@@ -783,7 +803,7 @@ export function createDriver(deps: {
       }
 
       studio.startToolCall(call.id);
-      const result = await executeSafely(executor, turn);
+      const result = await executeSafely(runner, turn);
       studio.finishToolCall(call.id, result);
       appendToolMessage(room, cat, task, turn, call.id, result, definition);
       return toRunResult(call.id, turn.tool, result);
@@ -798,7 +818,7 @@ export function createDriver(deps: {
       ...taskField,
     });
 
-    const result = await executeSafely(executor, turn);
+    const result = await executeSafely(runner, turn);
     studio.finishToolCall(call.id, result);
     appendToolMessage(room, cat, task, turn, call.id, result, definition);
     return toRunResult(call.id, turn.tool, result);

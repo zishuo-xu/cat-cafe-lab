@@ -26,6 +26,7 @@ import {
 import type { CatPatch, Studio } from "./studio.ts";
 import type { Sandbox } from "../tools/sandbox.ts";
 import type { McpManager, McpInput } from "../mcp/manager.ts";
+import type { WorkspaceManager } from "../workspaces/manager.ts";
 import { listSkills } from "../skills/registry.ts";
 
 export interface HttpDeps {
@@ -44,6 +45,8 @@ export interface HttpDeps {
   tools?: ToolRegistry;
   /** MCP 管理器；不传则 MCP 接口返回 503。 */
   mcp?: McpManager;
+  /** 工作区管理器；不传则 workspaces 接口返回 503。 */
+  workspaces?: WorkspaceManager;
   /** 前端用来判断「卡住」的阈值；不传按 driver.stallMs / 12s。 */
   stallMs?: number;
 }
@@ -196,7 +199,7 @@ function serveStatic(res: ServerResponse, publicDir: string, pathname: string): 
 }
 
 export function createHttpServer(deps: HttpDeps): Server {
-  const { studio, driver, scenarios, settingsApi, sandbox, approvals, tools, mcp } = deps;
+  const { studio, driver, scenarios, settingsApi, sandbox, approvals, tools, mcp, workspaces } = deps;
   const publicDir = deps.publicDir;
 
   return createServer((req, res) => {
@@ -284,6 +287,152 @@ export function createHttpServer(deps: HttpDeps): Server {
       const state = studio.reset();
       json(res, 200, { ok: true, seq: state.seq });
       return;
+    }
+
+    if (pathname === "/api/workspaces" && (method === "GET" || method === "POST")) {
+      if (!workspaces) {
+        fail(res, 503, "workspace manager not enabled");
+        return;
+      }
+      if (method === "GET") {
+        const bound = new Set(studio.state.rooms.map((room) => room.workspaceId));
+        json(res, 200, {
+          workspaces: workspaces.list().map((workspace) => ({
+            ...workspace,
+            roomCount: studio.state.rooms.filter((room) => room.workspaceId === workspace.id).length,
+            bound: bound.has(workspace.id),
+          })),
+        });
+        return;
+      }
+      const body = (await readBody(req)) as Record<string, unknown>;
+      if (body["policy"] === "read-write" && body["confirm"] !== true) {
+        fail(res, 400, "添加读写工作区需要显式确认（confirm: true）");
+        return;
+      }
+      try {
+        json(res, 201, { workspace: workspaces.add(body) });
+      } catch (err) {
+        fail(res, 400, err instanceof Error ? err.message : "invalid workspace");
+      }
+      return;
+    }
+
+    {
+      const workspaceMatch = /^\/api\/workspaces\/([^/]+)(?:\/(git|files|file))?(?:\/(diff))?$/.exec(pathname);
+      if (workspaceMatch && method === "GET") {
+        if (!workspaces) {
+          fail(res, 503, "workspace manager not enabled");
+          return;
+        }
+        const workspaceId = decodeURIComponent(workspaceMatch[1] ?? "");
+        const action = workspaceMatch[2];
+        const sub = workspaceMatch[3];
+        if (!workspaces.get(workspaceId)) {
+          fail(res, 404, "工作区不存在");
+          return;
+        }
+        if (!action) {
+          json(res, 200, { workspace: workspaces.get(workspaceId) });
+          return;
+        }
+        if (action === "files") {
+          json(res, 200, { files: workspaces.files(workspaceId) });
+          return;
+        }
+        if (action === "file") {
+          const path = url.searchParams.get("path") ?? "";
+          try {
+            json(res, 200, workspaces.rawSandbox(workspaceId).readTextFile(path));
+          } catch (err) {
+            fail(res, 400, err instanceof Error ? err.message : "cannot read file");
+          }
+          return;
+        }
+        if (action === "git" && sub === "diff") {
+          json(res, 200, await workspaces.gitDiff(workspaceId));
+          return;
+        }
+        if (action === "git") {
+          json(res, 200, await workspaces.gitInfo(workspaceId));
+          return;
+        }
+        fail(res, 404, "not found");
+        return;
+      }
+      if (workspaceMatch && method === "DELETE" && !workspaceMatch[2]) {
+        if (!workspaces) {
+          fail(res, 503, "workspace manager not enabled");
+          return;
+        }
+        const workspaceId = decodeURIComponent(workspaceMatch[1] ?? "");
+        if (studio.state.rooms.some((room) => room.workspaceId === workspaceId)) {
+          fail(res, 400, "还有房间绑定这个工作区，先解绑再删除");
+          return;
+        }
+        try {
+          if (!workspaces.remove(workspaceId)) {
+            fail(res, 404, "工作区不存在");
+            return;
+          }
+          json(res, 200, { ok: true });
+        } catch (err) {
+          fail(res, 400, err instanceof Error ? err.message : "cannot remove workspace");
+        }
+        return;
+      }
+    }
+
+    if (pathname === "/api/rooms" && method === "POST") {
+      if (!workspaces) {
+        fail(res, 503, "workspace manager not enabled");
+        return;
+      }
+      const body = (await readBody(req)) as {
+        name?: unknown;
+        workspaceId?: unknown;
+        topic?: unknown;
+      };
+      const name = typeof body.name === "string" ? body.name.trim() : "";
+      const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : "";
+      if (!workspaces.get(workspaceId)) {
+        fail(res, 400, "workspaceId 不存在");
+        return;
+      }
+      try {
+        const room = studio.createRoom({
+          name,
+          workspaceId,
+          ...(typeof body.topic === "string" ? { topic: body.topic } : {}),
+        });
+        json(res, 201, room);
+      } catch (err) {
+        fail(res, 400, err instanceof Error ? err.message : "invalid room");
+      }
+      return;
+    }
+
+    {
+      const roomMatch = /^\/api\/rooms\/([^/]+)$/.exec(pathname);
+      if (roomMatch && method === "PUT") {
+        if (!workspaces) {
+          fail(res, 503, "workspace manager not enabled");
+          return;
+        }
+        const roomId = decodeURIComponent(roomMatch[1] ?? "");
+        const body = (await readBody(req)) as { workspaceId?: unknown };
+        const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : "";
+        if (!workspaces.get(workspaceId)) {
+          fail(res, 400, "workspaceId 不存在");
+          return;
+        }
+        if (!studio.getRoom(roomId)) {
+          fail(res, 404, "房间不存在");
+          return;
+        }
+        json(res, 200, studio.setRoomWorkspace(roomId, workspaceId));
+        return;
+      }
     }
 
     if (pathname === "/api/tools" && method === "GET") {

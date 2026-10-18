@@ -11,6 +11,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
+import { DEFAULT_WORKSPACE_ID } from "../domain/constants.ts";
 import { ids } from "../domain/ids.ts";
 import type {
   Artifact,
@@ -90,6 +91,7 @@ function freshState(cats: Cat[], mode: BrainMode): StudioState {
     name: "猫咖 · 客厅",
     topic: "把需求丢进来，猫猫们会在同一张桌子上把它做出来。",
     catIds: cats.map((c) => c.id),
+    workspaceId: DEFAULT_WORKSPACE_ID,
     createdAt: now(),
   };
   return {
@@ -414,6 +416,34 @@ export class Studio {
   }
 
   /** 设置面板切换模式后同步给前端（SSE 会带出 state.mode）。 */
+  /** 新建房间；workspaceId 由 HTTP 层先用 WorkspaceManager 校验。 */
+  createRoom(input: { name: string; workspaceId: string; topic?: string }): Room {
+    const name = input.name.trim();
+    if (name.length < 1 || name.length > 30) throw new Error("房间名需要 1–30 个字符");
+    if (this.state.rooms.some((room) => room.name === name)) {
+      throw new Error(`房间「${name}」已存在`);
+    }
+    const room: Room = {
+      id: ids.room(),
+      name,
+      topic: input.topic?.trim() || "这个房间绑定了自己的工作区。",
+      catIds: this.state.cats.map((cat) => cat.id),
+      workspaceId: input.workspaceId,
+      createdAt: now(),
+    };
+    this.state.rooms.push(room);
+    this.state.typing[room.id] = null;
+    this.notify();
+    return room;
+  }
+
+  setRoomWorkspace(roomId: RoomId, workspaceId: string): Room {
+    const room = this.requireRoom(roomId);
+    room.workspaceId = workspaceId;
+    this.notify();
+    return room;
+  }
+
   setMode(mode: BrainMode): void {
     if (this.state.mode === mode) return;
     this.state.mode = mode;
@@ -520,14 +550,13 @@ export class Studio {
   }
 
   reset(): StudioState {
-    this.state.rooms.splice(0, this.state.rooms.length, ...freshState(this.state.cats, this.state.mode).rooms);
     this.state.messages.length = 0;
     this.state.tasks.length = 0;
     this.state.handoffs.length = 0;
     this.state.artifacts.length = 0;
     this.state.memory.length = 0;
     this.state.toolCalls.length = 0;
-    this.state.typing = { room_cafe: null };
+    for (const roomId of Object.keys(this.state.typing)) this.state.typing[roomId] = null;
     this.state.startedAt = now();
     this.seedWelcome();
     this.notify();
@@ -589,7 +618,10 @@ export class Studio {
       if (!parsed || !Array.isArray(parsed.rooms) || !Array.isArray(parsed.messages)) {
         return false;
       }
-      this.state.rooms = parsed.rooms as Room[];
+      this.state.rooms = (parsed.rooms as Room[]).map((room) => ({
+        ...room,
+        workspaceId: room.workspaceId ?? DEFAULT_WORKSPACE_ID,
+      }));
       this.state.messages = parsed.messages as Message[];
       this.state.tasks = (parsed.tasks ?? []) as Task[];
       this.state.handoffs = (parsed.handoffs ?? []) as Handoff[];

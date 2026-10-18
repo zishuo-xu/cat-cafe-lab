@@ -29,6 +29,7 @@
 - **真实工具**：金渐层在独立沙盒里真的写文件、真的跑测试；砚砚的 review 基于真实退出码和失败输出。
 - **真实模式工具调用 + 审批**：模型可以主动请求工具，执行结果回喂给它继续推理；跑命令前可以挂起等铲屎官批准。
 - **工具注册表 + MCP + 技能**：工具不再写死，MCP server 的工具动态注册；每只猫有自己的工具权限和技能包。
+- **多房间 + 真实仓库**：一个房间绑定一个工作区；真实仓库默认只读，git 状态/diff 只读查看。
 
 ---
 
@@ -47,7 +48,7 @@ node src/main.ts      # 或 pnpm start
 点「＋ 新任务」→ 选「记住我」示例 → 「让猫猫开工」，然后看着就行。
 
 ```bash
-node --test tests/    # 161 个测试
+node --test tests/    # 173 个测试
 npx tsc --noEmit      # 类型检查
 ```
 
@@ -159,6 +160,30 @@ run_command node --test ...      ✓ exit 0（砚砚放行）
 
 ---
 
+## 多房间与真实仓库（C 阶段）
+
+工作台不再只有一个房间：
+
+- 每个房间绑定一个**工作区**；默认房间绑内置沙盒（`data/workspace`，可读写）。
+- 设置 →「工作区」可以把一个真实目录加进来。**真实仓库默认只读**：只允许读文件、列目录；
+  `write_file` / `run_command` 会被直接拒绝，工具卡上能看到原因。
+- 改成读写必须显式确认（「我确认写入会修改真实文件」），并且会一直有醒目提示。
+- git 部分目前是**只读查询**：分支、clean/dirty、status、diff、文件浏览。
+  不会自动 checkout、不会自动 commit、不会 push。
+- 房间切换后，timeline / 任务 / 交接卡 / 产物 / 记忆 / 输入框都按当前房间隔离；
+  只读房间跑任务时，写文件工具会显示只读错误，仓库一个字节都不会被改。
+
+![房间与当前工作区](docs/images/workspaces-main.png)
+
+![工作区管理](docs/images/workspaces.png)
+
+![git 状态与 diff](docs/images/git.png)
+
+> 下一步（C-2）：任务开始时建分支、review 真实 diff、人工确认后 commit、一键回滚（stash 可恢复）。
+> 在此之前，git 写操作请自己在终端做。
+
+---
+
 ## 一次真实协作（从 `data/studio.json` 里摘的）
 
 > **铲屎官**：给登录页加一个「记住我」勾选框，7 天内免登录。
@@ -257,6 +282,7 @@ node src/main.ts
 | 审批策略 | auto / commands / all；只对真实模式下模型主动发起的工具生效 |
 | MCP 工具 | 添加/启停/测试/删除 MCP server，工具动态进注册表 |
 | 工具与技能 | 每只猫的工具白名单与技能包（技能注入真实模式 prompt） |
+| 工作区 | 添加真实目录（默认只读）、读写二次确认、git 状态/diff/文件浏览 |
 
 底部还有只读的运行信息（版本、端口、数据目录、Node、启动时间、stallMs）。
 只有 `mode / speed / baseUrl / model / temperature` 会落盘到 `data/settings.json`（0600），key 永远只在内存。
@@ -307,6 +333,7 @@ public/            原生 ESM + CSS，无构建、无框架
 src/server/http.ts    REST + SSE + 静态资源
 src/server/studio.ts  唯一状态容器，所有写操作走这里
 src/server/settings-store.ts  运行时设置：模式 / 节奏 / LLM（key 只在内存）
+src/workspaces/manager.ts 工作区：目录绑定、只读策略、只读 git 查询
 src/tools/registry.ts 工具注册表：内置 + MCP
 src/tools/sandbox.ts  沙盒：路径锁根目录、命令白名单、10s 超时
 src/mcp/client.ts     MCP JSON-RPC 客户端（stdio / http）
@@ -327,8 +354,8 @@ src/domain/types.ts   唯一契约
 
 - **演出模式是半脚本的**：猫的反应由场景数据 + 当前阶段决定，不会真的理解任意新需求。
   这是为了让"没有 key 也能完整演示协作流程"；接了真实模型才会换脑子。
-- **只在自带沙盒里干活**：猫会真的改 `data/workspace/` 里的 mini 项目、跑它的测试，
-  但**不会碰你的仓库**。真实模式下模型可以请求工具，但跑命令默认要铲屎官批准。
+- **默认不碰你的仓库**：内置沙盒可读写；真实仓库加进来默认只读，写/跑命令会被拒绝，
+  改成读写必须显式确认。git 目前只读（status / diff / 文件），不会自动 commit 或 push。
 - **本地单人**：没有鉴权、没有多用户、没有数据库。JSON 文件就是全部持久化。
 - **MCP server 由你负责**：项目只连接你显式添加的 server；默认没有鉴权配置，也不内置任何 server。
 - **剧本台词不会自动改名**：改猫名后，@ 路由、名册、消息作者都用新名字，但剧本里写死的旧名字不会自动替换（剧本是数据，不是模板变量）。
@@ -345,12 +372,13 @@ cat-cafe-lab/
 │   ├── server/        studio.ts、http.ts、settings.ts、settings-store.ts
 │   ├── tools/         registry.ts、sandbox.ts、builtin.ts、approval.ts
 │   ├── mcp/           client.ts、manager.ts
+│   ├── workspaces/    manager.ts
 │   ├── skills/        registry.ts
 │   ├── engine/        driver.ts、stages.ts、mentions.ts
 │   ├── agents/        personas.ts、scenarios.ts、mock-brain.ts、llm-brain.ts
 │   └── main.ts
 ├── public/            index.html、app.js、styles.css、avatars.js
-├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / smoke（161 个）
+├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / workspaces / smoke（173 个）
 ├── docs/              architecture.md、llm.md、images/
 ├── data/              studio.json、workspace/（gitignore）
 └── PLAN.md            设计与分工记录

@@ -34,6 +34,8 @@
 │    · tool turn → 沙盒执行 / 审批闸门           │
 │    · 故障注入（漏 @）与 nudge 恢复             │
 ├──────────────────────────────────────────────┤
+│  src/workspaces/manager.ts 工作区与只读策略   │
+│    · 目录绑定 / 权限 / 只读 git 查询           │
 │  src/tools/registry.ts 工具注册表              │
 │    · 内置 provider + MCP provider              │
 │  src/tools/sandbox.ts  沙盒工具运行时          │
@@ -186,6 +188,16 @@ llm-brain 把 name + prompt 全文塞进 system prompt；演出模式不调用�
 
 **安全**：MCP server 是用户自己添加的本地进程/服务；MCP 工具默认 `risk = needs_approval`，
 模型主动调用会进审批队列；审批策略为 `auto` 时才全自动放行。
+
+## 工作区与多房间（C 阶段）
+
+- `Room.workspaceId` 绑定一个工作区；默认房间绑 `ws_sandbox`（`data/workspace`，可读写）。
+- `WorkspaceManager` 管理自定义仓库：绝对路径校验、realpath 去重、git 目录探测；
+  自定义仓库默认 `read-only`，`PolicySandbox` 在工具执行前拦下 `write_file` / `run_command`。
+- driver 新增 `sandboxFor(roomId)`：内置工具按「房间 → 工作区」选沙盒执行；MCP 工具仍走注册表。
+- git 是只读的：`git rev-parse` / `status --porcelain` / `diff` / `log -1`，
+  `GIT_TERMINAL_PROMPT=0`、5s 超时、输出截断；本阶段不做 checkout / commit / push。
+- 房间切换是纯前端视图状态；服务端状态本来就按 roomId 隔离（消息、任务、typing、队列）。
 
 ## 真实模式的工具调用与审批
 

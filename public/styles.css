@@ -3196,6 +3196,454 @@ button {
   font-size: 10.5px;
 }
 
+/* ── 房间切换 ─────────────────────────────────────────────────────────── */
+
+.card--rooms {
+  padding-bottom: 10px;
+}
+
+.room-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.room-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 11px;
+  background: #fffdf8;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.16s ease, background 0.16s ease;
+}
+
+.room-item:hover {
+  border-color: var(--line);
+  background: #fdf7ee;
+}
+
+.room-item.is-active {
+  border-color: rgba(201, 154, 94, 0.75);
+  background: #fbf1e3;
+  box-shadow: inset 3px 0 0 var(--caramel-deep);
+}
+
+.room-item-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.room-item-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.room-item-badge,
+.workspace-policy-badge,
+.workspace-git-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--cream-deep);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 750;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.room-item-badge[data-policy="read-write"] {
+  background: #fbe9df;
+  color: #9a5b3c;
+}
+
+.room-item-badge[data-policy="read-only"] {
+  background: #e8eef5;
+  color: #4a627a;
+}
+
+.room-item-check {
+  flex: none;
+  color: var(--caramel-deep);
+  font-size: 11px;
+}
+
+.room-name--switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.room-name--switch:hover {
+  color: var(--caramel-deep);
+}
+
+.room-name--switch span[data-room-name] {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-chevron {
+  flex: none;
+  font-size: 13px;
+  opacity: 0.55;
+}
+
+.modal--rooms {
+  width: min(520px, calc(100vw - 28px));
+}
+
+/* ── 右栏：当前工作区 ─────────────────────────────────────────────────── */
+
+.card--current-workspace {
+  background: linear-gradient(135deg, #fffaf1, #fbf1e3);
+}
+
+.current-workspace-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.current-workspace-name {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.current-workspace-path {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #a79787;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+
+.current-workspace-git {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.current-workspace-clean[data-clean="true"] {
+  color: #3f6a4b;
+  font-weight: 700;
+}
+
+.current-workspace-clean[data-clean="false"] {
+  color: #9a5b3c;
+  font-weight: 700;
+}
+
+.current-workspace-warning {
+  color: #9a5b3c;
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+/* ── 设置 · 工作区 ────────────────────────────────────────────────────── */
+
+.workspace-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.workspace-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 13px;
+  background: #fffdf8;
+}
+
+.workspace-row[data-policy="read-write"] {
+  border-color: #ebc9b7;
+}
+
+.workspace-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.workspace-name {
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 700;
+}
+
+.workspace-path {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: 0;
+  color: #a79787;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+.workspace-path code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.workspace-path.is-expanded code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.workspace-path-toggle {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--caramel-deep);
+  font-size: 9.5px;
+  cursor: pointer;
+}
+
+.workspace-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.workspace-warning {
+  margin: 0;
+  color: #9a5b3c;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.workspace-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+.workspace-delete-hint {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.workspace-policy-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.policy-option {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  padding: 8px 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 11px;
+  background: #fffdf8;
+  cursor: pointer;
+}
+
+.policy-option:has(input:checked) {
+  border-color: rgba(201, 154, 94, 0.8);
+  background: #fbf1e3;
+}
+
+.policy-option input {
+  flex: none;
+  margin-top: 2px;
+  accent-color: var(--caramel-deep);
+}
+
+.policy-option-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.policy-option-title {
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.policy-option small {
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
+.confirm-row {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  padding: 7px 9px;
+  border: 1px solid #ebc9b7;
+  border-radius: 10px;
+  background: #fdf7f4;
+  color: #9a5b3c;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.confirm-row input {
+  flex: none;
+  margin-top: 1px;
+  accent-color: var(--danger);
+}
+
+/* ── 只读 git 面板 ────────────────────────────────────────────────────── */
+
+.modal--git {
+  width: min(760px, calc(100vw - 28px));
+}
+
+.modal--git .modal-card {
+  max-height: 90dvh;
+  overflow-y: auto;
+}
+
+.git-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 11px;
+  background: #fffdf8;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.git-branch {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.git-clean[data-clean="true"] {
+  color: #3f6a4b;
+  font-weight: 700;
+}
+
+.git-clean[data-clean="false"] {
+  color: #9a5b3c;
+  font-weight: 700;
+}
+
+.git-section {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.git-section h3 {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: 11.5px;
+}
+
+.git-pre {
+  max-height: 220px;
+  margin: 0;
+  padding: 8px 9px;
+  overflow: auto;
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  background: #fdfaf4;
+  color: #5b4a3d;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.git-diff summary {
+  color: var(--caramel-deep);
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.git-diff[open] summary {
+  margin-bottom: 5px;
+}
+
+.git-file-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.git-file {
+  padding: 4px 7px;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+  background: #fffdf8;
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  cursor: pointer;
+}
+
+.git-file:hover {
+  border-color: var(--line);
+  background: #fbf1e3;
+}
+
+/* ── 房间切换（旧版设置保留） ─────────────────────────────────────────── */
+
 /* ── 设置 · MCP 工具 ──────────────────────────────────────────────────── */
 
 .mcp-list {
@@ -4348,6 +4796,22 @@ button {
 
   .mcp-actions {
     margin-left: 0;
+  }
+
+  .room-name--switch {
+    max-width: 62vw;
+  }
+
+  .workspace-policy-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .modal--git {
+    width: calc(100vw - 16px);
+  }
+
+  .git-file-list {
+    max-height: 120px;
   }
 
   .mcp-list {

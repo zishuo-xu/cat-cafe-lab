@@ -7,22 +7,23 @@ import { createMockBrain } from "./agents/mock-brain.ts";
 import { initScenarios } from "./agents/scenario-registry.ts";
 import { createDriver } from "./engine/driver.ts";
 import { createHttpServer } from "./server/http.ts";
-import { Sandbox } from "./tools/sandbox.ts";
 import { ApprovalQueue } from "./tools/approval.ts";
 import { ToolRegistryImpl } from "./tools/registry.ts";
 import { McpManager } from "./mcp/manager.ts";
 import { readSettings } from "./server/settings.ts";
 import { SettingsStore, SwitchableBrain } from "./server/settings-store.ts";
 import { Studio } from "./server/studio.ts";
+import { WorkspaceManager } from "./workspaces/manager.ts";
+import { DEFAULT_WORKSPACE_ID } from "./domain/constants.ts";
 
 const settings = readSettings();
 const dataDir = resolve(settings.dataDir);
 
 const studio = new Studio({ cats: CATS, mode: settings.mode, dataDir });
 
-// 沙盒：猫猫真的在这里写文件、跑命令。独立目录，不是用户的仓库。
-const sandbox = new Sandbox(resolve(dataDir, "workspace"));
-sandbox.ensureSeed();
+// 工作区：默认沙盒可读写；用户添加的真实仓库默认只读（C 阶段）。
+const workspaces = new WorkspaceManager(dataDir);
+const sandbox = workspaces.rawSandbox(DEFAULT_WORKSPACE_ID);
 const approvals = new ApprovalQueue();
 const registry = new ToolRegistryImpl(sandbox);
 const mcp = new McpManager(registry, dataDir);
@@ -54,6 +55,7 @@ const driver = createDriver({
   wait,
   stallMs: settings.stallMs,
   sandbox,
+  sandboxFor: (roomId) => workspaces.sandboxFor(studio.getRoom(roomId)?.workspaceId),
   tools: registry,
   toolsEnabled: () => settingsStore.toolsOn(),
   approvals,
@@ -72,6 +74,7 @@ const server = createHttpServer({
   approvals,
   tools: registry,
   mcp,
+  workspaces,
 });
 
 server.listen(settings.port, "127.0.0.1", () => {
@@ -89,6 +92,9 @@ server.listen(settings.port, "127.0.0.1", () => {
   console.log(
     `  sandbox: ${sandbox.root} · tools: ${publicSettings.toolsEnabled ? "on" : "off"} · mcp tools: ${mcpTools}`,
   );
+  console.log(
+    `  workspaces: ${workspaces.list().length}（真实仓库默认只读，写入需显式授权）`,
+  );
   if (publicSettings.llm.hasKey) {
     console.log(`  llm: ${publicSettings.llm.baseUrl} (key: ${publicSettings.llm.keySource})`);
   }
@@ -99,6 +105,7 @@ function shutdown(): void {
   console.log("\n  猫猫下班了，喵。");
   server.close();
   void mcp.close();
+  workspaces.close();
   studio.close();
   setTimeout(() => process.exit(0), 100).unref?.();
 }

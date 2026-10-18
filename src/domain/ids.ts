@@ -23,4 +23,5 @@ export const ids = {
   handoff: () => newId("ho"),
   artifact: () => newId("art"),
   memory: () => newId("mem"),
+  workspace: () => newId("ws"),
 };
