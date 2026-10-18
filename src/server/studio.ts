@@ -30,6 +30,8 @@ import type {
   Task,
   TaskStage,
   TaskStep,
+  ToolCall,
+  ToolResult,
 } from "../domain/types.ts";
 
 const MAX_MESSAGES = 1500;
@@ -49,6 +51,7 @@ export interface AppendMessageInput {
   taskId?: Task["id"];
   handoffId?: Handoff["id"];
   artifactId?: Artifact["id"];
+  toolCallId?: ToolCall["id"];
   at?: number;
 }
 
@@ -93,6 +96,7 @@ function freshState(cats: Cat[], mode: BrainMode): StudioState {
     handoffs: [],
     artifacts: [],
     memory: [],
+    toolCalls: [],
     typing: { [room.id]: null },
     seq: 0,
     mode,
@@ -196,6 +200,7 @@ export class Studio {
     if (input.taskId) message.taskId = input.taskId;
     if (input.handoffId) message.handoffId = input.handoffId;
     if (input.artifactId) message.artifactId = input.artifactId;
+    if (input.toolCallId) message.toolCallId = input.toolCallId;
 
     this.state.messages.push(message);
     if (this.state.messages.length > MAX_MESSAGES) {
@@ -346,6 +351,44 @@ export class Studio {
     return entry;
   }
 
+  /** 沙盒工具调用：先落一条 running，执行完再 finish。 */
+  addToolCall(input: {
+    catId: CatId;
+    tool: ToolCall["tool"];
+    args: Record<string, unknown>;
+    label: string;
+    taskId?: Task["id"];
+  }): ToolCall {
+    const call: ToolCall = {
+      id: ids.message(),
+      catId: input.catId,
+      tool: input.tool,
+      input: input.args,
+      label: input.label,
+      status: "running",
+      startedAt: now(),
+    };
+    if (input.taskId) call.taskId = input.taskId;
+    this.state.toolCalls.push(call);
+    if (this.state.toolCalls.length > 300) {
+      this.state.toolCalls.splice(0, this.state.toolCalls.length - 300);
+    }
+    this.touchTask(input.taskId);
+    this.notify();
+    return call;
+  }
+
+  finishToolCall(id: string, result: ToolResult): ToolCall {
+    const call = this.state.toolCalls.find((item) => item.id === id);
+    if (!call) throw new Error(`tool call not found: ${id}`);
+    call.status = result.status;
+    if (result.exitCode !== undefined) call.exitCode = result.exitCode;
+    call.output = result.output;
+    call.finishedAt = now();
+    this.notify();
+    return call;
+  }
+
   // ── 写：易变状态 ──────────────────────────────────────
 
   setTyping(roomId: RoomId, catId: CatId | null): void {
@@ -448,6 +491,7 @@ export class Studio {
     this.state.handoffs.length = 0;
     this.state.artifacts.length = 0;
     this.state.memory.length = 0;
+    this.state.toolCalls.length = 0;
     this.state.typing = { room_cafe: null };
     this.state.startedAt = now();
     this.seedWelcome();
@@ -516,6 +560,7 @@ export class Studio {
       this.state.handoffs = (parsed.handoffs ?? []) as Handoff[];
       this.state.artifacts = (parsed.artifacts ?? []) as Artifact[];
       this.state.memory = (parsed.memory ?? []) as MemoryEntry[];
+      this.state.toolCalls = (parsed.toolCalls ?? []) as ToolCall[];
       this.state.typing = (parsed.typing ?? {}) as Record<RoomId, CatId | null>;
 
       // 猫猫档案：以代码里的 CATS 为底，只接受安全的字段覆盖。

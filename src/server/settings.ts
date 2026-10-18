@@ -26,5 +26,6 @@ export function readSettings(env: NodeJS.ProcessEnv = process.env): StudioSettin
     mode: llm ? "llm" : "mock",
     llm,
     stallMs: Number.isFinite(stallMs) && stallMs > 0 ? stallMs : 12000,
+    toolsEnabled: env.CATCAFE_TOOLS !== "0",
   };
 }

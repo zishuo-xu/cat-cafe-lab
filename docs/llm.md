@@ -41,6 +41,12 @@
 
 这样可以让宪宪用推理模型、金渐层用便宜快速的模型，而不需要维护多个 brain 实例。
 
+### 真实模式与沙盒工具
+
+真实模式下，llm-brain 只输出对话类 turn（message / handoff / artifact / review / decision / memory），
+**不会**让模型决定执行 `run_command`。沙盒工具节拍由剧本（scenarios）驱动，在演出模式下执行。
+这样模型没法直接碰命令，工具调用是可控的、可审查的。
+
 ### 启动示例
 
 ```bash

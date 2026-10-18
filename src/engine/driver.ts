@@ -11,6 +11,8 @@
  *   - 交接 turn 只路由给 handoff.to；用户消息只唤醒 mentions（无 @ 时 owner）。
  *   - handoff.fault === "missed_mention"：卡片 / 消息照写（mentions 仍写 [to]），
  *     但不唤醒接收猫、任务标 stalled；等 nudge 补投递后才进下一阶段。
+ *   - tool turn：走 studio.addToolCall → sandbox.execute → finishToolCall →
+ *     appendMessage(kind:"tool")；不改阶段、不触发 handoff，失败也不抛异常。
  */
 
 import { SCENARIOS } from "../agents/personas.ts";
@@ -28,9 +30,11 @@ import type {
   ReviewVerdict,
   Room,
   RoomId,
+  SandboxRunner,
   Task,
   TaskId,
   TaskStage,
+  ToolResult,
   Trigger,
   TurnContext,
 } from "../domain/types.ts";
@@ -52,6 +56,57 @@ const TURN_DELAY_MS = 220;
 
 type TurnOf<K extends CatTurn["kind"]> = Extract<CatTurn, { kind: K }>;
 type HandoffTurn = TurnOf<"handoff">;
+type ToolTurn = TurnOf<"tool">;
+
+/** 工具没给 label 时的默认人话摘要（前端时间线展示用）。 */
+function defaultToolLabel(tool: ToolTurn["tool"], input: Record<string, unknown>): string {
+  switch (tool) {
+    case "write_file":
+      return `写入 ${inputText(input, "path") || "文件"}`;
+    case "read_file":
+      return `读取 ${inputText(input, "path") || "文件"}`;
+    case "list_files":
+      return "列出沙盒文件";
+    case "run_command": {
+      const cmd = inputText(input, "cmd") || "命令";
+      const args = inputList(input, "args");
+      return args.length > 0 ? `运行 ${cmd} ${args.join(" ")}` : `运行 ${cmd}`;
+    }
+  }
+}
+
+/** 工具没给 text 时的默认结果摘要。 */
+function defaultToolText(
+  tool: ToolTurn["tool"],
+  input: Record<string, unknown>,
+  result: ToolResult,
+): string {
+  switch (tool) {
+    case "run_command": {
+      const cmd = inputText(input, "cmd") || "命令";
+      if (result.exitCode !== undefined) return `跑了 ${cmd}，退出码 ${result.exitCode}`;
+      return result.status === "ok" ? `跑了 ${cmd}，完成` : `跑了 ${cmd}，没跑起来`;
+    }
+    case "write_file":
+      return `写好了 ${inputText(input, "path") || "文件"}`;
+    case "read_file":
+      return `读了 ${inputText(input, "path") || "文件"}`;
+    case "list_files":
+      return "看了一眼沙盒目录";
+  }
+}
+
+function inputText(input: Record<string, unknown>, key: string): string {
+  const value = input[key];
+  return typeof value === "string" ? value : "";
+}
+
+function inputList(input: Record<string, unknown>, key: string): string[] {
+  const value = input[key];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
 
 type WakePurpose =
   | "kickoff"
@@ -110,8 +165,13 @@ export function createDriver(deps: {
   brain: CatBrain;
   wait?: (ms: number) => Promise<void>;
   stallMs?: number;
+  /** 沙盒工具执行器；不传则 tool turn 只留说明消息（降级）。 */
+  sandbox?: SandboxRunner;
+  /** 运行时开关：设置面板可以随时关掉工具执行。 */
+  toolsEnabled?: () => boolean;
 }): Driver {
-  const { studio, brain } = deps;
+  const { studio, brain, sandbox } = deps;
+  const toolsEnabled = deps.toolsEnabled;
   const wait =
     deps.wait ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const stallMs = deps.stallMs ?? DEFAULT_STALL_MS;
@@ -271,6 +331,11 @@ export function createDriver(deps: {
             mentions: normalizeMentions(turn.mentions, studio.state.cats),
             ...(task ? { taskId: task.id } : {}),
           });
+          break;
+        }
+
+        case "tool": {
+          await runToolTurn(room, cat, task, turn);
           break;
         }
 
@@ -445,6 +510,75 @@ export function createDriver(deps: {
     }
 
     return applied;
+  }
+
+  // ── tool turn：真在沙盒里执行 ─────────────────────────
+
+  async function runToolTurn(
+    room: Room,
+    cat: Cat,
+    task: Task | null,
+    turn: ToolTurn,
+  ): Promise<void> {
+    const taskField = task ? { taskId: task.id } : {};
+
+    // 1) 设置面板关掉工具：不执行，只留一句说明。
+    if (!toolsAllowed()) {
+      studio.appendMessage({
+        roomId: room.id,
+        author: cat.id,
+        kind: "chat",
+        text: "工具执行被关掉了，我先把方案写在产物里。",
+        mentions: [],
+        ...taskField,
+      });
+      return;
+    }
+
+    // 2) 没接沙盒（测试 / 降级模式）：同样只说明，不报错。
+    if (!sandbox) {
+      studio.appendMessage({
+        roomId: room.id,
+        author: cat.id,
+        kind: "chat",
+        text: "这边没接沙盒，我先把要做的写清楚。",
+        mentions: [],
+        ...taskField,
+      });
+      return;
+    }
+
+    // 3) 正常执行：先落 running 的 ToolCall，再执行，再 finish。
+    const label = turn.label?.trim() || defaultToolLabel(turn.tool, turn.input);
+    const call = studio.addToolCall({
+      catId: cat.id,
+      tool: turn.tool,
+      args: turn.input,
+      label,
+      ...taskField,
+    });
+
+    let result: ToolResult;
+    try {
+      result = await sandbox.execute(turn.tool, turn.input);
+    } catch (err) {
+      // SandboxRunner 约定不抛；注入实现万一抛了也按失败记录，流程不断。
+      result = {
+        status: "error",
+        output: err instanceof Error ? err.message : String(err),
+      };
+    }
+    studio.finishToolCall(call.id, result);
+
+    studio.appendMessage({
+      roomId: room.id,
+      author: cat.id,
+      kind: "tool",
+      text: turn.text ?? defaultToolText(turn.tool, turn.input, result),
+      mentions: normalizeMentions(turn.mentions, studio.state.cats),
+      toolCallId: call.id,
+      ...taskField,
+    });
   }
 
   // ── 一轮结束后的路由 / 状态推进 ───────────────────────
@@ -813,6 +947,17 @@ export function createDriver(deps: {
       if (cat) cats.push(cat);
     }
     return cats;
+  }
+
+  /** 工具总开关：未注入视为开启；getter 异常时保守关闭。 */
+  function toolsAllowed(): boolean {
+    if (!toolsEnabled) return true;
+    try {
+      return toolsEnabled() !== false;
+    } catch (err) {
+      console.warn("[engine] toolsEnabled() 读取失败，按关闭处理：", err);
+      return false;
+    }
   }
 
   return {

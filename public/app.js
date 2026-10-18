@@ -48,6 +48,18 @@ const MEMORY_KIND_LABEL = {
 
 const MEMORY_GROUPS = ["decision", "lesson", "preference"];
 
+const TOOL_META = {
+  read_file: { icon: "📄", verb: "读取文件" },
+  write_file: { icon: "✍️", verb: "写入文件" },
+  list_files: { icon: "📁", verb: "列出文件" },
+  run_command: { icon: "▶️", verb: "运行命令" },
+};
+
+const TOOL_OUTPUT_MAX = 4000;
+
+/** toolCallId → 已渲染的 .tool-card 节点（补位卡与真实消息卡复用，保证原地更新）。 */
+const toolCardNodes = new Map();
+
 const FALLBACK_STALL_MS = 12000;
 const MAX_INPUT = 2000;
 const TAB_IDS = ["chat", "cats", "work"];
@@ -121,6 +133,22 @@ const scenarioState = {
   deleteErrorId: "",
   taskToken: 0,
   taskItems: [],
+};
+
+/** 沙盒面板 / 文件查看 / 重置 的临时状态。 */
+const sandboxState = {
+  loading: false,
+  loaded: false,
+  available: null,
+  error: "",
+  root: "",
+  files: [],
+  resetConfirm: false,
+  resetting: false,
+  resetError: "",
+  refreshTimer: null,
+  lastToolSignature: "",
+  file: { open: false, loading: false, path: "", content: "", error: "" },
 };
 
 const els = {};
@@ -455,6 +483,7 @@ async function boot() {
 
   void refreshHealth();
   void refreshGlobalModel();
+  void loadWorkspace();
   try {
     await refreshState("boot");
   } catch {
@@ -563,6 +592,23 @@ function cacheDom() {
 
   els.taskScenario = $("#task-scenario");
   els.taskScenarioHint = $("#task-scenario-hint");
+
+  els.settingsToolsToggle = $("#settings-tools-toggle");
+  els.settingsToolsHint = $("#settings-tools-hint");
+
+  els.sandboxList = $("#sandbox-list");
+  els.sandboxCount = $("[data-sandbox-count]");
+  els.sandboxError = $("#sandbox-error");
+  els.sandboxResetBtn = $("#sandbox-reset-btn");
+  els.sandboxResetConfirm = $("#sandbox-reset-confirm");
+  els.sandboxConfirmReset = $("#sandbox-confirm-reset");
+  els.sandboxRefresh = $("#sandbox-refresh-btn");
+  els.sandboxFileModal = $("#sandbox-file-modal");
+  els.sandboxFilePath = $("#sandbox-file-path");
+  els.sandboxFileSize = $("#sandbox-file-size");
+  els.sandboxFileContent = $("#sandbox-file-content");
+  els.sandboxFileError = $("#sandbox-file-error");
+  els.sandboxCopyBtn = $("#sandbox-copy-btn");
 }
 
 // ── 网络：初始快照 / SSE / 去重 ─────────────────────────────────────────
@@ -607,6 +653,16 @@ function applyState(next) {
   }
   if (Number.isFinite(seq)) app.lastSeq = seq;
   app.state = next;
+
+  // toolCalls 状态变化后刷新沙盒文件列表（running -> ok/error 时文件可能已变）。
+  const toolSignature = (next.toolCalls ?? [])
+    .map((call) => `${call.id}:${call.status}`)
+    .join("|");
+  if (toolSignature !== sandboxState.lastToolSignature) {
+    const hadSignature = Boolean(sandboxState.lastToolSignature);
+    sandboxState.lastToolSignature = toolSignature;
+    if (hadSignature) scheduleSandboxRefresh();
+  }
 
   const rooms = next.rooms ?? [];
   if (rooms.length && !rooms.some((room) => room.id === app.roomId)) {
@@ -676,6 +732,8 @@ function renderAll() {
   renderTasks();
   renderWorkspace();
   renderTimeline();
+  syncToolCards();
+  renderSandbox();
   renderTypingHint();
   updateComposerState();
   updateStallUi();
@@ -1438,6 +1496,7 @@ function renderTimeline() {
 
   if (rebuild) {
     host.replaceChildren();
+    toolCardNodes.clear();
     timeline.ids = [];
     timeline.lastTaskId = null;
     resetUnread();
@@ -1525,6 +1584,10 @@ function messageNode(message, animate) {
     const handoff = resolveHandoff(message);
     if (message.text.trim()) main.appendChild(h("div", { class: "msg-lead", text: message.text }));
     main.appendChild(handoffCardNode(handoff));
+  } else if (kind === "tool") {
+    const call = toolCallById(message.toolCallId);
+    if (message.text.trim()) main.appendChild(h("div", { class: "msg-lead", text: message.text }));
+    main.appendChild(toolCardNode(call, message));
   } else if (kind === "artifact") {
     const artifact = resolveArtifact(message);
     if (message.text.trim()) main.appendChild(h("div", { class: "msg-lead", text: message.text }));
@@ -1836,6 +1899,16 @@ function bindUi() {
     });
   }
 
+  if (els.sandboxFileModal) {
+    els.sandboxFileModal.addEventListener("click", (event) => {
+      if (event.target === els.sandboxFileModal) closeSandboxFile();
+    });
+    els.sandboxFileModal.addEventListener("close", () => {
+      sandboxState.file.open = false;
+      sandboxState.file.loading = false;
+    });
+  }
+
   if (els.taskScenario) {
     els.taskScenario.addEventListener("change", onTaskScenarioChange);
   }
@@ -1965,6 +2038,30 @@ function onGlobalClick(event) {
     case "cancel-delete-scenario":
       scenarioState.deleteConfirmId = null;
       renderScenarioList();
+      break;
+    case "toggle-tool-output":
+      toggleToolOutput(actionEl);
+      break;
+    case "open-sandbox-file":
+      if (actionEl.dataset.path) void openSandboxFile(actionEl.dataset.path);
+      break;
+    case "close-sandbox-file":
+      closeSandboxFile();
+      break;
+    case "copy-sandbox-file":
+      void copySandboxFile();
+      break;
+    case "refresh-sandbox":
+      void loadWorkspace();
+      break;
+    case "reset-sandbox":
+      askResetSandbox();
+      break;
+    case "confirm-reset-sandbox":
+      void resetSandbox();
+      break;
+    case "cancel-reset-sandbox":
+      setSandboxResetConfirm(false);
       break;
     default:
       break;
@@ -2494,6 +2591,9 @@ function resetSettingsForm() {
   if (els.settingsApiKey) els.settingsApiKey.value = "";
   setKeyVisibility(false);
   renderKeyStatus(null);
+  if (els.settingsToolsToggle) els.settingsToolsToggle.checked = true;
+  if (els.settingsToolsHint) delete els.settingsToolsHint.dataset.missing;
+  updateToolsHint();
   hideModeWarn();
 }
 
@@ -2515,6 +2615,19 @@ function fillSettingsForm(data) {
   setKeyVisibility(false);
   settingsState.clearKeyRequested = false;
   renderKeyStatus(llm);
+  if (els.settingsToolsToggle) {
+    const toolsEnabled =
+      typeof data?.toolsEnabled === "boolean" ? data.toolsEnabled : true;
+    els.settingsToolsToggle.checked = toolsEnabled;
+    if (els.settingsToolsHint) {
+      if (typeof data?.toolsEnabled === "boolean") {
+        delete els.settingsToolsHint.dataset.missing;
+      } else {
+        els.settingsToolsHint.dataset.missing = "true";
+      }
+    }
+  }
+  updateToolsHint();
   hideModeWarn();
 }
 
@@ -2715,6 +2828,8 @@ function onSettingsChange(event) {
     onSettingsModeChange();
   } else if (target.name === "settings-speed") {
     syncSettingsSegments();
+  } else if (target === els.settingsToolsToggle) {
+    updateToolsHint();
   }
 }
 
@@ -2765,6 +2880,7 @@ function collectSettingsPatch() {
   const patch = {
     mode: currentModeChoice(),
     speed: currentSpeedChoice(),
+    toolsEnabled: els.settingsToolsToggle ? Boolean(els.settingsToolsToggle.checked) : true,
     llm: {
       baseUrl: els.settingsBaseUrl?.value.trim() ?? "",
       model: els.settingsModel?.value.trim() ?? "",
@@ -3654,6 +3770,497 @@ function updateTaskScenarioHint() {
   els.taskScenarioHint.textContent = brief
     ? `示例需求：${brief}`
     : "该剧本没有示例需求，按你写的需求运行。";
+}
+
+
+// ── 工具调用卡片 ────────────────────────────────────────────────────────
+
+function toolCallById(id) {
+  if (!id) return null;
+  return (app.state?.toolCalls ?? []).find((call) => call.id === id) ?? null;
+}
+
+function toolMeta(tool) {
+  return TOOL_META[tool] ?? { icon: "🧰", verb: "工具" };
+}
+
+function toolLine(call) {
+  if (!call) return "";
+  const input = call.input ?? {};
+  if (call.tool === "run_command") {
+    const cmd = String(input.cmd ?? "").trim();
+    const args = Array.isArray(input.args) ? input.args.map((arg) => String(arg)) : [];
+    const line = [cmd, ...args].filter(Boolean).join(" ").trim();
+    return line || call.label || "运行命令";
+  }
+  const path = String(input.path ?? "").trim();
+  if (path) return path;
+  return call.label || toolMeta(call.tool).verb;
+}
+
+function toolOutputText(call) {
+  const raw = String(call?.output ?? "");
+  if (!raw) return "";
+  if (raw.length <= TOOL_OUTPUT_MAX) return raw;
+  return `${raw.slice(0, TOOL_OUTPUT_MAX)}\n\n…（输出已截断，原长度 ${raw.length} 字）`;
+}
+
+function toolStatusLabel(call) {
+  const status = call?.status ?? "running";
+  if (status === "ok") return "✓ 成功";
+  if (status === "error") return "✗ 失败";
+  return "执行中…";
+}
+
+function toolDurationText(call) {
+  if (!call?.startedAt || !call?.finishedAt) return "";
+  const ms = Number(call.finishedAt) - Number(call.startedAt);
+  if (!Number.isFinite(ms) || ms <= 0) return "";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
+/**
+ * 构建工具卡容器。running→ok 时不重建节点，由 syncToolCards() 原地更新。
+ */
+function toolCardNode(call, message) {
+  const id = call?.id ?? message?.toolCallId ?? "";
+  const existing = id ? toolCardNodes.get(id) : null;
+  if (existing) {
+    updateToolCard(existing, call, { initial: false });
+    return existing;
+  }
+  const card = h("div", {
+    class: "tool-card",
+    "data-tool-call-id": id,
+    "data-status": call?.status ?? "running",
+    "data-tool": call?.tool ?? "",
+  });
+  if (id) toolCardNodes.set(id, card);
+
+  card.append(
+    h(
+      "div",
+      { class: "tool-head" },
+      h("span", { class: "tool-icon", "data-role": "icon", "aria-hidden": "true", text: "🧰" }),
+      h("span", { class: "tool-label", "data-role": "label", text: call?.label ?? "工具调用" }),
+      h("span", {
+        class: "tool-status",
+        "data-role": "status",
+        "data-status": call?.status ?? "running",
+        text: toolStatusLabel(call),
+      }),
+      h("span", { class: "tool-exit", "data-role": "exit", hidden: true }),
+      h("span", { class: "tool-duration", "data-role": "duration" }),
+    ),
+    h(
+      "div",
+      { class: "tool-command" },
+      h("code", { "data-role": "command", text: toolLine(call) }),
+      h("button", {
+        type: "button",
+        class: "tool-toggle",
+        "data-action": "toggle-tool-output",
+        "aria-expanded": "false",
+        text: "展开输出",
+      }),
+    ),
+    h(
+      "div",
+      { class: "tool-output", "data-role": "output", hidden: true },
+      h("pre", { "data-role": "pre" }),
+    ),
+  );
+
+  updateToolCard(card, call, { initial: true });
+  return card;
+}
+
+function updateToolCard(card, call, options = {}) {
+  if (!card) return;
+  const status = call?.status ?? "running";
+  card.dataset.status = status;
+  if (call?.tool) card.dataset.tool = call.tool;
+
+  const meta = toolMeta(call?.tool);
+  const icon = card.querySelector('[data-role="icon"]');
+  const label = card.querySelector('[data-role="label"]');
+  const statusEl = card.querySelector('[data-role="status"]');
+  const exitEl = card.querySelector('[data-role="exit"]');
+  const durationEl = card.querySelector('[data-role="duration"]');
+  const commandEl = card.querySelector('[data-role="command"]');
+  const outputEl = card.querySelector('[data-role="output"]');
+  const preEl = card.querySelector('[data-role="pre"]');
+  const toggle = card.querySelector(".tool-toggle");
+
+  if (icon) icon.textContent = meta.icon;
+  if (label) label.textContent = call?.label ?? "工具调用";
+  if (statusEl) {
+    statusEl.dataset.status = status;
+    statusEl.textContent = toolStatusLabel(call);
+  }
+  if (exitEl) {
+    const showExit = call?.tool === "run_command" && typeof call?.exitCode === "number";
+    exitEl.hidden = !showExit;
+    if (showExit) {
+      exitEl.textContent = `exit ${call.exitCode}`;
+      exitEl.dataset.state = Number(call.exitCode) === 0 ? "ok" : "error";
+    }
+  }
+  if (durationEl) durationEl.textContent = toolDurationText(call);
+  if (commandEl) commandEl.textContent = toolLine(call);
+
+  const output = toolOutputText(call);
+  if (preEl) preEl.textContent = output || (status === "running" ? "执行中…" : "（无输出）");
+  if (outputEl && toggle) {
+    const hasOutput = Boolean(output);
+    const userCollapsed = card.dataset.userCollapsed === "true";
+    let expanded = !outputEl.hidden;
+    if (options.initial) expanded = status === "error";
+    else if (status === "error" && !userCollapsed) expanded = true;
+    if (!hasOutput) expanded = false;
+    outputEl.hidden = !expanded;
+    toggle.hidden = !hasOutput;
+    toggle.textContent = expanded ? "收起输出" : "展开输出";
+    toggle.setAttribute("aria-expanded", String(expanded));
+  }
+}
+
+function toggleToolOutput(button) {
+  const card = button?.closest?.(".tool-card");
+  if (!card) return;
+  const output = card.querySelector('[data-role="output"]');
+  const toggle = card.querySelector(".tool-toggle");
+  if (!output) return;
+  const willExpand = output.hidden;
+  output.hidden = !willExpand;
+  if (toggle) {
+    toggle.textContent = willExpand ? "收起输出" : "展开输出";
+    toggle.setAttribute("aria-expanded", String(willExpand));
+  }
+  card.dataset.userCollapsed = willExpand ? "false" : "true";
+}
+
+function syntheticToolMessageNode(call) {
+  const cat = catById(call.catId);
+  const node = h("article", {
+    class: "msg msg--cat msg--tool",
+    "data-synthetic-tool": "true",
+    "data-synthetic-id": call.id,
+    style: cat ? `--accent:${safeCss(cat.accent)}` : null,
+  });
+  node.appendChild(
+    h("div", {
+      class: "msg-avatar",
+      "aria-hidden": "true",
+      html: avatarSvg(cat ?? {}, { size: 38 }),
+    }),
+  );
+  const main = h("div", { class: "msg-main" });
+  main.appendChild(
+    h(
+      "header",
+      { class: "msg-head" },
+      h("span", { class: "msg-author", text: cat?.name ?? "猫猫" }),
+      h("span", { class: "msg-role", text: "工具" }),
+      h("time", {
+        class: "msg-time",
+        datetime: new Date(call.startedAt).toISOString(),
+        title: fmtFull(call.startedAt),
+        text: fmtTime(call.startedAt),
+      }),
+    ),
+  );
+  main.appendChild(toolCardNode(call, null));
+  node.appendChild(main);
+  return node;
+}
+
+/** 原地更新所有已渲染工具卡；补位没有对应消息的工具调用。 */
+function syncToolCards() {
+  const host = els.timeline;
+  if (!host) return;
+
+  const calls = app.state?.toolCalls ?? [];
+  const callsById = new Map(calls.map((call) => [call.id, call]));
+  const messages = roomMessages();
+  const represented = new Set(
+    messages.filter((message) => message.kind === "tool" && message.toolCallId).map((message) => message.toolCallId),
+  );
+
+  for (const card of $$(".tool-card[data-tool-call-id]", host)) {
+    const call = callsById.get(card.dataset.toolCallId);
+    if (call) updateToolCard(card, call);
+  }
+
+  // 工具消息到达后，移除补位卡容器（卡片节点可能已被移入真实消息节点）。
+  for (const node of $$("[data-synthetic-tool]", host)) {
+    const id = node.dataset.syntheticId;
+    const card = node.querySelector(".tool-card[data-tool-call-id]");
+    if (!card || (id && represented.has(id))) node.remove();
+  }
+
+  const existingIds = new Set(
+    $$(".tool-card[data-tool-call-id]", host).map((card) => card.dataset.toolCallId),
+  );
+  const roomTaskIds = new Set(
+    (app.state?.tasks ?? []).filter((task) => task.roomId === app.roomId).map((task) => task.id),
+  );
+
+  for (const call of calls) {
+    if (represented.has(call.id) || existingIds.has(call.id)) continue;
+    if (call.taskId && !roomTaskIds.has(call.taskId)) continue;
+    if (host.querySelector(".timeline-empty")) host.replaceChildren();
+    host.appendChild(syntheticToolMessageNode(call));
+  }
+}
+
+// ── 沙盒面板 / 文件查看 ────────────────────────────────────────────────
+
+async function loadWorkspace() {
+  if (sandboxState.loading) return;
+  sandboxState.loading = true;
+  renderSandbox();
+  try {
+    const response = await fetch("/api/workspace/tree", {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (response.status === 503) {
+      const error = new Error("沙盒服务未就绪（HTTP 503），接入后会自动恢复。");
+      error.status = 503;
+      throw error;
+    }
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET /api/workspace/tree"));
+    const payload = await response.json();
+    sandboxState.root = String(payload?.root ?? "");
+    sandboxState.files = Array.isArray(payload?.files)
+      ? payload.files
+          .filter((file) => file && typeof file.path === "string")
+          .map((file) => ({ path: file.path, size: Number(file.size) || 0 }))
+          .sort((a, b) => a.path.localeCompare(b.path))
+      : [];
+    sandboxState.available = true;
+    sandboxState.error = "";
+    sandboxState.resetError = "";
+    sandboxState.loaded = true;
+  } catch (error) {
+    sandboxState.available = false;
+    sandboxState.error = error.message || "沙盒未启用";
+    sandboxState.files = [];
+    sandboxState.loaded = true;
+  } finally {
+    sandboxState.loading = false;
+    renderSandbox();
+  }
+}
+
+function scheduleSandboxRefresh() {
+  if (sandboxState.refreshTimer) window.clearTimeout(sandboxState.refreshTimer);
+  sandboxState.refreshTimer = window.setTimeout(() => {
+    sandboxState.refreshTimer = null;
+    if (sandboxState.available === false) return;
+    void loadWorkspace();
+  }, 800);
+}
+
+function formatBytes(size) {
+  const value = Number(size);
+  if (!Number.isFinite(value) || value < 0) return "";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1024 / 1024).toFixed(1)} MB`;
+}
+
+function renderSandbox() {
+  const host = els.sandboxList;
+  if (!host) return;
+  if (els.sandboxCount) els.sandboxCount.textContent = String(sandboxState.files.length);
+
+  if (els.sandboxError) {
+    els.sandboxError.hidden = !sandboxState.resetError;
+    els.sandboxError.textContent = sandboxState.resetError || "";
+  }
+  if (els.sandboxResetBtn) els.sandboxResetBtn.hidden = sandboxState.resetConfirm;
+  if (els.sandboxResetConfirm) els.sandboxResetConfirm.hidden = !sandboxState.resetConfirm;
+  if (els.sandboxConfirmReset) {
+    els.sandboxConfirmReset.disabled = sandboxState.resetting;
+    els.sandboxConfirmReset.textContent = sandboxState.resetting ? "重置中…" : "确认重置";
+  }
+  if (els.sandboxRefresh) els.sandboxRefresh.disabled = sandboxState.loading;
+
+  if (sandboxState.loading && !sandboxState.loaded) {
+    host.replaceChildren(emptyNote("读取沙盒…"));
+    return;
+  }
+  if (sandboxState.error) {
+    host.replaceChildren(
+      h(
+        "div",
+        { class: "empty" },
+        h("strong", { text: "沙盒未启用" }),
+        h("span", { text: sandboxState.error }),
+        h("button", {
+          type: "button",
+          class: "btn btn--ghost btn--tiny",
+          "data-action": "refresh-sandbox",
+          text: "↻ 重试",
+        }),
+      ),
+    );
+    return;
+  }
+  if (!sandboxState.files.length) {
+    host.replaceChildren(emptyNote("沙盒还是空的。猫猫写文件后会出现在这里。"));
+    return;
+  }
+
+  host.replaceChildren(
+    ...sandboxState.files.map((file) =>
+      h(
+        "button",
+        {
+          type: "button",
+          class: "sandbox-file",
+          "data-action": "open-sandbox-file",
+          "data-path": file.path,
+          title: `查看 ${file.path}`,
+        },
+        h("span", { class: "sandbox-path", text: file.path }),
+        h("span", { class: "sandbox-size", text: formatBytes(file.size) }),
+      ),
+    ),
+  );
+}
+
+function askResetSandbox() {
+  sandboxState.resetConfirm = true;
+  sandboxState.resetError = "";
+  renderSandbox();
+}
+
+function setSandboxResetConfirm(show) {
+  sandboxState.resetConfirm = show;
+  renderSandbox();
+}
+
+async function resetSandbox() {
+  if (sandboxState.resetting) return;
+  sandboxState.resetting = true;
+  sandboxState.resetError = "";
+  renderSandbox();
+  try {
+    const response = await fetch("/api/workspace/reset", { method: "POST" });
+    if (response.status === 503) {
+      throw new Error("沙盒服务未就绪（POST /api/workspace/reset → HTTP 503）");
+    }
+    if (!response.ok) throw new Error(await describeHttpError(response, "POST /api/workspace/reset"));
+    await response.json().catch(() => null);
+    sandboxState.resetConfirm = false;
+    closeSandboxFile();
+    toast("沙盒已重置");
+    await loadWorkspace();
+  } catch (error) {
+    sandboxState.resetConfirm = false;
+    sandboxState.resetError = `重置失败：${error.message}`;
+  } finally {
+    sandboxState.resetting = false;
+    renderSandbox();
+  }
+}
+
+async function openSandboxFile(path) {
+  if (!els.sandboxFileModal) return;
+  sandboxState.file = { open: true, loading: true, path, content: "", error: "" };
+
+  const title = $("#sandbox-file-title");
+  if (title) title.textContent = path;
+  if (els.sandboxFilePath) els.sandboxFilePath.textContent = path;
+  if (els.sandboxFileSize) els.sandboxFileSize.textContent = "";
+  if (els.sandboxFileError) {
+    els.sandboxFileError.hidden = true;
+    els.sandboxFileError.textContent = "";
+  }
+  if (els.sandboxFileContent) els.sandboxFileContent.textContent = "读取中…";
+  if (els.sandboxCopyBtn) els.sandboxCopyBtn.disabled = true;
+  if (!els.sandboxFileModal.open) els.sandboxFileModal.showModal();
+
+  try {
+    const response = await fetch(
+      `/api/workspace/file?path=${encodeURIComponent(path)}`,
+      { headers: { Accept: "application/json" }, cache: "no-store" },
+    );
+    if (response.status === 503) throw new Error("沙盒未启用（GET /api/workspace/file → HTTP 503）");
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET /api/workspace/file"));
+    const payload = await response.json();
+    sandboxState.file.content = String(payload?.content ?? "");
+    sandboxState.file.path = String(payload?.path ?? path);
+    if (title) title.textContent = sandboxState.file.path;
+    if (els.sandboxFilePath) els.sandboxFilePath.textContent = sandboxState.file.path;
+    if (els.sandboxFileContent) els.sandboxFileContent.textContent = sandboxState.file.content || "（空文件）";
+    if (els.sandboxFileSize) {
+      const bytes = new TextEncoder().encode(sandboxState.file.content).length;
+      els.sandboxFileSize.textContent = formatBytes(bytes);
+    }
+    if (els.sandboxCopyBtn) els.sandboxCopyBtn.disabled = false;
+  } catch (error) {
+    sandboxState.file.error = error.message;
+    if (els.sandboxFileError) {
+      els.sandboxFileError.textContent = error.message;
+      els.sandboxFileError.hidden = false;
+    }
+    if (els.sandboxFileContent) els.sandboxFileContent.textContent = "（无法读取）";
+  } finally {
+    sandboxState.file.loading = false;
+  }
+}
+
+function closeSandboxFile() {
+  if (els.sandboxFileModal?.open) els.sandboxFileModal.close();
+}
+
+async function copySandboxFile() {
+  const content = sandboxState.file.content;
+  if (!content) {
+    toast("文件内容为空", "warn");
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(content);
+    toast("已复制文件内容");
+    return;
+  } catch {
+    /* 降级到 execCommand */
+  }
+  try {
+    const area = document.createElement("textarea");
+    area.value = content;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    if (!ok) throw new Error("copy failed");
+    toast("已复制文件内容");
+  } catch {
+    toast("复制失败，请手动选择文本", "error");
+  }
+}
+
+// ── 设置 · 工具执行开关 ─────────────────────────────────────────────────
+
+function updateToolsHint() {
+  if (!els.settingsToolsHint) return;
+  const checked = els.settingsToolsToggle ? els.settingsToolsToggle.checked : true;
+  if (els.settingsToolsHint.dataset.missing === "true") {
+    els.settingsToolsHint.textContent =
+      "当前服务端未返回 toolsEnabled（可能还没就绪），保存后以服务端为准。";
+    return;
+  }
+  els.settingsToolsHint.textContent = checked
+    ? "开启：猫可以读/写工作区文件并运行命令；关闭：只产出文字。"
+    : "已关闭：猫不会写文件或运行命令，只会产出文字。";
 }
 
 // ── 杂项 ────────────────────────────────────────────────────────────────

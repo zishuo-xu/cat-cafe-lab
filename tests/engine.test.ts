@@ -12,8 +12,11 @@ import type {
   CatId,
   CatTurn,
   HandoffCard,
+  SandboxRunner,
   Task,
   TaskStage,
+  ToolName,
+  ToolResult,
   TurnContext,
 } from "../src/domain/types.ts";
 import { createDriver } from "../src/engine/driver.ts";
@@ -64,8 +67,39 @@ function makeStudio(): Studio {
   return new Studio({ cats: CATS.map((cat) => ({ ...cat })), mode: "mock" });
 }
 
-function makeDriver(studio: Studio, brain: CatBrain) {
-  return createDriver({ studio, brain, wait: async () => {}, stallMs: 60_000 });
+function makeDriver(
+  studio: Studio,
+  brain: CatBrain,
+  extra: { sandbox?: SandboxRunner; toolsEnabled?: () => boolean } = {},
+) {
+  return createDriver({
+    studio,
+    brain,
+    wait: async () => {},
+    stallMs: 60_000,
+    ...extra,
+  });
+}
+
+interface FakeSandbox extends SandboxRunner {
+  calls: Array<{ tool: ToolName; input: Record<string, unknown> }>;
+}
+
+function fakeSandbox(
+  handler: (tool: ToolName, input: Record<string, unknown>) => ToolResult = () => ({
+    status: "ok",
+    exitCode: 0,
+    output: "ok",
+  }),
+): FakeSandbox {
+  const calls: FakeSandbox["calls"] = [];
+  return {
+    calls,
+    async execute(tool, input) {
+      calls.push({ tool, input });
+      return handler(tool, input);
+    },
+  };
 }
 
 function newTask(studio: Studio): Task {
@@ -812,4 +846,262 @@ test("nudge：watchdog 标 stalled 的任务在 architect 恢复后回到 active
   assert.equal(task.status, "active");
   assert.ok(brain.calls.some((call) => call.trigger.kind === "nudge"));
   assert.equal(studio.state.typing[ROOM_ID], null);
+});
+
+// ───────────────────────── 12. tool turn：沙盒执行 ─────────────────────────
+
+function toolTurn(
+  tool: ToolName,
+  input: Record<string, unknown>,
+  extra: { label?: string; text?: string; mentions?: CatId[] } = {},
+): CatTurn {
+  return { kind: "tool", tool, input, ...extra };
+}
+
+test("tool turn：ToolCall running → ok，落 kind=tool 消息，stage 不变", async () => {
+  const studio = makeStudio();
+  let statusDuringExecute: string | undefined;
+  const sandbox = fakeSandbox((tool) => {
+    statusDuringExecute = studio.state.toolCalls.at(-1)?.status;
+    return { status: "ok", exitCode: 0, output: `executed ${tool}` };
+  });
+  const brain = scriptedBrain((ctx) => {
+    if (ctx.cat.id === "jinjianceng" && ctx.trigger.kind === "user_message") {
+      return [toolTurn("run_command", { cmd: "node", args: ["--test", "test/remember.test.js"] })];
+    }
+    return [];
+  });
+  const driver = makeDriver(studio, brain, { sandbox });
+  const task = newTask(studio);
+  studio.updateTaskStage(task.id, "working", "jinjianceng");
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "跑一下测试",
+    mentions: ["jinjianceng"],
+  });
+  await driver.whenIdle();
+
+  // 执行时 ToolCall 已经是 running（先记账，再执行）。
+  assert.equal(statusDuringExecute, "running");
+
+  assert.equal(sandbox.calls.length, 1);
+  assert.equal(sandbox.calls[0]?.tool, "run_command");
+  assert.deepEqual(sandbox.calls[0]?.input, {
+    cmd: "node",
+    args: ["--test", "test/remember.test.js"],
+  });
+
+  const call = studio.state.toolCalls.at(-1);
+  assert.ok(call);
+  assert.equal(call.catId, "jinjianceng");
+  assert.equal(call.taskId, task.id);
+  assert.equal(call.status, "ok");
+  assert.equal(call.exitCode, 0);
+  assert.equal(call.output, "executed run_command");
+  assert.equal(typeof call.finishedAt, "number");
+
+  const toolMessage = studio.state.messages.find((m) => m.kind === "tool");
+  assert.ok(toolMessage);
+  assert.equal(toolMessage.author, "jinjianceng");
+  assert.equal(toolMessage.toolCallId, call.id);
+  assert.equal(toolMessage.taskId, task.id);
+  assert.equal(toolMessage.text, "跑了 node，退出码 0");
+
+  // 工具不改变阶段 / owner。
+  assert.equal(task.stage, "working");
+  assert.equal(task.owner, "jinjianceng");
+  assert.equal(studio.state.typing[ROOM_ID], null);
+});
+
+// ───────────────────────── 13. toolsEnabled=false ─────────────────────────
+
+test("toolsEnabled() === false：不执行工具、不产生 ToolCall，只发说明消息", async () => {
+  const studio = makeStudio();
+  const sandbox = fakeSandbox();
+  const brain = scriptedBrain((ctx) =>
+    ctx.trigger.kind === "user_message"
+      ? [
+          toolTurn("write_file", { path: "src/remember.js", content: "// fix" }),
+          message("先写方案。"),
+        ]
+      : [],
+  );
+  const driver = makeDriver(studio, brain, { sandbox, toolsEnabled: () => false });
+  const task = newTask(studio);
+  studio.updateTaskStage(task.id, "working", "jinjianceng");
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "改一下 remember.js",
+    mentions: ["jinjianceng"],
+  });
+  await driver.whenIdle();
+
+  assert.equal(sandbox.calls.length, 0);
+  assert.equal(studio.state.toolCalls.length, 0);
+
+  const messages = studio.state.messages.filter((m) => m.taskId === task.id);
+  const explain = messages.find((m) => m.kind === "chat" && m.text.includes("工具执行被关掉了"));
+  assert.ok(explain);
+  assert.equal(explain.author, "jinjianceng");
+  // 后续 turn 仍然照常执行。
+  assert.ok(messages.some((m) => m.text === "先写方案。"));
+  assert.equal(task.stage, "working");
+});
+
+// ───────────────────────── 14. 工具失败不中断流程 ─────────────────────────
+
+test("sandbox 返回 error：ToolCall 标 error，后续 artifact/review/decision 仍执行", async () => {
+  const studio = makeStudio();
+  const sandbox = fakeSandbox(() => ({
+    status: "error",
+    exitCode: 1,
+    output: "boom: 2 tests failed",
+  }));
+  const brain = scriptedBrain((ctx) => {
+    const stage = ctx.task?.stage ?? null;
+    if (ctx.cat.id === "xianxian" && stage === "intake") return [message("接住。")];
+    if (ctx.cat.id === "xianxian" && stage === "planning") {
+      return [{ kind: "handoff", to: "jinjianceng", card: card("实现 token"), text: "交给实现。" }];
+    }
+    if (ctx.cat.id === "jinjianceng" && stage === "working") {
+      return [
+        toolTurn("run_command", { cmd: "node", args: ["--test"] }),
+        {
+          kind: "artifact",
+          artifact: { kind: "patch", title: "v1", body: "先交一版" },
+          text: "测试挂了，但我先把改动交出来。",
+        },
+        { kind: "handoff", to: "yanyan", card: card("review v1"), text: "@砚砚 看下。" },
+      ];
+    }
+    if (ctx.cat.id === "yanyan" && stage === "reviewing") {
+      return [
+        {
+          kind: "review",
+          verdict: "approve",
+          title: "review v1",
+          findings: [],
+          text: "先过，测试的事后面再说。",
+          mentions: ["jinjianceng"],
+        },
+      ];
+    }
+    if (ctx.cat.id === "xianxian" && stage === "done") {
+      return [
+        {
+          kind: "decision",
+          artifact: { title: "定稿", body: "先接受这一版。" },
+          text: "决定。",
+          memory: [],
+        },
+      ];
+    }
+    return [];
+  });
+  const driver = makeDriver(studio, brain, { sandbox });
+  const task = newTask(studio);
+
+  driver.submit({ type: "task_created", roomId: ROOM_ID, taskId: task.id });
+  await driver.whenIdle();
+
+  const failed = studio.state.toolCalls.find((call) => call.taskId === task.id);
+  assert.ok(failed);
+  assert.equal(failed.status, "error");
+  assert.equal(failed.exitCode, 1);
+  assert.match(failed.output ?? "", /boom/);
+
+  const toolMessage = studio.state.messages.find(
+    (m) => m.kind === "tool" && m.toolCallId === failed.id,
+  );
+  assert.ok(toolMessage);
+  assert.equal(toolMessage.text, "跑了 node，退出码 1");
+
+  // 失败只记录，不抛异常：流程继续到 done。
+  assert.equal(task.status, "done");
+  assert.equal(task.stage, "done");
+  assert.ok(
+    studio.state.artifacts.some((a) => a.taskId === task.id && a.kind === "patch"),
+  );
+  assert.ok(
+    studio.state.artifacts.some((a) => a.taskId === task.id && a.kind === "review"),
+  );
+  assert.ok(
+    studio.state.artifacts.some((a) => a.taskId === task.id && a.kind === "decision"),
+  );
+});
+
+// ───────────────────────── 15. 默认 label ─────────────────────────
+
+test("tool 默认 label：write_file / read_file / list_files / run_command", async () => {
+  const studio = makeStudio();
+  const sandbox = fakeSandbox();
+  const brain = scriptedBrain((ctx) =>
+    ctx.trigger.kind === "user_message"
+      ? [
+          toolTurn("write_file", { path: "src/remember.js", content: "// v2" }),
+          toolTurn("read_file", { path: "src/remember.js" }),
+          toolTurn("list_files", {}),
+          toolTurn("run_command", { cmd: "node", args: ["--test", "test/remember.test.js"] }),
+          toolTurn("read_file", { path: "src/export.js" }, { label: "瞄一眼导出实现" }),
+        ]
+      : [],
+  );
+  const driver = makeDriver(studio, brain, { sandbox });
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "@烁烁 去沙盒里看看",
+    mentions: ["shuoshuo"],
+  });
+  await driver.whenIdle();
+
+  assert.deepEqual(
+    studio.state.toolCalls.map((call) => call.label),
+    [
+      "写入 src/remember.js",
+      "读取 src/remember.js",
+      "列出沙盒文件",
+      "运行 node --test test/remember.test.js",
+      "瞄一眼导出实现", // 显式 label 优先
+    ],
+  );
+  assert.equal(sandbox.calls.length, 5);
+  assert.equal(studio.state.messages.filter((m) => m.kind === "tool").length, 5);
+  for (const m of studio.state.messages.filter((m) => m.kind === "tool")) {
+    assert.ok(m.toolCallId);
+    assert.ok(studio.state.toolCalls.some((call) => call.id === m.toolCallId));
+  }
+});
+
+// ───────────────────────── 16. 无 sandbox 降级 ─────────────────────────
+
+test("没有 sandbox：不执行工具、不发 ToolCall，只发说明消息并继续后续 turn", async () => {
+  const studio = makeStudio();
+  const brain = scriptedBrain((ctx) =>
+    ctx.trigger.kind === "user_message"
+      ? [
+          toolTurn("run_command", { cmd: "node", args: ["--test"] }),
+          message("沙盒没接上，我先把方案写出来。"),
+        ]
+      : [],
+  );
+  const driver = makeDriver(studio, brain); // 不传 sandbox
+
+  driver.submit({
+    type: "user_message",
+    roomId: ROOM_ID,
+    text: "@金渐层 跑个测试",
+    mentions: ["jinjianceng"],
+  });
+  await driver.whenIdle();
+
+  assert.equal(studio.state.toolCalls.length, 0);
+  const messages = studio.state.messages.filter((m) => m.author === "jinjianceng");
+  assert.ok(messages.some((m) => m.kind === "chat" && m.text.includes("没接沙盒")));
+  assert.ok(messages.some((m) => m.text === "沙盒没接上，我先把方案写出来。"));
 });

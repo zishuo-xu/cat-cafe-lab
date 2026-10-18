@@ -162,9 +162,30 @@ function hasRevisedPatch(artifacts: Artifact[]): boolean {
 }
 
 /**
+ * 把某阶段的 beats 按 review 结论切成「评审轮次」：
+ * 每遇到一个 review turn 就收一轮，跑测试这类前置 tool / message 归入同一轮。
+ * 这样 reviewing 第一次能带回「跑测试 + 打回」，v2 回来那一轮带回「跑测试 + 通过」。
+ */
+function reviewRounds(beats: ScenarioBeat[]): ScenarioBeat[][] {
+  const rounds: ScenarioBeat[][] = [];
+  let current: ScenarioBeat[] = [];
+  for (const beat of beats) {
+    current.push(beat);
+    if (beat.turn.kind === "review") {
+      rounds.push(current);
+      current = [];
+    }
+  }
+  if (current.length > 0) rounds.push(current);
+  return rounds;
+}
+
+/**
  * 按 (stage, cat) 取本轮的 beats：
- * - 普通阶段一次交付全部匹配的 beats（planning 消息 + 两张卡、working 实现稿 + 交接卡）；
- * - reviewing 有多条结论时，按 artifacts 证据只选一条，避免一次 think 同时打回又通过。
+ * - 没有多轮 review 时，一次交付全部匹配的 beats
+ *   （planning 消息 + 两张卡、working「写文件 + 跑测试 + 实现稿 + 交接卡」）；
+ * - reviewing 有多轮结论时，按 artifacts 证据选一轮，并把该轮的 tool 一起带上，
+ *   避免一次 think 同时打回又通过。
  */
 function selectBeats(ctx: TurnContext, scenario: Scenario): ScenarioBeat[] {
   const task = ctx.task;
@@ -172,13 +193,14 @@ function selectBeats(ctx: TurnContext, scenario: Scenario): ScenarioBeat[] {
   const beats = scenario.beats.filter((beat) => beat.stage === task.stage && beat.cat === ctx.cat.id);
   if (beats.length === 0) return [];
 
-  const reviews = beats.filter((beat) => beat.turn.kind === "review");
-  if (reviews.length > 1) {
+  const rounds = reviewRounds(beats);
+  if (rounds.length > 1) {
     const verdict = hasRevisedPatch(ctx.artifacts) ? "approve" : "request_changes";
-    const target = reviews.find((beat) => beat.turn.kind === "review" && beat.turn.verdict === verdict);
-    if (target) return [target];
-    const last = reviews[reviews.length - 1];
-    return last ? [last] : [];
+    const target = rounds.find((round) =>
+      round.some((beat) => beat.turn.kind === "review" && beat.turn.verdict === verdict),
+    );
+    if (target) return target;
+    return rounds[rounds.length - 1] ?? [];
   }
   return beats;
 }

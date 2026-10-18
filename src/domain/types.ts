@@ -65,6 +65,7 @@ export type MessageKind =
   | "review"
   | "decision"
   | "artifact"
+  | "tool"
   | "system";
 
 export interface Message {
@@ -78,6 +79,8 @@ export interface Message {
   taskId?: TaskId;
   handoffId?: HandoffId;
   artifactId?: ArtifactId;
+  /** kind === "tool" 时指向 ToolCall。 */
+  toolCallId?: ToolCall["id"];
   at: number;
 }
 
@@ -190,6 +193,8 @@ export interface StudioState {
   handoffs: Handoff[];
   artifacts: Artifact[];
   memory: MemoryEntry[];
+  /** 沙盒工具调用记录（写文件 / 跑命令）。 */
+  toolCalls: ToolCall[];
   /** roomId -> 正在打字的猫（同一房间同时只有一只猫打字）。 */
   typing: Record<RoomId, CatId | null>;
   /** 单调递增，SSE 用。 */
@@ -239,6 +244,17 @@ export interface TurnContext {
 
 export type CatTurn =
   | { kind: "message"; text: string; mentions?: CatId[]; delayMs?: number }
+  | {
+      kind: "tool";
+      tool: ToolName;
+      input: Record<string, unknown>;
+      /** 人话摘要，如「写入 src/remember.js」；缺省由工具名生成。 */
+      label?: string;
+      /** 执行后可选的伴随说明。 */
+      text?: string;
+      mentions?: CatId[];
+      delayMs?: number;
+    }
   | {
       kind: "handoff";
       to: CatId;
@@ -344,12 +360,48 @@ export interface StudioSettings {
   mode: BrainMode;
   llm: LlmSettings | null;
   stallMs: number;
+  /** 环境变量默认：是否允许沙盒工具执行。 */
+  toolsEnabled?: boolean;
 }
 
 // ───────────────────────── 运行时设置（设置面板） ─────────────────────────
 
 /** 回复节奏：只影响打字/思考延迟，不影响协作逻辑。 */
 export type Speed = "slow" | "normal" | "fast";
+
+/** 沙盒工具。所有路径都相对沙盒根目录。 */
+export type ToolName = "read_file" | "write_file" | "list_files" | "run_command";
+
+export interface ToolCall {
+  id: string;
+  taskId?: TaskId;
+  catId: CatId;
+  tool: ToolName;
+  input: Record<string, unknown>;
+  label: string;
+  status: "running" | "ok" | "error";
+  exitCode?: number;
+  /** 截断后的输出（stdout + stderr）。 */
+  output?: string;
+  startedAt: number;
+  finishedAt?: number;
+}
+
+export interface SandboxFile {
+  path: string;
+  size: number;
+}
+
+export interface ToolResult {
+  status: "ok" | "error";
+  exitCode?: number;
+  output: string;
+}
+
+/** driver 只依赖这个接口，测试时可以塞一个假的。 */
+export interface SandboxRunner {
+  execute(tool: ToolName, input: Record<string, unknown>): Promise<ToolResult>;
+}
 
 /** 可安全回传给前端 / 落盘的设置（绝不含 apiKey）。 */
 export interface PublicSettings {
@@ -363,6 +415,8 @@ export interface PublicSettings {
     keySource: "env" | "ui" | null;
   };
   stallMs: number;
+  /** 是否允许猫在沙盒里执行工具（写文件 / 跑命令）。 */
+  toolsEnabled: boolean;
   port: number;
   dataDir: string;
   version: string;
@@ -375,6 +429,7 @@ export interface PublicSettings {
 export interface SettingsPatch {
   mode?: BrainMode;
   speed?: Speed;
+  toolsEnabled?: boolean;
   llm?: {
     baseUrl?: string;
     model?: string;
@@ -415,4 +470,8 @@ export type DriverFactory = (deps: {
   brain: CatBrain;
   wait?: (ms: number) => Promise<void>;
   stallMs?: number;
+  /** 沙盒工具执行器；不传则 tool turn 直接报错（便于测试/降级）。 */
+  sandbox?: SandboxRunner;
+  /** 运行时开关：设置面板里可以关掉工具执行。 */
+  toolsEnabled?: () => boolean;
 }) => Driver;

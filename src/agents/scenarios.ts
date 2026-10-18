@@ -12,6 +12,68 @@
 
 import type { Scenario } from "../domain/types.ts";
 
+// ───────────────────────── 工具节拍里的真实文件内容 ─────────────────────────
+// 沙盒里 test/remember.test.js、test/export.test.js 是固定的裁判；
+// 下面是金渐层每一版真正写进沙盒的文件内容。v1 都被测试抓出问题，v2 才通过。
+
+const REMEMBER_V1 = [
+  "const TOKENS = new Map();",
+  "const TTL_MS = 7 * 24 * 60 * 60 * 1000;",
+  "",
+  "export function signRememberToken(userId, now = Date.now()) {",
+  "  const token = `rm_${userId}_${Math.random().toString(36).slice(2)}`;",
+  "  TOKENS.set(token, { userId, expiresAt: now + TTL_MS });",
+  "  return token;",
+  "}",
+  "",
+  "export function verifyRememberToken(token, _now = Date.now()) {",
+  "  return TOKENS.get(token) ?? null;",
+  "}",
+  "",
+].join("\n");
+
+const REMEMBER_V2 = [
+  "const TOKENS = new Map();",
+  "const TTL_MS = 7 * 24 * 60 * 60 * 1000;",
+  "",
+  "export function signRememberToken(userId, now = Date.now()) {",
+  "  const token = `rm_${userId}_${Math.random().toString(36).slice(2)}`;",
+  "  TOKENS.set(token, { userId, expiresAt: now + TTL_MS });",
+  "  return token;",
+  "}",
+  "",
+  "export function verifyRememberToken(token, now = Date.now()) {",
+  "  const record = TOKENS.get(token);",
+  "  if (!record) return null;",
+  "  if (record.expiresAt <= now) {",
+  "    TOKENS.delete(token);",
+  "    return null;",
+  "  }",
+  "  return record;",
+  "}",
+  "",
+].join("\n");
+
+const EXPORT_V1 = [
+  "// 后台导出 CSV。",
+  "export function toCsv(rows) {",
+  '  return rows.map((row) => row.join(",")).join("\\n");',
+  "}",
+  "",
+].join("\n");
+
+const EXPORT_V2 = [
+  "function escapeCell(value) {",
+  '  const text = String(value ?? "");',
+  "  return /[\",\\n\\r]/.test(text) ? `\"${text.replace(/\"/g, '\"\"')}\"` : text;",
+  "}",
+  "",
+  "export function toCsv(rows) {",
+  '  return rows.map((row) => row.map(escapeCell).join(",")).join("\\n");',
+  "}",
+  "",
+].join("\n");
+
 export const SCENARIOS: Scenario[] = [
   // ───────────────────────── 场景 1：登录页 · 记住我 ─────────────────────────
   {
@@ -115,8 +177,50 @@ export const SCENARIOS: Scenario[] = [
         stage: "working",
         cat: "jinjianceng",
         turn: {
+          kind: "message",
+          text: "我先把 token 写出来，跑一遍测试；跑完再交卡。",
+          delayMs: 380,
+        },
+      },
+      {
+        stage: "working",
+        cat: "jinjianceng",
+        turn: {
+          kind: "tool",
+          tool: "write_file",
+          input: { path: "src/remember.js", content: REMEMBER_V1 },
+          label: "写入 src/remember.js v1",
+          text: "先把 token 发下去，过期字段也一并写上。",
+          delayMs: 520,
+        },
+      },
+      {
+        stage: "working",
+        cat: "jinjianceng",
+        turn: {
+          kind: "tool",
+          tool: "run_command",
+          input: { cmd: "node", args: ["--test", "test/remember.test.js"] },
+          label: "跑 remember 测试",
+          text: "跑一下，看看还差什么。",
+          delayMs: 480,
+        },
+      },
+      {
+        stage: "working",
+        cat: "jinjianceng",
+        turn: {
+          kind: "message",
+          text: "测试没全过：签发和有效期都过了，但「过期后校验失败」那条挂了——过期校验我还没补。能跑，但我知道有个坑，先交出来让砚砚看。",
+          delayMs: 420,
+        },
+      },
+      {
+        stage: "working",
+        cat: "jinjianceng",
+        turn: {
           kind: "artifact",
-          text: "v1 通了：cookie 下发、校验、退出吊销都在。能跑，但我知道有个坑，先交出来让砚砚看。",
+          text: "v1 的 diff 摘要贴这儿了，卡随后给砚砚。",
           artifact: {
             kind: "patch",
             title: "remember-me 后端实现 v1",
@@ -152,7 +256,19 @@ export const SCENARIOS: Scenario[] = [
         fault: "missed_mention",
       },
 
-      // ── reviewing：砚砚打回 ──
+      // ── reviewing：砚砚先跑测试，再打回 ──
+      {
+        stage: "reviewing",
+        cat: "yanyan",
+        turn: {
+          kind: "tool",
+          tool: "run_command",
+          input: { cmd: "node", args: ["--test", "test/remember.test.js"] },
+          label: "跑 remember 测试",
+          text: "先看测试，不通过就是打回。",
+          delayMs: 480,
+        },
+      },
       {
         stage: "reviewing",
         cat: "yanyan",
@@ -160,14 +276,14 @@ export const SCENARIOS: Scenario[] = [
           kind: "review",
           verdict: "request_changes",
           title: "review · remember-me v1：不通过",
-          text: "看完了，不通过。第 1 条，token 表没有过期时间，7 天免登录实际变成了永久免登录；第 2 条，勾选框默认勾选、也没绑 label，读屏用户不知道它在问什么。先改，别合。",
+          text: "先跑了测试，3 条挂了 1 条：「过期后校验失败」。第 1 条，过期时间只是写进了记录，校验时根本没比较；第 2 条，勾选框默认勾选、也没绑 label。先改，别合。",
           mentions: ["jinjianceng"],
           findings: [
             {
               severity: "blocker",
-              title: "token 没有过期时间，7 天免登录变成永久免登录",
+              title: "过期时间只写不查，过期后仍能通过校验",
               detail:
-                "rm_token 只有 created_at，没有 expires_at，middleware 也不判断过期。cookie 一旦泄漏就是永久有效，只有手动退出才能吊销。签发时写入 expires_at = 登录时间 + 7 天，校验时过期就清 cookie 并回登录页。",
+                "node --test test/remember.test.js 里「过期后校验失败」挂了：verifyRememberToken 直接返回 TOKENS.get(token)，从没比较 expiresAt，8 天后的旧 token 依然有效，等于永久通行证。校验时比较 expiresAt <= now，过期就删除并返回 null。",
             },
             {
               severity: "minor",
@@ -180,13 +296,37 @@ export const SCENARIOS: Scenario[] = [
         },
       },
 
-      // ── revising：金渐层出 v2 ──
+      // ── revising：金渐层改完再跑测试 ──
+      {
+        stage: "revising",
+        cat: "jinjianceng",
+        turn: {
+          kind: "tool",
+          tool: "write_file",
+          input: { path: "src/remember.js", content: REMEMBER_V2 },
+          label: "写入 src/remember.js v2",
+          text: "过期校验和删除逻辑补上，重写 src/remember.js。",
+          delayMs: 520,
+        },
+      },
+      {
+        stage: "revising",
+        cat: "jinjianceng",
+        turn: {
+          kind: "tool",
+          tool: "run_command",
+          input: { cmd: "node", args: ["--test", "test/remember.test.js"] },
+          label: "跑 remember 测试",
+          text: "再跑一遍，这次得过。",
+          delayMs: 480,
+        },
+      },
       {
         stage: "revising",
         cat: "jinjianceng",
         turn: {
           kind: "artifact",
-          text: "改完了。过期字段、校验、默认不勾、label 都补了，这次自己先对着 review 意见走了一遍。",
+          text: "改完了。过期校验和删除逻辑都补上，测试全绿，这次自己先对着 review 意见走了一遍。",
           artifact: {
             kind: "patch",
             title: "remember-me 后端实现 v2",
@@ -220,7 +360,19 @@ export const SCENARIOS: Scenario[] = [
         },
       },
 
-      // ── reviewing：通过 ──
+      // ── reviewing：再跑一遍测试，通过 ──
+      {
+        stage: "reviewing",
+        cat: "yanyan",
+        turn: {
+          kind: "tool",
+          tool: "run_command",
+          input: { cmd: "node", args: ["--test", "test/remember.test.js"] },
+          label: "跑 remember 测试",
+          text: "再跑一遍，过了才放行。",
+          delayMs: 480,
+        },
+      },
       {
         stage: "reviewing",
         cat: "yanyan",
@@ -228,7 +380,7 @@ export const SCENARIOS: Scenario[] = [
           kind: "review",
           verdict: "approve",
           title: "review · remember-me v2：通过",
-          text: "这版可以。第 1 条过期和校验都在，blocker 关掉；第 2 条默认不勾、label 也补了，minor 收掉。approve，剩下交给宪宪记。",
+          text: "又跑了一遍测试，3 条全过。第 1 条过期校验补上了，blocker 关掉；第 2 条默认不勾、label 也补了，minor 收掉。approve，剩下交给宪宪记。",
           mentions: ["xianxian"],
           findings: [],
           delayMs: 460,
@@ -372,8 +524,50 @@ export const SCENARIOS: Scenario[] = [
         stage: "working",
         cat: "jinjianceng",
         turn: {
+          kind: "message",
+          text: "导出我先按最朴素的方式写一版，跑一遍测试再交。",
+          delayMs: 380,
+        },
+      },
+      {
+        stage: "working",
+        cat: "jinjianceng",
+        turn: {
+          kind: "tool",
+          tool: "write_file",
+          input: { path: "src/export.js", content: EXPORT_V1 },
+          label: "写入 src/export.js v1",
+          text: "先把 CSV 拼出来，转义的事回头再说。",
+          delayMs: 520,
+        },
+      },
+      {
+        stage: "working",
+        cat: "jinjianceng",
+        turn: {
+          kind: "tool",
+          tool: "run_command",
+          input: { cmd: "node", args: ["--test", "test/export.test.js"] },
+          label: "跑 export 测试",
+          text: "跑一下。",
+          delayMs: 480,
+        },
+      },
+      {
+        stage: "working",
+        cat: "jinjianceng",
+        turn: {
+          kind: "message",
+          text: "测试挂了：普通字段没问题，逗号、引号、换行全没转义，列都串了。能跑，但我知道有个坑，交 review。",
+          delayMs: 420,
+        },
+      },
+      {
+        stage: "working",
+        cat: "jinjianceng",
+        turn: {
           kind: "artifact",
-          text: "后端 v1 通了：任务表、异步生成、下载地址都有。能跑，但权限那块我知道有个坑，交 review。",
+          text: "后端 v1 的 diff 摘要贴这儿了，卡随后给砚砚。",
           artifact: {
             kind: "patch",
             title: "后台导出 CSV 实现 v1",
@@ -407,7 +601,19 @@ export const SCENARIOS: Scenario[] = [
         },
       },
 
-      // ── reviewing：砚砚打回 ──
+      // ── reviewing：砚砚先跑测试，再打回 ──
+      {
+        stage: "reviewing",
+        cat: "yanyan",
+        turn: {
+          kind: "tool",
+          tool: "run_command",
+          input: { cmd: "node", args: ["--test", "test/export.test.js"] },
+          label: "跑 export 测试",
+          text: "先跑测试，再谈别的。",
+          delayMs: 480,
+        },
+      },
       {
         stage: "reviewing",
         cat: "yanyan",
@@ -415,7 +621,7 @@ export const SCENARIOS: Scenario[] = [
           kind: "review",
           verdict: "request_changes",
           title: "review · 导出 CSV v1：不通过",
-          text: "不通过。第 1 条，权限只拦在路由上，worker 拿任务直接跑，校验形同虚设；第 2 条，CSV 字段没做转义，一个逗号就能把列错开。改完再交。",
+          text: "测试先挂了 2 条：逗号、引号、换行都没转义，CSV 直接串列。另外第 1 条，权限只拦在路由上，worker 拿任务直接跑，校验形同虚设。改完再交。",
           mentions: ["jinjianceng"],
           findings: [
             {
@@ -428,20 +634,44 @@ export const SCENARIOS: Scenario[] = [
               severity: "minor",
               title: "CSV 字段没有转义，特殊字符会串列",
               detail:
-                "现在直接 join(',')，字段里有逗号、引号、换行就会错列，还可能被 CSV 注入。按 RFC 4180 用双引号包裹并转义内部引号，下载时加 UTF-8 BOM 防 Excel 乱码。",
+                "node --test test/export.test.js 挂了「逗号字段要加引号」和「引号要 doubling，换行要加引号」。现在直接 join(',')，字段里有逗号、引号、换行就会错列，还可能被 CSV 注入。按 RFC 4180 用双引号包裹并转义内部引号，下载时加 UTF-8 BOM 防 Excel 乱码。",
             },
           ],
           delayMs: 460,
         },
       },
 
-      // ── revising：v2 ──
+      // ── revising：改完再跑测试 ──
+      {
+        stage: "revising",
+        cat: "jinjianceng",
+        turn: {
+          kind: "tool",
+          tool: "write_file",
+          input: { path: "src/export.js", content: EXPORT_V2 },
+          label: "写入 src/export.js v2",
+          text: "按 RFC 4180 把转义补上，重写 src/export.js。",
+          delayMs: 520,
+        },
+      },
+      {
+        stage: "revising",
+        cat: "jinjianceng",
+        turn: {
+          kind: "tool",
+          tool: "run_command",
+          input: { cmd: "node", args: ["--test", "test/export.test.js"] },
+          label: "跑 export 测试",
+          text: "再跑一遍，这次得过。",
+          delayMs: 480,
+        },
+      },
       {
         stage: "revising",
         cat: "jinjianceng",
         turn: {
           kind: "artifact",
-          text: "v2 改完：权限在 service 层再判一次，CSV 每个字段都按 RFC 4180 转义。这次我拿普通账号真跑了一遍。",
+          text: "v2 改完：权限在 service 层再判一次，CSV 每个字段都按 RFC 4180 转义，测试全绿。这次我拿普通账号真跑了一遍。",
           artifact: {
             kind: "patch",
             title: "后台导出 CSV 实现 v2",
@@ -474,7 +704,19 @@ export const SCENARIOS: Scenario[] = [
         },
       },
 
-      // ── reviewing：通过 ──
+      // ── reviewing：再跑一遍测试，通过 ──
+      {
+        stage: "reviewing",
+        cat: "yanyan",
+        turn: {
+          kind: "tool",
+          tool: "run_command",
+          input: { cmd: "node", args: ["--test", "test/export.test.js"] },
+          label: "跑 export 测试",
+          text: "再跑一遍，过了才放行。",
+          delayMs: 480,
+        },
+      },
       {
         stage: "reviewing",
         cat: "yanyan",
@@ -482,7 +724,7 @@ export const SCENARIOS: Scenario[] = [
           kind: "review",
           verdict: "approve",
           title: "review · 导出 CSV v2：通过",
-          text: "v2 我通过。权限在 service 层兜住了，CSV 转义和 BOM 也验过。放行，宪宪记一条。",
+          text: "测试 3 条全过。权限在 service 层兜住了，CSV 转义和 BOM 也验过。放行，宪宪记一条。",
           mentions: ["xianxian"],
           findings: [],
           delayMs: 460,

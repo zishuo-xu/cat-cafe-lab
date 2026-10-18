@@ -22,6 +22,7 @@ import {
   removeScenario,
 } from "../agents/scenario-registry.ts";
 import type { CatPatch, Studio } from "./studio.ts";
+import type { Sandbox } from "../tools/sandbox.ts";
 
 export interface HttpDeps {
   studio: Studio;
@@ -31,6 +32,8 @@ export interface HttpDeps {
   mode?: "mock" | "llm";
   /** 设置面板后端；不传则相关接口返回 503（测试/精简启动可用）。 */
   settingsApi?: SettingsApi;
+  /** 沙盒工具运行时；不传则 workspace 接口返回 503。 */
+  sandbox?: Sandbox;
   /** 前端用来判断「卡住」的阈值；不传按 driver.stallMs / 12s。 */
   stallMs?: number;
 }
@@ -175,7 +178,7 @@ function serveStatic(res: ServerResponse, publicDir: string, pathname: string): 
 }
 
 export function createHttpServer(deps: HttpDeps): Server {
-  const { studio, driver, scenarios, settingsApi } = deps;
+  const { studio, driver, scenarios, settingsApi, sandbox } = deps;
   const publicDir = deps.publicDir;
 
   return createServer((req, res) => {
@@ -262,6 +265,39 @@ export function createHttpServer(deps: HttpDeps): Server {
     if (method === "POST" && pathname === "/api/reset") {
       const state = studio.reset();
       json(res, 200, { ok: true, seq: state.seq });
+      return;
+    }
+
+    if (pathname === "/api/workspace/tree" && method === "GET") {
+      if (!sandbox) {
+        fail(res, 503, "sandbox not enabled");
+        return;
+      }
+      json(res, 200, { root: sandbox.root, files: sandbox.listFiles() });
+      return;
+    }
+
+    if (pathname === "/api/workspace/file" && method === "GET") {
+      if (!sandbox) {
+        fail(res, 503, "sandbox not enabled");
+        return;
+      }
+      const path = url.searchParams.get("path") ?? "";
+      try {
+        json(res, 200, sandbox.readTextFile(path));
+      } catch (err) {
+        fail(res, 400, err instanceof Error ? err.message : "cannot read file");
+      }
+      return;
+    }
+
+    if (pathname === "/api/workspace/reset" && method === "POST") {
+      if (!sandbox) {
+        fail(res, 503, "sandbox not enabled");
+        return;
+      }
+      sandbox.reset();
+      json(res, 200, { ok: true });
       return;
     }
 

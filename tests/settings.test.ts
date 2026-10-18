@@ -340,3 +340,44 @@ describe("HTTP /api/settings", () => {
     await new Promise<void>((done) => bare.close(() => done()));
   });
 });
+
+describe("工具执行开关", () => {
+  let dir: string;
+
+  before(() => {
+    dir = mkdtempSync(join(tmpdir(), "catcafe-tools-flag-"));
+  });
+
+  after(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("默认开启；关闭后落盘；重启保持", async () => {
+    const ctx = makeStore(dir);
+    assert.equal(ctx.store.getPublic().toolsEnabled, true);
+    assert.equal(ctx.store.toolsOn(), true);
+
+    const pub = await ctx.store.update({ toolsEnabled: false });
+    assert.equal(pub.toolsEnabled, false);
+    assert.equal(ctx.store.toolsOn(), false);
+
+    const persisted = JSON.parse(readFileSync(join(dir, "settings.json"), "utf8")) as {
+      toolsEnabled?: boolean;
+    };
+    assert.equal(persisted.toolsEnabled, false);
+    ctx.studio.close();
+
+    const reopened = makeStore(dir);
+    assert.equal(reopened.store.getPublic().toolsEnabled, false);
+    reopened.studio.close();
+  });
+
+  test("非布尔值被拒绝", async () => {
+    const ctx = makeStore(dir);
+    await assert.rejects(
+      () => ctx.store.update({ toolsEnabled: "yes" as unknown as boolean }),
+      /布尔/,
+    );
+    ctx.studio.close();
+  });
+});

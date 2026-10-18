@@ -4,6 +4,9 @@
  */
 
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { createMockBrain } from "../src/agents/mock-brain.ts";
@@ -21,6 +24,7 @@ import type {
   Trigger,
   TurnContext,
 } from "../src/domain/types.ts";
+import { Sandbox } from "../src/tools/sandbox.ts";
 
 const ROOM: Room = {
   id: "room_test",
@@ -145,6 +149,38 @@ function reviewTurns(turns: CatTurn[]): Array<Extract<CatTurn, { kind: "review" 
   return turns.filter((turn): turn is Extract<CatTurn, { kind: "review" }> => turn.kind === "review");
 }
 
+function toolTurns(turns: CatTurn[]): Array<Extract<CatTurn, { kind: "tool" }>> {
+  return turns.filter((turn): turn is Extract<CatTurn, { kind: "tool" }> => turn.kind === "tool");
+}
+
+function beatTurns(scenario: Scenario, stage: TaskStage, cat: string): CatTurn[] {
+  return scenario.beats
+    .filter((beat) => beat.stage === stage && beat.cat === cat)
+    .map((beat) => beat.turn);
+}
+
+function toolBeatTurns(
+  scenario: Scenario,
+  stage: TaskStage,
+  cat: string,
+): Array<Extract<CatTurn, { kind: "tool" }>> {
+  return toolTurns(beatTurns(scenario, stage, cat));
+}
+
+function isRunOf(
+  turn: Extract<CatTurn, { kind: "tool" }>,
+  testFile: string,
+): boolean {
+  if (turn.tool !== "run_command") return false;
+  const args = turn.input["args"];
+  return (
+    turn.input["cmd"] === "node" &&
+    Array.isArray(args) &&
+    args[0] === "--test" &&
+    args[1] === testFile
+  );
+}
+
 function sentenceCount(text: string): number {
   return text
     .split(/[。！？!?]+/u)
@@ -245,6 +281,167 @@ test("所有交接卡五栏完整，接收方都是四猫之一", () => {
   assert.ok(handoffCount >= 6, `交接卡数量偏少：${handoffCount}`);
 });
 
+// ───────────────────────── 工具节拍 ─────────────────────────
+
+const TOOL_CASES = [
+  { id: "remember_me", source: "src/remember.js", testFile: "test/remember.test.js", failed: /过期后校验失败/u },
+  { id: "export_csv", source: "src/export.js", testFile: "test/export.test.js", failed: /逗号字段要加引号|引号要 doubling/u },
+] as const;
+
+test("剧本工具节拍：金渐层先写文件再跑测试，砚砚先跑测试再 review", () => {
+  for (const item of TOOL_CASES) {
+    const scenario = scenarioOf(item.id);
+
+    // working：写文件 → 跑测试 → 承认失败 → patch → 交接
+    const working = beatTurns(scenario, "working", "jinjianceng");
+    const workingTools = toolTurns(working);
+    assert.deepEqual(
+      workingTools.map((turn) => turn.tool),
+      ["write_file", "run_command"],
+      `${item.id} working 应先写文件再跑测试`,
+    );
+    assert.equal(workingTools[0]?.input["path"], item.source);
+    const workingRun = workingTools[1];
+    if (!workingRun) throw new Error(`${item.id} working 缺少跑测试`);
+    assert.equal(isRunOf(workingRun, item.testFile), true);
+
+    const workingRunIndex = working.indexOf(workingRun);
+    const patchIndex = working.findIndex(
+      (turn) => turn.kind === "artifact" && turn.artifact.kind === "patch",
+    );
+    assert.ok(patchIndex > workingRunIndex, "先跑测试，再交 patch");
+    const handoffIndex = working.findIndex((turn) => turn.kind === "handoff");
+    assert.ok(handoffIndex > patchIndex, "交接卡在 patch 之后");
+    assert.ok(
+      working
+        .slice(workingRunIndex + 1)
+        .some((turn) => turn.kind === "message" && /失败|没全过|挂了|没过/u.test(turn.text)),
+      "跑完失败的测试后，金渐层应该有台词承认问题",
+    );
+
+    // revising：写 v2 → 再跑测试 → v2 patch → 交接
+    const revising = beatTurns(scenario, "revising", "jinjianceng");
+    const revisingTools = toolTurns(revising);
+    assert.deepEqual(
+      revisingTools.map((turn) => turn.tool),
+      ["write_file", "run_command"],
+      `${item.id} revising 应先写 v2 再跑测试`,
+    );
+    assert.equal(revisingTools[0]?.input["path"], item.source);
+    const revisingRun = revisingTools[1];
+    if (!revisingRun) throw new Error(`${item.id} revising 缺少跑测试`);
+    assert.equal(isRunOf(revisingRun, item.testFile), true);
+    const revisingRunIndex = revising.indexOf(revisingRun);
+    const v2PatchIndex = revising.findIndex(
+      (turn) => turn.kind === "artifact" && turn.artifact.title.includes("v2"),
+    );
+    assert.ok(v2PatchIndex > revisingRunIndex, "v2 patch 在跑测试之后");
+
+    // reviewing：两轮都先跑测试，紧挨着 review
+    const reviewing = beatTurns(scenario, "reviewing", "yanyan");
+    const reviewingTools = toolTurns(reviewing);
+    assert.equal(reviewingTools.length, 2, `${item.id} 两轮 review 都应先跑测试`);
+    for (const runTurn of reviewingTools) assert.equal(isRunOf(runTurn, item.testFile), true);
+    const reviewIndexes = reviewing.flatMap((turn, index) =>
+      turn.kind === "review" ? [index] : [],
+    );
+    assert.equal(reviewIndexes.length, 2);
+    for (const index of reviewIndexes) {
+      const before = reviewing[index - 1];
+      assert.equal(before?.kind, "tool", "review 前面应该紧挨着一次跑测试");
+      if (before?.kind === "tool") assert.equal(isRunOf(before, item.testFile), true);
+    }
+  }
+});
+
+test("所有工具节拍结构合法：路径相对、命令只有 node、参数安全", () => {
+  const allowedTools = new Set(["read_file", "write_file", "list_files", "run_command"]);
+  let toolCount = 0;
+  for (const scenario of SCENARIOS) {
+    for (const beat of scenario.beats) {
+      if (beat.turn.kind !== "tool") continue;
+      toolCount += 1;
+      const turn = beat.turn;
+      assert.ok(allowedTools.has(turn.tool), `${scenario.id} 出现未知工具：${turn.tool}`);
+      assert.ok(
+        typeof turn.label === "string" && turn.label.trim().length > 0,
+        `${scenario.id} 的 tool turn 缺少可读 label`,
+      );
+      assert.ok(turn.input !== null && typeof turn.input === "object");
+
+      if (turn.tool === "write_file") {
+        const path = turn.input["path"];
+        const content = turn.input["content"];
+        assert.equal(typeof path, "string");
+        assert.ok(
+          typeof path === "string" && !path.startsWith("/") && !path.includes(".."),
+          "write_file 的 path 必须是相对沙盒的路径",
+        );
+        assert.equal(typeof content, "string");
+        assert.ok(typeof content === "string" && content.trim().length > 50, "写入内容不能太短");
+      } else if (turn.tool === "run_command") {
+        assert.equal(turn.input["cmd"], "node", "命令只允许 node");
+        const args = turn.input["args"];
+        assert.ok(Array.isArray(args) && args.length > 0);
+        for (const arg of args as unknown[]) {
+          assert.equal(typeof arg, "string");
+          assert.ok(
+            typeof arg === "string" && !arg.startsWith("/") && !arg.includes(".."),
+            "命令参数必须安全",
+          );
+        }
+      }
+    }
+  }
+  assert.equal(toolCount, 12, `工具节拍数量应为 12（2 场景 × 6），实际 ${toolCount}`);
+});
+
+test("剧本里的 v1/v2 在真实沙盒里：测试失败 → 修复后通过", async () => {
+  for (const item of TOOL_CASES) {
+    const scenario = scenarioOf(item.id);
+    const dir = mkdtempSync(join(tmpdir(), "catcafe-agents-"));
+    const sandbox = new Sandbox(dir);
+    try {
+      sandbox.ensureSeed();
+
+      // working v1：写文件 → 跑测试 → 必须失败（台词说的问题要真的出现）
+      const workingTools = toolBeatTurns(scenario, "working", "jinjianceng");
+      assert.equal(workingTools.length, 2);
+      for (const turn of workingTools) {
+        const result = await sandbox.execute(turn.tool, turn.input);
+        if (turn.tool === "write_file") {
+          assert.equal(result.status, "ok", `${item.id} v1 写文件失败：${result.output}`);
+        } else {
+          assert.equal(result.status, "error", `${item.id} 的 v1 测试应该失败`);
+          assert.notEqual(result.exitCode, 0);
+          assert.match(result.output, item.failed);
+        }
+      }
+
+      // revising v2：写文件 → 再跑测试 → 必须通过
+      const revisingTools = toolBeatTurns(scenario, "revising", "jinjianceng");
+      assert.equal(revisingTools.length, 2);
+      for (const turn of revisingTools) {
+        const result = await sandbox.execute(turn.tool, turn.input);
+        if (turn.tool === "write_file") {
+          assert.equal(result.status, "ok", `${item.id} v2 写文件失败：${result.output}`);
+        } else {
+          assert.equal(result.status, "ok", `${item.id} 的 v2 测试应该通过：${result.output}`);
+          assert.equal(result.exitCode, 0);
+          assert.match(result.output, /pass 3/u);
+        }
+      }
+
+      // 沙盒里确实落下了真实文件
+      const read = await sandbox.execute("read_file", { path: item.source });
+      assert.equal(read.status, "ok");
+      assert.ok(read.output.trim().length > 20);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
 test("remember_me：埋了 金渐层 → 砚砚 的 missed_mention 漏 @", async () => {
   const scenario = scenarioOf("remember_me");
   const faultBeats = scenario.beats.filter((beat) => beat.fault === "missed_mention");
@@ -310,7 +507,7 @@ test("driver 契约：intake 只回消息、planning 一次给「消息 + 2 张�
   }
 });
 
-test("driver 契约：working 一次给 artifact（金渐层带 patch + 交接卡）", async () => {
+test("driver 契约：working 一次给「写文件 + 跑测试 + patch + 交接卡」", async () => {
   const brain = createMockBrain(SCENARIOS);
   const task = makeTask("remember_me", "working", { id: "task_working_contract" });
 
@@ -323,22 +520,36 @@ test("driver 契约：working 一次给 artifact（金渐层带 patch + 交接�
   const implementation = await brain.think(
     makeCtx({ catId: "jinjianceng", task, trigger: taskTrigger("handoff", task.id) }),
   );
-  assert.equal(implementation.length, 2);
-  assert.equal(implementation[0]?.kind, "artifact");
-  const patch = implementation[0];
-  if (patch?.kind !== "artifact") throw new Error("第一个 turn 应该是 patch");
+  assert.deepEqual(
+    implementation.map((turn) => turn.kind),
+    ["message", "tool", "tool", "message", "artifact", "handoff"],
+    "金渐层应该：说一句 → 写文件 → 跑测试 → 承认失败 → 交 patch → 交接",
+  );
+
+  const tools = toolTurns(implementation);
+  assert.deepEqual(tools.map((turn) => turn.tool), ["write_file", "run_command"]);
+  assert.equal(tools[0]?.input["path"], "src/remember.js");
+  const run = tools[1];
+  if (!run) throw new Error("缺少跑测试的 tool turn");
+  assert.equal(isRunOf(run, "test/remember.test.js"), true);
+
+  const patch = implementation.find((turn) => turn.kind === "artifact");
+  if (patch?.kind !== "artifact") throw new Error("应该产出 patch artifact");
   assert.equal(patch.artifact.kind, "patch");
+  const runIndex = implementation.indexOf(run);
+  assert.ok(implementation.indexOf(patch) > runIndex, "先跑测试，再交 artifact");
+
   const handoffs = handoffTurns(implementation);
   assert.equal(handoffs.length, 1);
   assert.equal(handoffs[0]?.to, "yanyan");
   assert.equal(handoffs[0]?.fault, "missed_mention");
 });
 
-test("driver 契约：reviewing 按 artifacts 里的 patch 版本只返回一个结论", async () => {
+test("driver 契约：reviewing 先跑测试，再按 artifacts 版本只返回一个结论", async () => {
   const brain = createMockBrain(SCENARIOS);
   const task = makeTask("remember_me", "reviewing", { id: "task_review_contract" });
 
-  // 只有 v1 patch → request_changes，且一次只返回一个 review
+  // 只有 v1 patch → 先跑测试，再 request_changes
   const v1Only = await brain.think(
     makeCtx({
       catId: "yanyan",
@@ -347,12 +558,15 @@ test("driver 契约：reviewing 按 artifacts 里的 patch 版本只返回一个
       artifacts: [patchArtifact(task.id, 1)],
     }),
   );
-  assert.equal(v1Only.length, 1);
+  assert.deepEqual(v1Only.map((turn) => turn.kind), ["tool", "review"]);
+  const v1Run = toolTurns(v1Only)[0];
+  if (!v1Run) throw new Error("review 之前应该先跑测试");
+  assert.equal(isRunOf(v1Run, "test/remember.test.js"), true);
   const first = reviewTurns(v1Only)[0];
   if (!first) throw new Error("第一次 review 应该有结论");
   assert.equal(first.verdict, "request_changes");
 
-  // v2 出现 → approve，同样一次只返回一个
+  // v2 出现 → 再跑测试，然后 approve
   const revised = await brain.think(
     makeCtx({
       catId: "yanyan",
@@ -361,7 +575,10 @@ test("driver 契约：reviewing 按 artifacts 里的 patch 版本只返回一个
       artifacts: [patchArtifact(task.id, 1), patchArtifact(task.id, 2)],
     }),
   );
-  assert.equal(revised.length, 1);
+  assert.deepEqual(revised.map((turn) => turn.kind), ["tool", "review"]);
+  const v2Run = toolTurns(revised)[0];
+  if (!v2Run) throw new Error("第二轮 review 之前也应该跑测试");
+  assert.equal(isRunOf(v2Run, "test/remember.test.js"), true);
   const second = reviewTurns(revised)[0];
   if (!second) throw new Error("第二次 review 应该有结论");
   assert.equal(second.verdict, "approve");
@@ -415,12 +632,18 @@ test("mock brain：remember_me 六阶段全流程（含打回 → 修改 → 通
   assert.equal(designTurn.artifact.kind, "design");
   assert.ok((designTurn.mentions ?? []).includes("xianxian"));
 
-  // working：金渐层实现稿 + 漏 @ 的交接卡
+  // working：金渐层写文件 → 跑测试（失败）→ 实现稿 + 漏 @ 的交接卡
   const implementation = await brain.think(
     makeCtx({ catId: "jinjianceng", task, trigger: taskTrigger("handoff", task.id) }),
   );
-  const patchTurn = implementation[0];
-  if (patchTurn?.kind !== "artifact") throw new Error("金渐层应该先交 patch artifact");
+  assert.deepEqual(
+    implementation.map((turn) => turn.kind),
+    ["message", "tool", "tool", "message", "artifact", "handoff"],
+  );
+  const implTools = toolTurns(implementation);
+  assert.deepEqual(implTools.map((turn) => turn.tool), ["write_file", "run_command"]);
+  const patchTurn = implementation.find((turn) => turn.kind === "artifact");
+  if (patchTurn?.kind !== "artifact") throw new Error("金渐层应该交 patch artifact");
   assert.equal(patchTurn.artifact.kind, "patch");
   const reviewHandoff = handoffTurns(implementation)[0];
   if (!reviewHandoff) throw new Error("金渐层应该发出 review 交接卡");
@@ -428,7 +651,7 @@ test("mock brain：remember_me 六阶段全流程（含打回 → 修改 → 通
   assert.equal(reviewHandoff.fault, "missed_mention");
   artifacts.push(patchArtifact(task.id, 1));
 
-  // reviewing：砚砚抓 1 blocker + 1 minor，request_changes
+  // reviewing：砚砚先跑测试，再抓 1 blocker + 1 minor，request_changes
   task.stage = "reviewing";
   const review1 = await brain.think(
     makeCtx({
@@ -438,6 +661,8 @@ test("mock brain：remember_me 六阶段全流程（含打回 → 修改 → 通
       artifacts,
     }),
   );
+  assert.deepEqual(review1.map((turn) => turn.kind), ["tool", "review"]);
+  assert.equal(toolTurns(review1)[0]?.input["cmd"], "node");
   const review1Turn = reviewTurns(review1)[0];
   if (!review1Turn) throw new Error("砚砚应该产出 review");
   assert.equal(review1Turn.verdict, "request_changes");
@@ -447,14 +672,20 @@ test("mock brain：remember_me 六阶段全流程（含打回 → 修改 → 通
     ["blocker", "minor"],
   );
 
-  // revising：金渐层出 v2 + 干净交接
+  // revising：金渐层写 v2 → 跑测试 → v2 patch + 干净交接
   task.stage = "revising";
   const revise = await brain.think(
     makeCtx({ catId: "jinjianceng", task, trigger: taskTrigger("review_result", task.id), artifacts }),
   );
-  assert.equal(revise.length, 2);
-  const revisePatch = revise[0];
-  if (revisePatch?.kind !== "artifact") throw new Error("revising 应该先交 patch");
+  assert.deepEqual(
+    revise.map((turn) => turn.kind),
+    ["tool", "tool", "artifact", "handoff"],
+  );
+  const reviseTools = toolTurns(revise);
+  assert.deepEqual(reviseTools.map((turn) => turn.tool), ["write_file", "run_command"]);
+  assert.equal(reviseTools[0]?.input["path"], "src/remember.js");
+  const revisePatch = revise.find((turn) => turn.kind === "artifact");
+  if (revisePatch?.kind !== "artifact") throw new Error("revising 应该交 patch");
   assert.equal(revisePatch.artifact.title.includes("v2"), true);
   const reviseHandoff = handoffTurns(revise)[0];
   if (!reviseHandoff) throw new Error("revising 应该有重新交接");
@@ -462,11 +693,12 @@ test("mock brain：remember_me 六阶段全流程（含打回 → 修改 → 通
   assert.equal(reviseHandoff.fault, undefined);
   artifacts.push(patchArtifact(task.id, 2));
 
-  // reviewing 第二次：v2 已在 artifacts 里 → approve（不能重播打回）
+  // reviewing 第二次：v2 已在 artifacts 里 → 再跑测试后 approve（不能重播打回）
   task.stage = "reviewing";
   const review2 = await brain.think(
     makeCtx({ catId: "yanyan", task, trigger: taskTrigger("artifact", task.id), artifacts }),
   );
+  assert.deepEqual(review2.map((turn) => turn.kind), ["tool", "review"]);
   const review2Turn = reviewTurns(review2)[0];
   if (!review2Turn) throw new Error("第二次 review 应该还是 review");
   assert.equal(review2Turn.verdict, "approve");

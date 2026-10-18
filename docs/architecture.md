@@ -31,7 +31,12 @@
 │  src/engine/driver.ts  协作会话驱动            │
 │    · 每房间串行队列                            │
 │    · 阶段推进 / @ 路由 / typing / 延迟         │
+│    · tool turn → 沙盒执行                      │
 │    · 故障注入（漏 @）与 nudge 恢复             │
+├──────────────────────────────────────────────┤
+│  src/tools/sandbox.ts  沙盒工具运行时          │
+│    · 路径锁根目录 / 命令白名单 / 10s 超时      │
+│    · read_file / write_file / list / run       │
 ├──────────────────────────────────────────────┤
 │  src/agents/          猫猫的"大脑"             │
 │    mock-brain.ts   场景 beats → CatTurn[]     │
@@ -134,6 +139,21 @@ intake ──► planning ──► working ──► reviewing ──► done
   导入和删除都原地 `push/splice`，所以不需要重启，也不需要重建对象。
   导入前走 `scenario-validation.ts` 的逐条校验——坏剧本宁可拒绝，也不能把运行时带崩。
   内置剧本只读；删除只对自定义生效。
+
+## 工具执行（干活层）
+
+工具不是提示词，是三个真实约束：**路径、命令、时间**。
+
+- `CatTurn.kind === "tool"` → driver 先 `addToolCall`（running）→ `sandbox.execute` →
+  `finishToolCall` → 落一条 `kind:"tool"` 的消息（带 `toolCallId`）。工具不改变阶段、不触发交接。
+- 所有路径都 `resolve` 到 `data/workspace/` 内，绝对路径和 `..` 直接拒绝；
+- `run_command` 只允许 `node` / `npm`，参数走正则白名单，`shell:false`，10s 超时，输出截断到 4000 字；
+- 执行失败不抛异常，落 `status:"error"` + exitCode + 输出，让后面的 cat turn 继续解释；
+- 设置面板可以关掉工具执行（`toolsEnabled`）；关掉后 tool turn 变一句说明，协作流程照走。
+  注意：mock 剧本里"测试挂了/测试全绿"的台词是写死的，关掉工具后这些台词不再对应真实执行。
+
+**真实模式暂不产生工具调用**：llm-brain 的输出 schema 只有六种对话类 turn，工具节拍由剧本驱动。
+这是有意的边界——不让模型直接决定跑什么命令。
 
 ## 真实模式
 

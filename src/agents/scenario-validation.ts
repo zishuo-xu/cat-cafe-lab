@@ -11,6 +11,8 @@ const ARTIFACT_KINDS = ["spec", "design", "patch", "review", "decision"] as cons
 const MEMORY_KINDS = ["decision", "lesson", "preference"] as const;
 const VERDICTS = ["approve", "request_changes"] as const;
 const SEVERITIES = ["blocker", "minor"] as const;
+const TOOLS = ["read_file", "write_file", "list_files", "run_command"] as const;
+const COMMANDS = ["node", "npm"] as const;
 
 const MAX_BEATS = 120;
 
@@ -194,6 +196,17 @@ function validateTurn(
       optionalDelay(raw, path, errors);
       return;
     }
+    case "tool": {
+      validateToolInput(raw, path, errors);
+      const label = raw["label"];
+      if (label !== undefined && (typeof label !== "string" || label.length > 100)) {
+        errors.push(`${path}.label 必须是不超过 100 字的字符串`);
+      }
+      optionalText(raw, "text", path, errors);
+      optionalMentions(raw, path, catIds, errors);
+      optionalDelay(raw, path, errors);
+      return;
+    }
     default:
       errors.push(`${path}.kind 未知（应为 message/handoff/artifact/review/decision/memory）`);
   }
@@ -286,6 +299,58 @@ function optionalDelay(
   if (delay === undefined) return;
   if (typeof delay !== "number" || !Number.isFinite(delay) || delay < 0 || delay > 20000) {
     errors.push(`${path}.delayMs 必须是 0–20000 的数字`);
+  }
+}
+
+function validateToolInput(
+  raw: Record<string, unknown>,
+  path: string,
+  errors: string[],
+): void {
+  const tool = raw["tool"];
+  if (typeof tool !== "string" || !TOOLS.includes(tool as (typeof TOOLS)[number])) {
+    errors.push(`${path}.tool 必须是 ${TOOLS.join(" / ")} 之一`);
+    return;
+  }
+  const input = raw["input"];
+  if (!isObject(input)) {
+    errors.push(`${path}.input 必须是对象`);
+    return;
+  }
+  const inputPath = `${path}.input`;
+  switch (tool) {
+    case "read_file":
+      requireText(input, "path", inputPath, 1, 200, errors);
+      return;
+    case "write_file": {
+      requireText(input, "path", inputPath, 1, 200, errors);
+      const content = input["content"];
+      if (typeof content !== "string" || content.length > 20000) {
+        errors.push(`${inputPath}.content 必须是不超过 20000 字的字符串`);
+      }
+      return;
+    }
+    case "list_files":
+      return;
+    case "run_command": {
+      const cmd = input["cmd"];
+      if (typeof cmd !== "string" || !COMMANDS.includes(cmd as (typeof COMMANDS)[number])) {
+        errors.push(`${inputPath}.cmd 必须是 ${COMMANDS.join(" / ")} 之一`);
+        return;
+      }
+      const args = input["args"];
+      if (args === undefined) return;
+      if (!Array.isArray(args) || args.length > 10) {
+        errors.push(`${inputPath}.args 必须是最多 10 个字符串的数组`);
+        return;
+      }
+      args.forEach((arg, i) => {
+        if (typeof arg !== "string" || arg.length > 80 || arg.includes("..")) {
+          errors.push(`${inputPath}.args[${i}] 必须是不超过 80 字且不含 .. 的字符串`);
+        }
+      });
+      return;
+    }
   }
 }
 

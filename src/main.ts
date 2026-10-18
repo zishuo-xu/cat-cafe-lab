@@ -7,6 +7,7 @@ import { createMockBrain } from "./agents/mock-brain.ts";
 import { initScenarios } from "./agents/scenario-registry.ts";
 import { createDriver } from "./engine/driver.ts";
 import { createHttpServer } from "./server/http.ts";
+import { Sandbox } from "./tools/sandbox.ts";
 import { readSettings } from "./server/settings.ts";
 import { SettingsStore, SwitchableBrain } from "./server/settings-store.ts";
 import { Studio } from "./server/studio.ts";
@@ -15,6 +16,10 @@ const settings = readSettings();
 const dataDir = resolve(settings.dataDir);
 
 const studio = new Studio({ cats: CATS, mode: settings.mode, dataDir });
+
+// 沙盒：猫猫真的在这里写文件、跑命令。独立目录，不是用户的仓库。
+const sandbox = new Sandbox(resolve(dataDir, "workspace"));
+sandbox.ensureSeed();
 // 导入的自定义剧本会原地追加到 SCENARIOS，driver / HTTP 拿到的是同一数组引用。
 initScenarios(dataDir, studio.state.cats.map((cat) => cat.id));
 const mock = createMockBrain(SCENARIOS, {
@@ -36,7 +41,14 @@ const settingsStore = new SettingsStore({
 const wait = (ms: number): Promise<void> =>
   new Promise((done) => setTimeout(done, Math.max(0, Math.round(ms * settingsStore.factor()))));
 
-const driver = createDriver({ studio, brain: switchable, wait, stallMs: settings.stallMs });
+const driver = createDriver({
+  studio,
+  brain: switchable,
+  wait,
+  stallMs: settings.stallMs,
+  sandbox,
+  toolsEnabled: () => settingsStore.toolsOn(),
+});
 
 const server = createHttpServer({
   studio,
@@ -46,6 +58,7 @@ const server = createHttpServer({
   mode: settings.mode,
   stallMs: settings.stallMs,
   settingsApi: settingsStore,
+  sandbox,
 });
 
 server.listen(settings.port, "127.0.0.1", () => {
@@ -59,6 +72,7 @@ server.listen(settings.port, "127.0.0.1", () => {
   console.log(`  ${CATS.map((c) => `${c.name}(${c.species})`).join("  ")}`);
   console.log(`  http://127.0.0.1:${settings.port}`);
   console.log(`  mode: ${modeText} · data: ${dataDir}`);
+  console.log(`  sandbox: ${sandbox.root} · tools: ${publicSettings.toolsEnabled ? "on" : "off"}`);
   if (publicSettings.llm.hasKey) {
     console.log(`  llm: ${publicSettings.llm.baseUrl} (key: ${publicSettings.llm.keySource})`);
   }

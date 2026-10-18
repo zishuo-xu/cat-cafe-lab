@@ -50,6 +50,7 @@ export class SwitchableBrain implements CatBrain {
 interface PersistedSettings {
   mode?: BrainMode;
   speed?: Speed;
+  toolsEnabled?: boolean;
   llm?: {
     baseUrl?: string;
     model?: string;
@@ -69,6 +70,7 @@ export interface SettingsStoreOptions {
 export class SettingsStore implements SettingsApi {
   private mode: BrainMode;
   private speed: Speed;
+  private toolsEnabled: boolean;
   private baseUrl: string;
   private model: string;
   private temperature: number;
@@ -101,6 +103,7 @@ export class SettingsStore implements SettingsApi {
 
     this.mode = persisted.mode ?? opts.settings.mode;
     this.speed = persisted.speed ?? "normal";
+    this.toolsEnabled = persisted.toolsEnabled ?? opts.settings.toolsEnabled ?? true;
     this.baseUrl = persisted.llm?.baseUrl ?? env?.baseUrl ?? "";
     this.model = persisted.llm?.model ?? env?.model ?? "";
     this.temperature = clampTemperature(
@@ -120,6 +123,10 @@ export class SettingsStore implements SettingsApi {
     return SPEED_FACTOR[this.speed];
   }
 
+  toolsOn(): boolean {
+    return this.toolsEnabled;
+  }
+
   getPublic(): PublicSettings {
     return {
       mode: this.mode,
@@ -132,6 +139,7 @@ export class SettingsStore implements SettingsApi {
         keySource: this.keySource,
       },
       stallMs: this.stallMs,
+      toolsEnabled: this.toolsEnabled,
       port: this.port,
       dataDir: this.dataDirAbs,
       version: this.version,
@@ -148,9 +156,13 @@ export class SettingsStore implements SettingsApi {
     if (patch.speed !== undefined && !(patch.speed in SPEED_FACTOR)) {
       throw new Error("speed 只能是 slow / normal / fast");
     }
+    if (patch.toolsEnabled !== undefined && typeof patch.toolsEnabled !== "boolean") {
+      throw new Error("toolsEnabled 必须是布尔值");
+    }
 
     const nextMode = patch.mode ?? this.mode;
     const nextSpeed = patch.speed ?? this.speed;
+    const nextToolsEnabled = patch.toolsEnabled ?? this.toolsEnabled;
 
     let baseUrl = this.baseUrl;
     let model = this.model;
@@ -193,6 +205,7 @@ export class SettingsStore implements SettingsApi {
 
     this.mode = nextMode;
     this.speed = nextSpeed;
+    this.toolsEnabled = nextToolsEnabled;
     this.baseUrl = baseUrl;
     this.model = model;
     this.temperature = temperature;
@@ -287,6 +300,7 @@ export class SettingsStore implements SettingsApi {
       const payload: PersistedSettings = {
         mode: this.mode,
         speed: this.speed,
+        toolsEnabled: this.toolsEnabled,
         llm: {
           baseUrl: this.baseUrl,
           model: this.model,

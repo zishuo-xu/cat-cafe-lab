@@ -3235,6 +3235,364 @@ button {
   box-shadow: 0 0 0 2px var(--coffee);
 }
 
+/* ── 工具调用卡片 ─────────────────────────────────────────────────────── */
+
+.msg--tool .msg-main {
+  max-width: min(90%, 720px);
+}
+
+.tool-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fdf8f0;
+}
+
+.tool-card[data-status="running"] {
+  border-color: #e5c9a5;
+}
+
+.tool-card[data-status="ok"] {
+  border-color: #cfe0cf;
+}
+
+.tool-card[data-status="error"] {
+  border-color: #e8bfb4;
+  background: #fdf5f2;
+}
+
+.tool-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+  padding: 8px 10px;
+  background: #fbf4e8;
+}
+
+.tool-icon {
+  flex: none;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.tool-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-status {
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.tool-status[data-status="running"] {
+  background: #fbf0da;
+  color: #8a6118;
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+.tool-status[data-status="ok"] {
+  background: var(--ok-soft);
+  color: #3f6a4b;
+}
+
+.tool-status[data-status="error"] {
+  background: var(--danger-soft);
+  color: #9b4434;
+}
+
+.tool-exit {
+  flex: none;
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+
+.tool-exit[data-state="error"] {
+  color: var(--danger);
+}
+
+.tool-duration {
+  flex: none;
+  color: #b09d8b;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+}
+
+.tool-command {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  padding: 7px 10px;
+  border-top: 1px dashed var(--line-soft);
+  color: #5b4a3d;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.tool-command code {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-toggle {
+  appearance: none;
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdf8;
+  color: var(--coffee);
+  font: inherit;
+  font-size: 9.5px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.tool-toggle:hover {
+  background: var(--cream-deep);
+}
+
+.tool-output {
+  border-top: 1px dashed var(--line-soft);
+  background: #2f2822;
+}
+
+.tool-output pre {
+  max-height: 220px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: auto;
+  color: #f4eadb;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.tool-note {
+  padding: 8px 10px;
+  border-top: 1px dashed var(--line-soft);
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+/* ── 沙盒面板 ─────────────────────────────────────────────────────────── */
+
+.sandbox-refresh {
+  margin-left: auto;
+  padding: 2px 7px;
+  font-size: 11px;
+}
+
+.sandbox-error {
+  padding: 6px 8px;
+  border: 1px dashed #e8bfb4;
+  border-radius: 9px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.sandbox-list {
+  max-height: 232px;
+  gap: 3px;
+}
+
+.sandbox-file {
+  appearance: none;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.sandbox-file:hover {
+  border-color: var(--line-soft);
+  background: #fbf1e3;
+}
+
+.sandbox-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sandbox-size {
+  flex: none;
+  color: var(--muted);
+  font-size: 9.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 沙盒文件弹窗 ─────────────────────────────────────────────────────── */
+
+.modal--file {
+  width: min(840px, calc(100vw - 28px));
+}
+
+.modal--file .modal-card {
+  max-height: 90dvh;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.file-card .modal-head {
+  flex: none;
+  padding: 16px 18px 10px;
+  border-bottom: 1px dashed var(--line);
+}
+
+.file-card .modal-head h2 {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-meta {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  padding: 8px 18px;
+  border-bottom: 1px dashed var(--line-soft);
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.file-meta code {
+  overflow-wrap: anywhere;
+  color: var(--coffee);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.file-card .form-error {
+  flex: none;
+  margin: 8px 18px 0;
+}
+
+.file-viewer {
+  flex: 1;
+  min-height: 160px;
+  overflow: auto;
+  background: #2f2822;
+}
+
+.file-viewer pre {
+  margin: 0;
+  padding: 14px 16px;
+  color: #f5ecdf;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.65;
+  tab-size: 2;
+  white-space: pre;
+}
+
+.file-card .modal-foot {
+  flex: none;
+  padding: 12px 18px 16px;
+  border-top: 1px dashed var(--line);
+  background: linear-gradient(180deg, rgba(251, 246, 238, 0.35), rgba(255, 253, 248, 0.94));
+}
+
+/* ── 设置 · 工具执行开关 ──────────────────────────────────────────────── */
+
+.switch-row {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch-row input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.switch-track {
+  position: relative;
+  flex: none;
+  width: 38px;
+  height: 22px;
+  border-radius: 999px;
+  background: #e6d8c7;
+  box-shadow: inset 0 1px 2px rgba(58, 46, 40, 0.12);
+  transition: background 0.18s ease;
+}
+
+.switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fffdf8;
+  box-shadow: 0 1px 3px rgba(58, 46, 40, 0.25);
+  transition: transform 0.18s ease;
+}
+
+.switch-row input:checked + .switch-track {
+  background: var(--caramel-deep);
+}
+
+.switch-row input:checked + .switch-track .switch-thumb {
+  transform: translateX(16px);
+}
+
+.switch-row input:focus-visible + .switch-track {
+  outline: 2px solid var(--coffee);
+  outline-offset: 2px;
+}
+
+.switch-text {
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 650;
+}
+
 /* ── 动效 ─────────────────────────────────────────────────────────────── */
 
 .msg--new {
@@ -3587,6 +3945,34 @@ button {
 
   .scenario-file-name {
     max-width: 160px;
+  }
+
+  .msg--tool .msg-main {
+    max-width: 94%;
+  }
+
+  .modal--file {
+    width: calc(100vw - 20px);
+  }
+
+  .file-card .modal-head {
+    padding: 14px 14px 9px;
+  }
+
+  .file-meta {
+    padding: 7px 14px;
+  }
+
+  .file-card .form-error {
+    margin: 8px 14px 0;
+  }
+
+  .file-card .modal-foot {
+    padding: 10px 14px 14px;
+  }
+
+  .tool-output pre {
+    max-height: 190px;
   }
 
   .settings-info-wide {

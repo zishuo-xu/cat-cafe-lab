@@ -26,6 +26,7 @@
 - **跨猫互审**：实现永远由非作者 review；`request_changes` 会真的触发一轮 revise。
 - **决策日志 + 共享记忆**：任务结束宪宪落 decision 和 lesson，后续任务会被大脑读到。
 - **故障与恢复**：`remember_me` 剧本里埋了一次"交接漏 @"，任务会真卡住——点「催一下」才恢复。
+- **真实工具**：金渐层在独立沙盒里真的写文件、真的跑测试；砚砚的 review 基于真实退出码和失败输出。
 
 ---
 
@@ -44,11 +45,12 @@ node src/main.ts      # 或 pnpm start
 点「＋ 新任务」→ 选「记住我」示例 → 「让猫猫开工」，然后看着就行。
 
 ```bash
-node --test tests/    # 96 个测试
+node --test tests/    # 113 个测试
 npx tsc --noEmit      # 类型检查
 ```
 
-默认端口 4318，可用 `PORT=4400` 覆盖；数据落在 `data/studio.json`，删掉就是重开一局。
+默认端口 4318，可用 `PORT=4400` 覆盖；数据落在 `data/studio.json`，
+沙盒项目在 `data/workspace/`，删掉这两个目录就是重开一局。
 
 ---
 
@@ -74,11 +76,45 @@ intake planning working reviewing revising done
 每个阶段有明确 owner：宪宪接单/规划/收尾，烁烁做设计、金渐层做实现，砚砚负责评审。
 评审打回后金渐层交 v2，砚砚通过后宪宪落决策与记忆。
 
-![完成后：评审通过、决策落库](docs/images/ui-done.png)
+![完成后：评审通过、决策落库](docs/images/tools-run.png)
 
 手机宽度下折叠成单列，底部「聊天 / 猫猫 / 工作台」三个 tab：
 
 <img src="docs/images/ui-mobile.png" alt="手机宽度" width="320" />
+
+---
+
+## 猫猫真的会干活（沙盒）
+
+到这一层，猫交付的不再是"看起来像代码的文字"。金渐层会在 `data/workspace/` 里真的写文件，
+然后跑 `node --test`；砚砚的 review 依据是**真实的退出码和失败输出**。
+
+工具只有四个，全部锁在沙盒根目录里：
+
+| 工具 | 能做什么 | 限制 |
+|---|---|---|
+| `read_file` | 读沙盒里的文件 | 拒绝绝对路径、`..`、越界 |
+| `write_file` | 写文件（自动建目录） | 单文件 ≤ 64KB |
+| `list_files` | 列目录 | 最多 200 条 |
+| `run_command` | 跑 `node` / `npm` | 命令白名单、不经过 shell、10s 超时、输出截断 |
+
+一次真实的「记住我」任务会看到 6 次工具调用：
+
+```
+write_file  src/remember.js v1   ✓
+run_command node --test ...      ✗ exit 1（过期后校验失败）
+run_command node --test ...      ✗ exit 1（砚砚复跑）
+write_file  src/remember.js v2   ✓
+run_command node --test ...      ✓ exit 0
+run_command node --test ...      ✓ exit 0（砚砚放行）
+```
+
+右侧「沙盒」面板能直接看文件树、点开文件看猫写进去的内容；
+设置里可以一键关掉工具执行（关掉后猫只产出文字方案），也可以重置沙盒回初始状态。
+
+![真实工具调用](docs/images/tools-run.png)
+
+![沙盒文件](docs/images/sandbox.png)
 
 ---
 
@@ -96,9 +132,14 @@ intake planning working reviewing revising done
 >
 > **烁烁**：设计稿交了：状态图加三段文案。勾选这件事，说白了是把「我信这台设备」讲成人话。
 >
-> **金渐层**：v1 通了：cookie 下发、校验、退出吊销都在。能跑，但我知道有个坑，先交出来让砚砚看。
+> **金渐层**：我先把 token 写出来，跑一遍测试；跑完再交卡。
 >
-> **金渐层**：砚砚，卡贴这儿了，过期和并发那两块重点帮我盯一下。
+> **金渐层**：✍️ 写入 `src/remember.js`……✓
+>
+> **金渐层**：▶️ 跑 `node --test test/remember.test.js`……✗ 退出码 1。
+> 「测试没全过：签发和有效期都过了，但『过期后校验失败』那条挂了——过期校验我还没补。」
+>
+> **金渐层**：能跑，但我知道有个坑，先交出来让砚砚看。砚砚，卡贴这儿了，过期和并发那两块重点帮我盯一下。
 >
 > *（任务卡住：交接卡写了给砚砚，但没带 @，消息没投出去。）*
 >
@@ -106,12 +147,12 @@ intake planning working reviewing revising done
 >
 > **宪宪**：我看了，金渐层那张交接卡写了给砚砚，但没带 @，消息根本没投出去。我这就把 @ 补上。
 >
-> **砚砚**：看完了，不通过。第 1 条，token 表没有过期时间，7 天免登录实际变成了永久免登录；
-> 第 2 条，勾选框默认勾选、也没绑 label，读屏用户不知道这是什么。
+> **砚砚**：▶️ 先跑测试……✗ 退出码 1，3 条挂了 1 条。
+> 「第 1 条，过期时间只是写进了记录，校验时根本没比较；第 2 条，勾选框默认勾选、也没绑 label。」
 >
-> **金渐层**：改完了。过期字段、校验、默认不勾、label 都补了。
+> **金渐层**：✍️ 写入 v2……✓ ▶️ 再跑……✓ 退出码 0。
 >
-> **砚砚**：这版可以。blocker 关掉，minor 收掉，approve。
+> **砚砚**：▶️ 再跑一遍……✓ 3 条全过。blocker 关掉，minor 收掉，approve。
 >
 > **宪宪**：收工。决策和教训各记一条进共享记忆，下次谁再提 remember-me 相关需求，直接接着往下走。
 
@@ -171,6 +212,7 @@ node src/main.ts
 | 数据 | 重置猫咖（二次确认，清空任务/消息/记忆） |
 | 猫猫与模型 | 改名字/称号/性格/口头禅/招呼语/主题色；真实模式下每只猫独立模型与温度 |
 | 剧本库 | 查看/导出/删除自定义剧本，导入 JSON 剧本 |
+| 工具执行 | 开关沙盒工具（写文件 / 跑命令）；关掉后猫只产出文字方案 |
 
 底部还有只读的运行信息（版本、端口、数据目录、Node、启动时间、stallMs）。
 只有 `mode / speed / baseUrl / model / temperature` 会落盘到 `data/settings.json`（0600），key 永远只在内存。
@@ -221,7 +263,8 @@ public/            原生 ESM + CSS，无构建、无框架
 src/server/http.ts    REST + SSE + 静态资源
 src/server/studio.ts  唯一状态容器，所有写操作走这里
 src/server/settings-store.ts  运行时设置：模式 / 节奏 / LLM（key 只在内存）
-src/engine/driver.ts  每房间串行队列：阶段机 / 路由 / 延迟 / 故障恢复
+src/tools/sandbox.ts  沙盒：路径锁根目录、命令白名单、10s 超时
+src/engine/driver.ts  每房间串行队列：阶段机 / 路由 / 延迟 / 工具执行 / 故障恢复
 src/agents/           brain：mock（剧本）或 llm（真实模型）
 src/domain/types.ts   唯一契约
 ```
@@ -237,8 +280,8 @@ src/domain/types.ts   唯一契约
 
 - **演出模式是半脚本的**：猫的反应由场景数据 + 当前阶段决定，不会真的理解任意新需求。
   这是为了让"没有 key 也能完整演示协作流程"；接了真实模型才会换脑子。
-- **猫交付的不是可执行代码**：spec / design / patch 摘要，不会真的改你的仓库。
-  这个项目的目标是协作过程本身，不是 coding agent。
+- **只在自带沙盒里干活**：猫会真的改 `data/workspace/` 里的 mini 项目、跑它的测试，
+  但**不会碰你的仓库**。真实模式下模型暂不产生工具调用，工具节拍由剧本驱动。
 - **本地单人**：没有鉴权、没有多用户、没有数据库。JSON 文件就是全部持久化。
 - **剧本台词不会自动改名**：改猫名后，@ 路由、名册、消息作者都用新名字，但剧本里写死的旧名字不会自动替换（剧本是数据，不是模板变量）。
 - **剧本要自己写**：内置两个（记住我、CSV 导出），也可以在「剧本库」导入 JSON；不写剧本的需求会走通用兜底回复。
@@ -251,14 +294,15 @@ src/domain/types.ts   唯一契约
 cat-cafe-lab/
 ├── src/
 │   ├── domain/        types.ts（契约）、ids.ts
-│   ├── server/        studio.ts、http.ts、settings.ts
+│   ├── server/        studio.ts、http.ts、settings.ts、settings-store.ts
+│   ├── tools/         sandbox.ts、seed.ts
 │   ├── engine/        driver.ts、stages.ts、mentions.ts
 │   ├── agents/        personas.ts、scenarios.ts、mock-brain.ts、llm-brain.ts
 │   └── main.ts
 ├── public/            index.html、app.js、styles.css、avatars.js
-├── tests/             engine / agents / llm / integration / settings / cats-scenarios / smoke（96 个）
+├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / smoke（113 个）
 ├── docs/              architecture.md、llm.md、images/
-├── data/              studio.json（gitignore）
+├── data/              studio.json、workspace/（gitignore）
 └── PLAN.md            设计与分工记录
 ```
 

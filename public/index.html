@@ -172,7 +172,7 @@
       <aside class="panel panel--work" aria-label="任务工作台">
         <header class="work-head">
           <h2>工作台</h2>
-          <p class="work-sub">任务进度 · 交接卡 · 产物 · 共享记忆</p>
+          <p class="work-sub">任务进度 · 交接卡 · 产物 · 沙盒 · 共享记忆</p>
         </header>
         <div class="work-scroll">
           <section class="card" aria-labelledby="progress-title">
@@ -197,6 +197,49 @@
               <span class="count" data-artifact-count>0</span>
             </div>
             <div id="artifact-list" class="artifact-list list-scroll"></div>
+          </section>
+
+          <section class="card" aria-labelledby="sandbox-title">
+            <div class="card-head">
+              <h2 id="sandbox-title">沙盒</h2>
+              <span class="count" data-sandbox-count>0</span>
+              <button
+                type="button"
+                class="btn btn--tiny btn--ghost sandbox-refresh"
+                data-action="refresh-sandbox"
+                id="sandbox-refresh-btn"
+                title="刷新沙盒文件列表"
+                aria-label="刷新沙盒文件列表"
+              >
+                ↻
+              </button>
+              <button
+                type="button"
+                class="btn btn--tiny btn--danger"
+                data-action="reset-sandbox"
+                id="sandbox-reset-btn"
+              >
+                重置沙盒
+              </button>
+            </div>
+            <div class="sandbox-error" id="sandbox-error" role="alert" hidden></div>
+            <div id="sandbox-list" class="sandbox-list list-scroll">
+              <div class="empty"><span>读取沙盒…</span></div>
+            </div>
+            <div class="danger-confirm" id="sandbox-reset-confirm" hidden>
+              <span>清空并重种沙盒文件？</span>
+              <button
+                type="button"
+                class="btn btn--danger btn--tiny"
+                data-action="confirm-reset-sandbox"
+                id="sandbox-confirm-reset"
+              >
+                确认重置
+              </button>
+              <button type="button" class="btn btn--ghost btn--tiny" data-action="cancel-reset-sandbox">
+                取消
+              </button>
+            </div>
           </section>
 
           <section class="card" aria-labelledby="memory-title">
@@ -281,7 +324,7 @@
         <header class="modal-head settings-head">
           <div class="settings-head-text">
             <h2 id="settings-title">设置</h2>
-            <p class="settings-head-sub">模式、LLM、猫猫与剧本、运行信息</p>
+            <p class="settings-head-sub">模式、工具、LLM、猫猫与剧本、运行信息</p>
           </div>
           <button type="button" class="icon-btn" data-action="close-settings" aria-label="关闭设置">
             ✕
@@ -313,7 +356,28 @@
             <p class="settings-inline-warn" id="settings-mode-warn" role="alert" hidden></p>
           </fieldset>
 
-          <!-- 2. LLM 连接 -->
+          <!-- 2. 工具执行 -->
+          <fieldset class="settings-section" id="settings-tools-section">
+            <legend class="settings-legend">工具执行</legend>
+            <p class="settings-desc">
+              允许猫在沙盒工作区里读写文件、运行命令。关闭后猫只产出文字，不写文件、不跑命令。
+            </p>
+            <label class="switch-row">
+              <input
+                type="checkbox"
+                id="settings-tools-toggle"
+                role="switch"
+                aria-describedby="settings-tools-hint"
+              />
+              <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+              <span class="switch-text">允许猫执行沙盒工具</span>
+            </label>
+            <span class="field-hint" id="settings-tools-hint">
+              开启：猫可以读/写工作区文件并运行命令；关闭：只产出文字。
+            </span>
+          </fieldset>
+
+          <!-- 3. LLM 连接 -->
           <fieldset class="settings-section" id="settings-llm-section">
             <legend class="settings-legend">LLM 连接</legend>
             <p class="settings-desc">
@@ -432,7 +496,7 @@
             </div>
           </fieldset>
 
-          <!-- 3. 猫猫与模型 -->
+          <!-- 4. 猫猫与模型 -->
           <fieldset class="settings-section" id="settings-cats-section">
             <legend class="settings-legend">猫猫与模型</legend>
             <p class="settings-desc">
@@ -443,7 +507,7 @@
             </div>
           </fieldset>
 
-          <!-- 4. 回复节奏 -->
+          <!-- 5. 回复节奏 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">回复节奏</legend>
             <p class="settings-desc">只影响演出与真实模式的打字节奏。</p>
@@ -463,7 +527,7 @@
             </div>
           </fieldset>
 
-          <!-- 5. 剧本库 -->
+          <!-- 6. 剧本库 -->
           <fieldset class="settings-section" id="settings-scenarios-section">
             <legend class="settings-legend">剧本库</legend>
             <p class="settings-desc">
@@ -539,7 +603,7 @@
             </div>
           </fieldset>
 
-          <!-- 6. 数据 -->
+          <!-- 7. 数据 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">数据</legend>
             <div class="settings-danger-row">
@@ -574,7 +638,7 @@
             </div>
           </fieldset>
 
-          <!-- 7. 关于 / 只读 -->
+          <!-- 8. 关于 / 只读 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">关于 / 运行信息</legend>
             <dl class="settings-info" id="settings-info">
@@ -663,6 +727,38 @@
           <button type="submit" class="btn btn--primary" id="cat-save-btn">保存档案</button>
         </footer>
       </form>
+    </dialog>
+
+
+    <!-- ── 沙盒文件查看弹窗 ───────────────────────────────────────── -->
+    <dialog id="sandbox-file-modal" class="modal modal--file" aria-labelledby="sandbox-file-title">
+      <div class="modal-card file-card">
+        <header class="modal-head">
+          <h2 id="sandbox-file-title">沙盒文件</h2>
+          <button
+            type="button"
+            class="icon-btn"
+            data-action="close-sandbox-file"
+            aria-label="关闭文件"
+          >
+            ✕
+          </button>
+        </header>
+        <p class="file-meta">
+          <code id="sandbox-file-path">—</code>
+          <span id="sandbox-file-size"></span>
+        </p>
+        <p class="form-error" id="sandbox-file-error" role="alert" hidden></p>
+        <div class="file-viewer">
+          <pre id="sandbox-file-content" tabindex="0">读取中…</pre>
+        </div>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-sandbox-file">关闭</button>
+          <button type="button" class="btn btn--primary" data-action="copy-sandbox-file" id="sandbox-copy-btn">
+            复制内容
+          </button>
+        </footer>
+      </div>
     </dialog>
 
     <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
