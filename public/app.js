@@ -122,6 +122,7 @@ const app = {
 
 /** 设置面板的临时状态（打开时才加载，关闭即丢弃草稿）。 */
 const settingsState = {
+  streamingAvailable: null,
   loading: false,
   ready: false,
   data: null,
@@ -168,6 +169,15 @@ const taskRecoveryState = {
   action: "",
   saving: false,
   error: "",
+};
+
+/** 流式草稿气泡 DOM 缓存。 */
+const draftBubbleState = {
+  node: null,
+  roomId: null,
+  catId: null,
+  text: "",
+  hideTimer: null,
 };
 
 /** 工作区 / 房间 / git 面板状态。 */
@@ -454,6 +464,15 @@ function roomMessages() {
   return room ? messages.filter((message) => message.roomId === room.id) : messages;
 }
 
+function currentDraft() {
+  const room = currentRoom();
+  if (!room) return null;
+  const draft = app.state?.drafts?.[room.id];
+  if (!draft || typeof draft !== "object") return null;
+  if (typeof draft.catId !== "string" || typeof draft.text !== "string") return null;
+  return draft;
+}
+
 // ── 工作区 / 房间作用域 ─────────────────────────────────────────────────
 
 const DEFAULT_WORKSPACE_ID = "ws_sandbox";
@@ -534,6 +553,8 @@ function activeTask() {
 }
 
 function catState(catId) {
+  const draft = currentDraft();
+  if (draft?.catId === catId) return "talking";
   const room = currentRoom();
   const typingCat = room ? app.state?.typing?.[room.id] : null;
   if (typingCat === catId) return "typing";
@@ -907,6 +928,8 @@ function cacheDom() {
   els.settingsInfo = $("#settings-info");
   els.settingsModeInputs = $$('input[name="settings-mode"]');
   els.settingsSpeedInputs = $$('input[name="settings-speed"]');
+  els.settingsStreaming = $("#settings-streaming");
+  els.settingsStreamingHint = $("#settings-streaming-hint");
   els.settingsBaseUrl = $("#settings-base-url");
   els.settingsModel = $("#settings-model");
   els.settingsApiKey = $("#settings-api-key");
@@ -1135,6 +1158,7 @@ function renderAll() {
   renderCurrentWorkspace();
   renderTimeline();
   syncToolCards();
+  renderDraftBubble();
   renderSandbox();
   updateNeedsMe();
   renderTypingHint();
@@ -1206,12 +1230,14 @@ function renderRoster() {
   const nodes = cats.map((cat, index) => {
     const status = statuses[index];
     const stageText =
-      status === "typing"
-        ? "打字中"
-        : status === "working"
-          ? `工作中 · ${STAGE_LABEL.get(workTask?.stage) ?? "进行中"}`
-          : "睡觉中";
-    const mood = status === "sleeping" ? "sleep" : status === "typing" ? "typing" : "idle";
+      status === "talking"
+        ? "说话中"
+        : status === "typing"
+          ? "打字中"
+          : status === "working"
+            ? `工作中 · ${STAGE_LABEL.get(workTask?.stage) ?? "进行中"}`
+            : "睡觉中";
+    const mood = status === "sleeping" ? "sleep" : status === "typing" || status === "talking" ? "typing" : "idle";
 
     return h(
       "button",
@@ -1244,7 +1270,7 @@ function renderRoster() {
         h(
           "span",
           { class: "cat-status" },
-          status === "typing"
+          status === "typing" || status === "talking"
             ? [typingDots(), document.createTextNode(` ${stageText}`)]
             : stageText,
         ),
@@ -2011,16 +2037,144 @@ function artifactNode(artifact) {
   return details;
 }
 
-// ── 中栏：timeline 增量渲染 ─────────────────────────────────────────────
+// ── 流式草稿气泡 ───────────────────────────────────────────────────────
+
+function clearDraftBubbleImmediate() {
+  if (draftBubbleState.hideTimer) {
+    window.clearTimeout(draftBubbleState.hideTimer);
+    draftBubbleState.hideTimer = null;
+  }
+  if (draftBubbleState.node) {
+    draftBubbleState.node.remove();
+  }
+  draftBubbleState.node = null;
+  draftBubbleState.roomId = null;
+  draftBubbleState.catId = null;
+  draftBubbleState.text = "";
+}
+
+function draftBubbleNode(draft) {
+  const cat = catById(draft.catId) ?? {};
+  const node = h("article", {
+    class: "msg msg--cat msg--chat draft-bubble",
+    style: `--accent:${safeCss(cat.accent ?? "#D9A066")}`,
+    role: "status",
+    "aria-live": "polite",
+    "aria-label": `${cat.name ?? "猫猫"}正在输入`,
+    "data-draft": "true",
+  });
+  node.appendChild(
+    h("div", {
+      class: "msg-avatar",
+      "aria-hidden": "true",
+      html: avatarSvg(cat, { size: 38 }),
+    }),
+  );
+  const main = h("div", { class: "msg-main" });
+  main.appendChild(
+    h(
+      "header",
+      { class: "msg-head" },
+      h("span", { class: "msg-author", text: cat.name ?? "猫猫" }),
+      h("span", {
+        class: "msg-role",
+        text: String(cat.title ?? "").split(" / ")[0],
+      }),
+      h(
+        "span",
+        { class: "draft-typing" },
+        typingDots(),
+        document.createTextNode(" 正在输入…"),
+      ),
+    ),
+  );
+  main.appendChild(
+    h("div", { class: "bubble", "data-role": "draft-text", text: draft.text || " " }),
+  );
+  main.appendChild(h("span", { class: "draft-pulse", "aria-hidden": "true" }, h("i")));
+  node.appendChild(main);
+  return node;
+}
+
+function removeDraftBubbleWithFade() {
+  const node = draftBubbleState.node;
+  draftBubbleState.node = null;
+  draftBubbleState.roomId = null;
+  draftBubbleState.catId = null;
+  draftBubbleState.text = "";
+  if (!node || !node.isConnected) return;
+  node.classList.add("is-leaving");
+  if (draftBubbleState.hideTimer) window.clearTimeout(draftBubbleState.hideTimer);
+  draftBubbleState.hideTimer = window.setTimeout(() => {
+    draftBubbleState.hideTimer = null;
+    node.remove();
+  }, 120);
+}
+
+function renderDraftBubble() {
+  const host = els.timeline;
+  if (!host) return;
+  const draft = currentDraft();
+  if (!draft) {
+    if (draftBubbleState.node) removeDraftBubbleWithFade();
+    return;
+  }
+  if (draftBubbleState.hideTimer) {
+    window.clearTimeout(draftBubbleState.hideTimer);
+    draftBubbleState.hideTimer = null;
+  }
+
+  const wasNearBottom = isNearBottom(els.timelineScroll);
+  const hadNoMessages = !host.querySelector(".msg:not(.draft-bubble), .sys-line, .task-divider");
+  const roomId = currentRoom()?.id ?? "";
+  let node = draftBubbleState.node;
+  const needsNew =
+    !node ||
+    !node.isConnected ||
+    draftBubbleState.roomId !== roomId ||
+    draftBubbleState.catId !== draft.catId ||
+    node.classList.contains("is-leaving");
+
+  if (needsNew) {
+    if (node) node.remove();
+    node = draftBubbleNode(draft);
+    host.querySelector(".timeline-empty")?.remove();
+    host.appendChild(node);
+    draftBubbleState.node = node;
+    draftBubbleState.roomId = roomId;
+    draftBubbleState.catId = draft.catId;
+    draftBubbleState.text = draft.text;
+  } else {
+    const bubble = node.querySelector('[data-role="draft-text"]');
+    if (bubble && draftBubbleState.text !== draft.text) {
+      const bubbleNearBottom =
+        bubble.scrollHeight - bubble.scrollTop - bubble.clientHeight < 30;
+      bubble.textContent = draft.text;
+      if (bubbleNearBottom) bubble.scrollTop = bubble.scrollHeight;
+      draftBubbleState.text = draft.text;
+    }
+    if (node.nextElementSibling) host.appendChild(node);
+  }
+  host.querySelector(".timeline-empty")?.remove();
+
+  if (wasNearBottom || hadNoMessages) {
+    scrollToBottom(false);
+  }
+}
+
+// ── 中栏：timeline 增量渲染 ─────────────────────────────────────────────// ── 中栏：timeline 增量渲染 ─────────────────────────────────────────────
 
 function renderTimeline() {
   const host = els.timeline;
   if (!host) return;
   const messages = roomMessages();
+  const draft = currentDraft();
   const timeline = app.timeline;
 
   if (!messages.length) {
-    if (!host.querySelector(".timeline-empty")) {
+    if (draft) {
+      host.querySelector(".timeline-empty")?.remove();
+    } else if (!host.querySelector(".timeline-empty")) {
       host.replaceChildren(
         h("div", { class: "timeline-empty", text: "房间很安静。提一个需求，或者 @ 一只猫聊两句。" }),
       );
@@ -2038,9 +2192,12 @@ function renderTimeline() {
     timeline.initialized = false;
   }
 
+  const hasStaleTimelineChildren = Boolean(
+    host.querySelector(".msg, .sys-line, .task-divider, [data-synthetic-tool]"),
+  );
   let rebuild =
     timeline.ids.length > messages.length ||
-    (timeline.ids.length === 0 && host.children.length > 0);
+    (timeline.ids.length === 0 && hasStaleTimelineChildren);
   if (!rebuild) {
     for (let index = 0; index < timeline.ids.length; index += 1) {
       if (timeline.ids[index] !== messages[index].id) {
@@ -3681,6 +3838,16 @@ async function loadSettings() {
 function resetSettingsForm() {
   setModeRadios(app.state?.mode === "llm" ? "llm" : "mock");
   setSpeedRadios("normal");
+  settingsState.streamingAvailable = null;
+  if (els.settingsStreaming) {
+    els.settingsStreaming.checked = true;
+    els.settingsStreaming.disabled = false;
+  }
+  if (els.settingsStreamingHint) {
+    els.settingsStreamingHint.textContent =
+      "开启后真实模式下猫的话会逐段出现；关闭则等整段说完再显示。演出模式不受影响。";
+    delete els.settingsStreamingHint.dataset.missing;
+  }
   if (els.settingsBaseUrl) els.settingsBaseUrl.value = "";
   if (els.settingsModel) els.settingsModel.value = "";
   if (els.settingsTemperature) els.settingsTemperature.value = "0.8";
@@ -3706,6 +3873,23 @@ function fillSettingsForm(data) {
 
   setModeRadios(mode);
   setSpeedRadios(speed);
+  const streamingAvailable = typeof data?.streaming === "boolean";
+  settingsState.streamingAvailable = streamingAvailable;
+  if (els.settingsStreaming) {
+    els.settingsStreaming.checked = streamingAvailable ? data.streaming : true;
+    els.settingsStreaming.disabled = !streamingAvailable;
+  }
+  if (els.settingsStreamingHint) {
+    if (streamingAvailable) {
+      els.settingsStreamingHint.textContent =
+        "开启后真实模式下猫的话会逐段出现；关闭则等整段说完再显示。演出模式不受影响。";
+      delete els.settingsStreamingHint.dataset.missing;
+    } else {
+      els.settingsStreamingHint.textContent =
+        "当前服务端未提供 streaming 字段（旧版本），开关不可用，按默认开启处理。";
+      els.settingsStreamingHint.dataset.missing = "true";
+    }
+  }
   if (els.settingsBaseUrl) els.settingsBaseUrl.value = llm.baseUrl ?? "";
   if (els.settingsModel) els.settingsModel.value = llm.model ?? "";
   const temperature = Number(llm.temperature);
@@ -3996,6 +4180,9 @@ function collectSettingsPatch() {
     speed: currentSpeedChoice(),
     toolsEnabled: els.settingsToolsToggle ? Boolean(els.settingsToolsToggle.checked) : true,
     toolApproval: els.settingsToolApproval?.value ?? "commands",
+    ...(settingsState.streamingAvailable
+      ? { streaming: els.settingsStreaming ? Boolean(els.settingsStreaming.checked) : true }
+      : {}),
     llm: {
       baseUrl: els.settingsBaseUrl?.value.trim() ?? "",
       model: els.settingsModel?.value.trim() ?? "",
@@ -6066,6 +6253,7 @@ function setRoom(roomId, options = {}) {
     app.selectedTaskId = null;
     app.timeline = { ids: [], lastTaskId: null, initialized: false };
     toolCardNodes.clear();
+    clearDraftBubbleImmediate();
     if (els.timeline) els.timeline.replaceChildren();
     app.expanded.clear();
     app.sig.tasks = null;

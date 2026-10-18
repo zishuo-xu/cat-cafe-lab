@@ -576,9 +576,17 @@ export function createDriver(deps: {
         let turns: CatTurn[] = [];
         try {
           await wait(THINK_DELAY_MS);
-          turns = await brain.think(buildContext(cat, room, task, trigger));
+          const context = buildContext(cat, room, task, trigger, (update) => {
+            // 只接受本房间的草稿，避免串台。
+            if (update.roomId !== room.id) return;
+            studio.setDraft(room.id, { catId: update.catId, text: update.text });
+          });
+          turns = await brain.think(context);
         } catch (err) {
           console.error(`[engine] ${cat.id} 的 brain 调用失败，按空轮次继续：`, err);
+        } finally {
+          // 无论成功失败，这一轮结束后草稿都要清掉（正式消息已落库）。
+          studio.setDraft(room.id, null);
         }
 
         const applied = await applyTurns(room, cat, task, turns);
@@ -1387,6 +1395,7 @@ export function createDriver(deps: {
     room: Room,
     task: Task | null,
     trigger: Trigger,
+    onDelta?: (update: { catId: CatId; roomId: RoomId; text: string }) => void,
   ): TurnContext {
     return {
       cat,
@@ -1400,6 +1409,7 @@ export function createDriver(deps: {
       recentToolResults: recentToolResults(task),
       availableTools: availableToolsFor(cat),
       skills: resolveSkillsForCat(cat),
+      ...(onDelta ? { onDelta } : {}),
       scenario: task
         ? SCENARIOS.find((scenario) => scenario.id === task.scenarioId) ?? null
         : null,

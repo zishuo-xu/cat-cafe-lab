@@ -104,6 +104,7 @@ function freshState(cats: Cat[], mode: BrainMode): StudioState {
     memory: [],
     toolCalls: [],
     typing: { [room.id]: null },
+    drafts: {},
     seq: 0,
     mode,
     startedAt: now(),
@@ -441,6 +442,21 @@ export class Studio {
 
   // ── 写：易变状态 ──────────────────────────────────────
 
+  /** 流式草稿：猫正在说的话。传 null 清空。 */
+  setDraft(roomId: RoomId, draft: { catId: CatId; text: string } | null): void {
+    const current = this.state.drafts[roomId];
+    if (!draft) {
+      if (!current) return;
+      delete this.state.drafts[roomId];
+      this.notify();
+      return;
+    }
+    // 文本没变就不推送，避免每个 token 都触发一次全量 SSE。
+    if (current && current.catId === draft.catId && current.text === draft.text) return;
+    this.state.drafts[roomId] = { catId: draft.catId, text: draft.text, at: now() };
+    this.notify();
+  }
+
   setTyping(roomId: RoomId, catId: CatId | null): void {
     if (!this.state.typing[roomId] && !catId) return;
     if (this.state.typing[roomId] === catId) return;
@@ -523,6 +539,7 @@ export class Studio {
       (entry) => !entry.sourceTaskId || !taskIds.has(entry.sourceTaskId),
     );
     delete this.state.typing[roomId];
+    delete this.state.drafts[roomId];
     this.notify();
     return removed;
   }
@@ -647,6 +664,7 @@ export class Studio {
     this.state.memory.length = 0;
     this.state.toolCalls.length = 0;
     for (const roomId of Object.keys(this.state.typing)) this.state.typing[roomId] = null;
+    this.state.drafts = {};
     this.state.startedAt = now();
     this.seedWelcome();
     this.notify();
@@ -719,6 +737,8 @@ export class Studio {
       this.state.memory = (parsed.memory ?? []) as MemoryEntry[];
       this.state.toolCalls = (parsed.toolCalls ?? []) as ToolCall[];
       this.state.typing = (parsed.typing ?? {}) as Record<RoomId, CatId | null>;
+      // 草稿是瞬态：重启后不恢复（否则会留下永远不消失的半截气泡）。
+      this.state.drafts = {};
 
       // 猫猫档案：以代码里的 CATS 为底，只接受安全的字段覆盖。
       const baseCats = this.state.cats;

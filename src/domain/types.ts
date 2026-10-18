@@ -219,6 +219,11 @@ export interface StudioState {
   toolCalls: ToolCall[];
   /** roomId -> 正在打字的猫（同一房间同时只有一只猫打字）。 */
   typing: Record<RoomId, CatId | null>;
+  /**
+   * 流式草稿：猫正在说但还没成型的文字。
+   * 最终消息落库时清空；为空对象表示没有草稿。
+   */
+  drafts: Record<RoomId, { catId: CatId; text: string; at: number } | null>;
   /** 单调递增，SSE 用。 */
   seq: number;
   mode: BrainMode;
@@ -269,6 +274,13 @@ export interface TurnContext {
   availableTools: ToolDefinition[];
   /** 这只猫挂载的技能包。 */
   skills: Skill[];
+  /**
+   * 流式增量回调（可选）。brain 在生成过程中可以把"正在说的话"陆续推过来，
+   * 前端渲染成半透明草稿气泡；最终 turn 落库后草稿会被正式消息替换。
+   *
+   * mock brain 不需要实现它；llm-brain 只在支持流式时调用。
+   */
+  onDelta?: (delta: DeltaUpdate) => void;
   /** 场景数据（mock brain 用于取台词模板）。 */
   scenario: Scenario | null;
 }
@@ -328,6 +340,14 @@ export type CatTurn =
       text: string;
       delayMs?: number;
     };
+
+/** 流式增量：一只猫正在打的字。 */
+export interface DeltaUpdate {
+  catId: CatId;
+  roomId: RoomId;
+  /** 已累计的完整草稿文本（不是本段增量）。 */
+  text: string;
+}
 
 export interface CatBrain {
   readonly mode: BrainMode;
@@ -556,6 +576,8 @@ export interface PublicSettings {
   toolsEnabled: boolean;
   /** 审批策略：auto / commands / all。 */
   toolApproval: ToolApprovalMode;
+  /** 真实模式是否用流式输出（真机首字/首句更快出现）。 */
+  streaming: boolean;
   port: number;
   dataDir: string;
   version: string;
@@ -570,6 +592,7 @@ export interface SettingsPatch {
   speed?: Speed;
   toolsEnabled?: boolean;
   toolApproval?: ToolApprovalMode;
+  streaming?: boolean;
   llm?: {
     baseUrl?: string;
     model?: string;

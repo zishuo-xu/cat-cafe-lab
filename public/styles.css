@@ -1126,6 +1126,71 @@ button {
   color: var(--coffee-deep);
 }
 
+/* ── 流式草稿气泡 ─────────────────────────────────────────────────────── */
+
+.draft-bubble {
+  opacity: 0.78;
+  transition: opacity 0.12s ease, transform 0.12s ease;
+  pointer-events: none;
+}
+
+.draft-bubble.is-leaving {
+  opacity: 0;
+  transform: translateY(4px);
+}
+
+.draft-bubble .msg-main {
+  position: relative;
+}
+
+.draft-bubble .bubble {
+  max-height: 10.4em;
+  padding-right: 30px;
+  overflow-y: auto;
+  border-style: dashed;
+  background: rgba(255, 253, 248, 0.72);
+  box-shadow: none;
+}
+
+.draft-bubble .bubble::-webkit-scrollbar-thumb {
+  background: #d8c4ae;
+}
+
+.draft-typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--caramel-deep);
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+.draft-pulse {
+  position: absolute;
+  right: 2px;
+  bottom: 3px;
+  display: inline-flex;
+  width: 13px;
+  height: 13px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(201, 154, 94, 0.16);
+}
+
+.draft-pulse i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--caramel-deep);
+  animation: pulse-dot 1.2s ease-in-out infinite;
+}
+
+.cat-row[data-state="talking"] .cat-status {
+  color: var(--caramel-deep);
+  font-weight: 700;
+}
+
 .mention {
   padding: 0 3px;
   border-radius: 5px;
@@ -2657,6 +2722,13 @@ button {
 .settings-section:last-child {
   padding-bottom: 4px;
   border-bottom: 0;
+}
+
+.settings-streaming {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
 }
 
 .settings-legend {
@@ -5454,6 +5526,11 @@ button {
   .tool-approval-countdown,
   .tool-approval-note {
     flex-basis: 100%;
+  }
+
+  .draft-bubble .bubble {
+    max-height: 8.8em;
+    padding-right: 26px;
   }
 
   .icon-btn.chat-settings {

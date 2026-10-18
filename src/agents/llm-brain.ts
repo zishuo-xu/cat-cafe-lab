@@ -88,6 +88,8 @@ export interface LlmBrainOptions {
   timeoutMs?: number;
   /** 覆盖默认 max_tokens。 */
   maxTokens?: number;
+  /** 是否请求流式响应（driver 传 ctx.onDelta 时才真正生效）。 */
+  streaming?: boolean;
   /** 可注入的 fetch 实现（测试用），默认 globalThis.fetch。 */
   fetchImpl?: typeof fetch;
 }
@@ -140,6 +142,7 @@ export function createLlmBrain(
 
       // 推理型模型的思考链也消耗 completion budget：被截断时用更大预算重试一次，
       // 仍失败才降级到 mock。retried 是每只猫每次 think 的状态。
+      const useStream = Boolean(options.streaming) && typeof ctx.onDelta === "function";
       let retried = false;
       let attemptTokens = maxTokens;
       for (;;) {
@@ -147,7 +150,7 @@ export function createLlmBrain(
           model,
           temperature,
           max_tokens: attemptTokens,
-          stream: false,
+          stream: useStream,
           messages: [
             { role: "system", content: buildSystemPrompt(ctx, model) },
             { role: "user", content: buildUserPrompt(ctx) },
@@ -172,15 +175,25 @@ export function createLlmBrain(
             return await downgrade(`HTTP ${response.status}`);
           }
 
-          let payload: unknown;
-          try {
-            payload = await response.json();
-          } catch {
-            return await downgrade("响应不是合法 JSON envelope");
+          let content: string | null;
+          let finish: string | null;
+          if (useStream) {
+            const streamed = await consumeStream(response, ctx);
+            if (streamed === null) {
+              return await downgrade("流式响应无法解析");
+            }
+            content = streamed.content;
+            finish = streamed.finishReason;
+          } else {
+            let payload: unknown;
+            try {
+              payload = await response.json();
+            } catch {
+              return await downgrade("响应不是合法 JSON envelope");
+            }
+            content = extractContent(payload);
+            finish = finishReasonOf(payload);
           }
-
-          const content = extractContent(payload);
-          const finish = finishReasonOf(payload);
           if (finish === "length" && !retried) {
             retried = true;
             attemptTokens = Math.max(attemptTokens, ESCALATED_MAX_TOKENS);
@@ -227,6 +240,98 @@ export function createLlmBrain(
 }
 
 // ───────────────────────── 响应解析 ─────────────────────────
+
+/**
+ * 消费 OpenAI 兼容的 SSE 流。返回完整 content 与 finish_reason。
+ *
+ * 增量只在「能解析出人话」时才推给前端：模型输出的是 JSON，直接把裸 JSON 推上去
+ * 会看到一堆括号。这里用简单的启发式——等出现 `"text":"..."` 时才开始推内容，
+ * 并且只推已经闭合的、看起来像人话的部分。
+ */
+async function consumeStream(
+  response: Response,
+  ctx: TurnContext,
+): Promise<{ content: string; finishReason: string | null } | null> {
+  const body = response.body;
+  if (!body) return null;
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let content = "";
+  let finishReason: string | null = null;
+  let drafted = "";
+
+  const pushDraft = (): void => {
+    const visible = extractVisibleText(content);
+    if (!visible || visible === drafted) return;
+    drafted = visible;
+    ctx.onDelta?.({ catId: ctx.cat.id, roomId: ctx.room.id, text: visible });
+  };
+
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      buffer += decoder.decode(chunk.value, { stream: true });
+      let index = buffer.indexOf("\n");
+      while (index >= 0) {
+        const line = buffer.slice(0, index).trim();
+        buffer = buffer.slice(index + 1);
+        index = buffer.indexOf("\n");
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        let event: unknown;
+        try {
+          event = JSON.parse(payload);
+        } catch {
+          continue;
+        }
+        if (!isRecord(event)) continue;
+        const choices = event.choices;
+        if (!Array.isArray(choices) || choices.length === 0) continue;
+        const first = choices[0];
+        if (!isRecord(first)) continue;
+        const delta = first.delta;
+        if (isRecord(delta) && typeof delta.content === "string") {
+          content += delta.content;
+          pushDraft();
+        }
+        if (typeof first.finish_reason === "string") finishReason = first.finish_reason;
+      }
+    }
+  } catch {
+    // 流中断：保留已经收到的内容，交给上层判断。
+    if (!content) return null;
+  } finally {
+    reader.releaseLock?.();
+  }
+  return { content, finishReason };
+}
+
+/**
+ * 从「还没写完的 JSON」里尽量抽出一段可读文本，用于流式预览。
+ *
+ * 模型输出是 CatTurn[] JSON，我们只想要其中 "text": "..." 的值。
+ * 做法：找所有 `"text":"` 之后的内容，取最后一个（通常就是正在写的那句），
+ * 处理常见转义，截断到 400 字，并在没有闭合引号时去掉尾巴。
+ */
+function extractVisibleText(raw: string): string {
+  const marker = '"text":"';
+  const index = raw.lastIndexOf(marker);
+  if (index < 0) return "";
+  let rest = raw.slice(index + marker.length);
+  // 还没闭合：去掉末尾可能不完整的转义序列。
+  const closed = rest.indexOf('"');
+  if (closed >= 0) rest = rest.slice(0, closed);
+  else rest = rest.replace(/\\[a-z]?$/, "");
+  const text = rest
+    .replace(/\\n/g, "\n")
+    .replace(/\\t/g, " ")
+    .replace(/\\"/g, '"')
+    .replace(/\\\\/g, "\\");
+  return text.slice(-400);
+}
 
 /** 取 finish_reason（用于区分"被截断"与"真的空响应"）。 */
 function finishReasonOf(payload: unknown): string | null {

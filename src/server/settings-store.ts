@@ -53,6 +53,7 @@ interface PersistedSettings {
   speed?: Speed;
   toolsEnabled?: boolean;
   toolApproval?: ToolApprovalMode;
+  streaming?: boolean;
   llm?: {
     baseUrl?: string;
     model?: string;
@@ -74,6 +75,7 @@ export class SettingsStore implements SettingsApi {
   private speed: Speed;
   private toolsEnabled: boolean;
   private toolApproval: ToolApprovalMode;
+  private streaming: boolean;
   private baseUrl: string;
   private model: string;
   private temperature: number;
@@ -108,6 +110,7 @@ export class SettingsStore implements SettingsApi {
     this.speed = persisted.speed ?? "normal";
     this.toolsEnabled = persisted.toolsEnabled ?? opts.settings.toolsEnabled ?? true;
     this.toolApproval = persisted.toolApproval ?? opts.settings.toolApproval ?? "commands";
+    this.streaming = persisted.streaming ?? true;
     this.baseUrl = persisted.llm?.baseUrl ?? env?.baseUrl ?? "";
     this.model = persisted.llm?.model ?? env?.model ?? "";
     this.temperature = clampTemperature(
@@ -135,6 +138,10 @@ export class SettingsStore implements SettingsApi {
     return this.toolApproval;
   }
 
+  streamingOn(): boolean {
+    return this.streaming;
+  }
+
   getPublic(): PublicSettings {
     return {
       mode: this.mode,
@@ -149,6 +156,7 @@ export class SettingsStore implements SettingsApi {
       stallMs: this.stallMs,
       toolsEnabled: this.toolsEnabled,
       toolApproval: this.toolApproval,
+      streaming: this.streaming,
       port: this.port,
       dataDir: this.dataDirAbs,
       version: this.version,
@@ -161,6 +169,9 @@ export class SettingsStore implements SettingsApi {
   async update(patch: SettingsPatch): Promise<PublicSettings> {
     if (patch.mode !== undefined && patch.mode !== "mock" && patch.mode !== "llm") {
       throw new Error("mode 只能是 mock 或 llm");
+    }
+    if (patch.streaming !== undefined && typeof patch.streaming !== "boolean") {
+      throw new Error("streaming 必须是布尔值");
     }
     if (patch.speed !== undefined && !(patch.speed in SPEED_FACTOR)) {
       throw new Error("speed 只能是 slow / normal / fast");
@@ -180,6 +191,7 @@ export class SettingsStore implements SettingsApi {
     const nextMode = patch.mode ?? this.mode;
     const nextSpeed = patch.speed ?? this.speed;
     const nextToolsEnabled = patch.toolsEnabled ?? this.toolsEnabled;
+    const nextStreaming = patch.streaming ?? this.streaming;
     const nextToolApproval = patch.toolApproval ?? this.toolApproval;
 
     let baseUrl = this.baseUrl;
@@ -219,11 +231,13 @@ export class SettingsStore implements SettingsApi {
       baseUrl !== this.baseUrl ||
       model !== this.model ||
       temperature !== this.temperature ||
-      apiKey !== this.apiKey;
+      apiKey !== this.apiKey ||
+      nextStreaming !== this.streaming;
 
     this.mode = nextMode;
     this.speed = nextSpeed;
     this.toolsEnabled = nextToolsEnabled;
+    this.streaming = nextStreaming;
     this.toolApproval = nextToolApproval;
     this.baseUrl = baseUrl;
     this.model = model;
@@ -288,6 +302,7 @@ export class SettingsStore implements SettingsApi {
   }
 
   private applyBrain(): void {
+    const streamingEnabled = this.streaming;
     if (this.mode === "llm") {
       const settings: LlmSettings = {
         baseUrl: this.baseUrl,
@@ -295,7 +310,14 @@ export class SettingsStore implements SettingsApi {
         apiKey: this.apiKey,
         temperature: this.temperature,
       };
-      this.switchable.set(createLlmBrain(settings, this.mock));
+      this.switchable.set(
+        createLlmBrain(settings, this.mock, {
+          // 流式：仅在真有 ctx.onDelta 时才发流式请求（见 llm-brain 内部判断）。
+          get streaming() {
+            return streamingEnabled;
+          },
+        }),
+      );
     } else {
       this.switchable.set(this.mock);
     }
@@ -321,6 +343,7 @@ export class SettingsStore implements SettingsApi {
         speed: this.speed,
         toolsEnabled: this.toolsEnabled,
         toolApproval: this.toolApproval,
+        streaming: this.streaming,
         llm: {
           baseUrl: this.baseUrl,
           model: this.model,
