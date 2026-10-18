@@ -67,6 +67,7 @@ export interface AddWorkspaceInput {
   name?: unknown;
   path?: unknown;
   policy?: unknown;
+  branchPerTask?: unknown;
 }
 
 export class WorkspaceManager {
@@ -138,6 +139,7 @@ export class WorkspaceManager {
       policy,
       kind: "repo",
       isGit: existsSync(join(canonical, ".git")),
+      branchPerTask: raw["branchPerTask"] !== false,
       createdAt: Date.now(),
     };
     this.custom.push(workspace);
@@ -192,6 +194,150 @@ export class WorkspaceManager {
     };
   }
 
+  /**
+   * 任务开始时建分支：只有读写 git 仓库、branchPerTask=true、工作树干净时才建。
+   * 任何一步失败都返回 error，不半途留垃圾状态。
+   */
+  async createTaskBranch(
+    workspaceId: string,
+    taskId: string,
+  ): Promise<{ branch?: string; baseBranch?: string; baseCommit?: string; error?: string }> {
+    const workspace = this.get(workspaceId);
+    if (!workspace) return { error: "工作区不存在" };
+    if (!workspace.isGit) return { error: "不是 git 仓库，跳过任务分支" };
+    if (workspace.policy !== "read-write") return { error: "只读工作区不创建任务分支" };
+    if (!workspace.branchPerTask) return {};
+
+    const current = await this.git(workspace.root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    if (current.ok && current.stdout.trim().startsWith("catcafe/")) {
+      return { error: `当前在任务分支 ${current.stdout.trim()} 上，请先提交或回滚再开新任务` };
+    }
+
+    const status = await this.git(workspace.root, ["status", "--porcelain=v1"]);
+    if (!status.ok) return { error: status.stderr.trim() || "git status 失败" };
+    if (status.stdout.trim()) {
+      return { error: "工作区有未提交改动，未创建任务分支；请先清理工作树" };
+    }
+
+    const baseBranch = await this.git(workspace.root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    const baseCommit = await this.git(workspace.root, ["rev-parse", "HEAD"]);
+    const branch = `catcafe/${taskId}`;
+    const created = await this.git(workspace.root, ["checkout", "-b", branch]);
+    if (!created.ok) return { error: created.stderr.trim() || "创建分支失败" };
+    return {
+      branch,
+      baseBranch: baseBranch.stdout.trim(),
+      baseCommit: baseCommit.stdout.trim(),
+    };
+  }
+
+  /** 任务 diff：已提交看 base...branch，否则看当前工作树。 */
+  async taskDiff(
+    workspaceId: string,
+    taskGit?: { branch?: string; baseBranch?: string; commit?: string },
+  ): Promise<{ ok: boolean; branch?: string; base?: string; status?: string; diff: string; error?: string }> {
+    const workspace = this.get(workspaceId);
+    if (!workspace) return { ok: false, diff: "", error: "工作区不存在" };
+    if (!workspace.isGit) return { ok: false, diff: "", error: "不是 git 仓库" };
+
+    const status = await this.git(workspace.root, ["status", "--porcelain=v1"]);
+    const range =
+      taskGit?.branch && taskGit.commit && taskGit.baseBranch
+        ? `${taskGit.baseBranch}...${taskGit.branch}`
+        : null;
+    const diff = await this.git(
+      workspace.root,
+      range ? ["diff", "--no-color", range] : ["diff", "--no-color"],
+    );
+    if (!diff.ok) return { ok: false, diff: "", error: diff.stderr.trim() || "git diff 失败" };
+    const text = diff.stdout.length > MAX_GIT_OUTPUT
+      ? `${diff.stdout.slice(0, MAX_GIT_OUTPUT)}\n…（diff 已截断）`
+      : diff.stdout;
+    return {
+      ok: true,
+      ...(taskGit?.branch ? { branch: taskGit.branch } : {}),
+      ...(taskGit?.baseBranch ? { base: taskGit.baseBranch } : {}),
+      status: status.ok ? status.stdout.trim().slice(0, 20_000) : undefined,
+      diff: text,
+    };
+  }
+
+  /** 人工确认后提交：只允许读写 git 工作区；在任务分支上时校验分支。 */
+  async commitTask(
+    workspaceId: string,
+    taskGit: { branch?: string; baseBranch?: string } | undefined,
+    message: string,
+  ): Promise<{ ok: boolean; commit?: string; error?: string }> {
+    const workspace = this.get(workspaceId);
+    if (!workspace) return { ok: false, error: "工作区不存在" };
+    if (!workspace.isGit) return { ok: false, error: "不是 git 仓库" };
+    if (workspace.policy !== "read-write") {
+      return { ok: false, error: "只读工作区不能提交，请先授予读写权限" };
+    }
+    const cleanMessage = message.trim();
+    if (!cleanMessage || cleanMessage.length > 200) {
+      return { ok: false, error: "commit message 需要 1–200 个字符" };
+    }
+    if (!taskGit?.branch) {
+      return {
+        ok: false,
+        error: "任务没有独立分支，拒绝提交；请在工作区开启「任务分支」后重新开任务",
+      };
+    }
+    {
+      const current = await this.git(workspace.root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+      if (!current.ok || current.stdout.trim() !== taskGit.branch) {
+        return { ok: false, error: `当前不在任务分支 ${taskGit.branch} 上，拒绝提交` };
+      }
+    }
+    const added = await this.git(workspace.root, ["add", "-A"]);
+    if (!added.ok) return { ok: false, error: added.stderr.trim() || "git add 失败" };
+    const committed = await this.git(workspace.root, ["commit", "-m", cleanMessage]);
+    if (!committed.ok) {
+      const detail = `${committed.stdout}\n${committed.stderr}`.trim();
+      return { ok: false, error: detail.includes("nothing to commit") ? "没有可提交的改动" : detail };
+    }
+    const head = await this.git(workspace.root, ["rev-parse", "HEAD"]);
+    // 提交后回到 base 分支，任务分支保留给人工 review / merge。
+    if (taskGit?.baseBranch) {
+      await this.git(workspace.root, ["checkout", taskGit.baseBranch]);
+    }
+    return { ok: true, ...(head.ok ? { commit: head.stdout.trim() } : {}) };
+  }
+
+  /**
+   * 回滚：用 git stash -u 收走改动（可恢复），有任务分支时切回 base 并删除空分支。
+   * 已提交的任务拒绝回滚，避免动历史。
+   */
+  async rollbackTask(
+    workspaceId: string,
+    taskGit: { branch?: string; baseBranch?: string; commit?: string } | undefined,
+    taskId: string,
+  ): Promise<{ ok: boolean; stash?: string; error?: string; note?: string }> {
+    const workspace = this.get(workspaceId);
+    if (!workspace) return { ok: false, error: "工作区不存在" };
+    if (!workspace.isGit) return { ok: false, error: "不是 git 仓库" };
+    if (workspace.policy !== "read-write") {
+      return { ok: false, error: "只读工作区不能回滚，请先授予读写权限" };
+    }
+    if (taskGit?.commit) {
+      return { ok: false, error: "任务已提交，回滚请手动处理分支（stash 不会撤销 commit）" };
+    }
+    const status = await this.git(workspace.root, ["status", "--porcelain=v1"]);
+    if (status.ok && !status.stdout.trim()) {
+      return { ok: true, note: "没有改动需要回滚" };
+    }
+    const label = `catcafe-rollback-${taskId}`;
+    const stash = await this.git(workspace.root, ["stash", "push", "-u", "-m", label]);
+    if (!stash.ok) return { ok: false, error: stash.stderr.trim() || "git stash 失败" };
+
+    if (taskGit?.branch) {
+      if (taskGit.baseBranch) await this.git(workspace.root, ["checkout", taskGit.baseBranch]);
+      await this.git(workspace.root, ["branch", "-D", taskGit.branch]);
+    }
+    return { ok: true, stash: label, note: `改动已收进 ${label}，可用 git stash list 找回` };
+  }
+
   close(): void {
     this.sandboxes.clear();
   }
@@ -206,6 +352,7 @@ export class WorkspaceManager {
       policy: "read-write",
       kind: "sandbox",
       isGit: false,
+      branchPerTask: false,
       createdAt: 0,
     };
   }
@@ -259,6 +406,7 @@ export class WorkspaceManager {
           policy: record["policy"] === "read-write" ? "read-write" : "read-only",
           kind: "repo",
           isGit: existsSync(join(record["root"], ".git")),
+          branchPerTask: record["branchPerTask"] !== false,
           createdAt: typeof record["createdAt"] === "number" ? record["createdAt"] : Date.now(),
         });
       }

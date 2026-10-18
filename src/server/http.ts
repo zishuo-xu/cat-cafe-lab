@@ -679,6 +679,25 @@ export function createHttpServer(deps: HttpDeps): Server {
           ? body.scenarioId
           : pickScenario(scenarios, brief);
       const task = studio.createTask({ roomId, brief, scenarioId });
+      // 读写 git 工作区：任务开始前建分支（工作树不干净时只记录提示，不阻塞任务）。
+      const room = studio.getRoom(roomId);
+      if (room && workspaces) {
+        const workspace = workspaces.get(room.workspaceId ?? "");
+        if (
+          workspace &&
+          workspace.isGit &&
+          workspace.policy === "read-write" &&
+          workspace.branchPerTask
+        ) {
+          const branch = await workspaces.createTaskBranch(workspace.id, task.id);
+          studio.updateTaskGit(task.id, {
+            ...(branch.branch ? { branch: branch.branch } : {}),
+            ...(branch.baseBranch ? { baseBranch: branch.baseBranch } : {}),
+            ...(branch.baseCommit ? { baseCommit: branch.baseCommit } : {}),
+            ...(branch.error ? { error: branch.error } : {}),
+          });
+        }
+      }
       studio.appendMessage({
         roomId,
         author: "user",
@@ -689,6 +708,78 @@ export function createHttpServer(deps: HttpDeps): Server {
       driver.submit({ type: "task_created", roomId, taskId: task.id });
       json(res, 201, task);
       return;
+    }
+
+    {
+      const taskGitMatch = /^\/api\/tasks\/([^/]+)\/(diff|commit|rollback)$/.exec(pathname);
+      if (taskGitMatch) {
+        if (!workspaces) {
+          fail(res, 503, "workspace manager not enabled");
+          return;
+        }
+        const taskId = decodeURIComponent(taskGitMatch[1] ?? "");
+        const action = taskGitMatch[2];
+        const task = studio.getTask(taskId);
+        if (!task) {
+          fail(res, 404, "任务不存在");
+          return;
+        }
+        const room = studio.getRoom(task.roomId);
+        const workspace = room ? workspaces.get(room.workspaceId ?? "") : undefined;
+        if (!workspace) {
+          fail(res, 400, "任务所在房间没有工作区");
+          return;
+        }
+
+        if (action === "diff" && method === "GET") {
+          json(res, 200, await workspaces.taskDiff(workspace.id, task.git));
+          return;
+        }
+
+        if (action === "commit" && method === "POST") {
+          const body = (await readBody(req)) as { message?: unknown; confirm?: unknown };
+          if (body.confirm !== true) {
+            fail(res, 400, "提交需要显式确认（confirm: true）");
+            return;
+          }
+          const message = typeof body.message === "string" ? body.message : "";
+          const result = await workspaces.commitTask(workspace.id, task.git, message);
+          if (!result.ok) {
+            fail(res, 400, result.error ?? "commit failed");
+            return;
+          }
+          const updated = studio.updateTaskGit(task.id, {
+            ...task.git,
+            ...(result.commit ? { commit: result.commit } : {}),
+            committedAt: Date.now(),
+          });
+          json(res, 200, { ok: true, commit: result.commit, task: updated });
+          return;
+        }
+
+        if (action === "rollback" && method === "POST") {
+          const body = (await readBody(req)) as { confirm?: unknown };
+          if (body.confirm !== true) {
+            fail(res, 400, "回滚需要显式确认（confirm: true）");
+            return;
+          }
+          const result = await workspaces.rollbackTask(workspace.id, task.git, task.id);
+          if (!result.ok) {
+            fail(res, 400, result.error ?? "rollback failed");
+            return;
+          }
+          const updated = studio.updateTaskGit(task.id, {
+            ...(task.git?.baseBranch ? { baseBranch: task.git.baseBranch } : {}),
+            ...(task.git?.baseCommit ? { baseCommit: task.git.baseCommit } : {}),
+            stashedAt: Date.now(),
+          });
+          json(res, 200, { ok: true, note: result.note, stash: result.stash, task: updated });
+          return;
+        }
+
+        fail(res, 405, "method not allowed");
+        return;
+      }
     }
 
     const nudgeMatch = /^\/api\/tasks\/([^/]+)\/nudge$/.exec(pathname);

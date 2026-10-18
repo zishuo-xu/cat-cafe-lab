@@ -113,6 +113,20 @@ export interface TaskStep {
 
 export type TaskStatus = "active" | "done" | "stalled";
 
+export interface TaskGit {
+  /** 任务分支（catcafe/<taskId>）。 */
+  branch?: string;
+  baseBranch?: string;
+  baseCommit?: string;
+  /** 人工确认后产生的 commit。 */
+  commit?: string;
+  committedAt?: number;
+  /** 已回滚（stash 可恢复）的时间。 */
+  stashedAt?: number;
+  /** 建分支失败等提示。 */
+  error?: string;
+}
+
 export interface Task {
   id: TaskId;
   roomId: RoomId;
@@ -127,6 +141,8 @@ export interface Task {
   createdAt: number;
   updatedAt: number;
   doneAt?: number;
+  /** git 工作流状态（仅 git 工作区）。 */
+  git?: TaskGit;
 }
 
 // ───────────────────────── 交接卡与产物 ─────────────────────────
@@ -461,6 +477,8 @@ export interface Workspace {
   policy: WorkspacePolicy;
   kind: "sandbox" | "repo";
   isGit: boolean;
+  /** 任务开始时是否创建 catcafe/<taskId> 分支（仅读写 git 仓库生效）。 */
+  branchPerTask: boolean;
   createdAt: number;
 }
 

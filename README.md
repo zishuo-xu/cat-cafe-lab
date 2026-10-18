@@ -29,7 +29,7 @@
 - **真实工具**：金渐层在独立沙盒里真的写文件、真的跑测试；砚砚的 review 基于真实退出码和失败输出。
 - **真实模式工具调用 + 审批**：模型可以主动请求工具，执行结果回喂给它继续推理；跑命令前可以挂起等铲屎官批准。
 - **工具注册表 + MCP + 技能**：工具不再写死，MCP server 的工具动态注册；每只猫有自己的工具权限和技能包。
-- **多房间 + 真实仓库**：一个房间绑定一个工作区；真实仓库默认只读，git 状态/diff 只读查看。
+- **多房间 + 真实仓库**：一个房间绑定一个工作区；真实仓库默认只读，任务分支 + diff + 人工确认 commit + stash 回滚。
 
 ---
 
@@ -48,7 +48,7 @@ node src/main.ts      # 或 pnpm start
 点「＋ 新任务」→ 选「记住我」示例 → 「让猫猫开工」，然后看着就行。
 
 ```bash
-node --test tests/    # 173 个测试
+node --test tests/    # 181 个测试
 npx tsc --noEmit      # 类型检查
 ```
 
@@ -179,8 +179,26 @@ run_command node --test ...      ✓ exit 0（砚砚放行）
 
 ![git 状态与 diff](docs/images/git.png)
 
-> 下一步（C-2）：任务开始时建分支、review 真实 diff、人工确认后 commit、一键回滚（stash 可恢复）。
-> 在此之前，git 写操作请自己在终端做。
+### 任务级 git 工作流
+
+读写 git 工作区里开任务时，会自动从当前 base 分支切出 `catcafe/<taskId>`：
+
+1. 猫在一个独立任务分支上改文件，工作树不干净 / 已有未收尾任务分支时**不会硬开**，只记录提示；
+2. 右侧「任务 Git」卡显示分支、base、工作树改动数；「查看 diff」是真实 `git diff`；
+3. 「提交」必须填 message + 勾选确认，服务端再校验 `confirm:true` 与当前分支；
+   提交后自动切回 base 分支，任务分支保留给你 review / merge；
+4. 「回滚」用 `git stash push -u` 收走改动（可 `git stash list` 找回），切回 base 并删除空任务分支；
+   已提交的任务拒绝回滚，避免动历史；
+5. 只读工作区、非 git 工作区、`branchPerTask` 关闭时不允许提交。
+
+![任务 Git 卡片](docs/images/task-git.png)
+
+![任务 diff](docs/images/task-diff.png)
+
+![提交后](docs/images/task-git-committed.png)
+
+> 仍然不做的事：不自动 push、不自动 merge 到主分支、不 amend、不删有 commit 的分支。
+> 这些故意留给你。
 
 ---
 
@@ -282,7 +300,8 @@ node src/main.ts
 | 审批策略 | auto / commands / all；只对真实模式下模型主动发起的工具生效 |
 | MCP 工具 | 添加/启停/测试/删除 MCP server，工具动态进注册表 |
 | 工具与技能 | 每只猫的工具白名单与技能包（技能注入真实模式 prompt） |
-| 工作区 | 添加真实目录（默认只读）、读写二次确认、git 状态/diff/文件浏览 |
+| 工作区 | 添加真实目录（默认只读）、读写二次确认、任务分支开关、git 状态/diff/文件浏览 |
+| 任务 Git | 分支 / 真实 diff / 人工确认 commit / stash 回滚（仅读写 git 工作区） |
 
 底部还有只读的运行信息（版本、端口、数据目录、Node、启动时间、stallMs）。
 只有 `mode / speed / baseUrl / model / temperature` 会落盘到 `data/settings.json`（0600），key 永远只在内存。
@@ -355,7 +374,8 @@ src/domain/types.ts   唯一契约
 - **演出模式是半脚本的**：猫的反应由场景数据 + 当前阶段决定，不会真的理解任意新需求。
   这是为了让"没有 key 也能完整演示协作流程"；接了真实模型才会换脑子。
 - **默认不碰你的仓库**：内置沙盒可读写；真实仓库加进来默认只读，写/跑命令会被拒绝，
-  改成读写必须显式确认。git 目前只读（status / diff / 文件），不会自动 commit 或 push。
+  改成读写必须显式确认。commit 必须人工填 message + 二次确认；不会自动 push / merge；
+  回滚走 stash，可恢复。
 - **本地单人**：没有鉴权、没有多用户、没有数据库。JSON 文件就是全部持久化。
 - **MCP server 由你负责**：项目只连接你显式添加的 server；默认没有鉴权配置，也不内置任何 server。
 - **剧本台词不会自动改名**：改猫名后，@ 路由、名册、消息作者都用新名字，但剧本里写死的旧名字不会自动替换（剧本是数据，不是模板变量）。
@@ -378,7 +398,7 @@ cat-cafe-lab/
 │   ├── agents/        personas.ts、scenarios.ts、mock-brain.ts、llm-brain.ts
 │   └── main.ts
 ├── public/            index.html、app.js、styles.css、avatars.js
-├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / workspaces / smoke（173 个）
+├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / workspaces / task-git / smoke（181 个）
 ├── docs/              architecture.md、llm.md、images/
 ├── data/              studio.json、workspace/（gitignore）
 └── PLAN.md            设计与分工记录

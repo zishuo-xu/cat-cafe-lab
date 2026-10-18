@@ -250,6 +250,15 @@ export class Studio {
     return task;
   }
 
+  updateTaskGit(taskId: Task["id"], git: Task["git"]): Task {
+    const task = this.requireTask(taskId);
+    if (git) task.git = git;
+    else delete task.git;
+    task.updatedAt = now();
+    this.notify();
+    return task;
+  }
+
   setTaskStatus(taskId: Task["id"], status: Task["status"]): Task {
     const task = this.requireTask(taskId);
     task.status = status;

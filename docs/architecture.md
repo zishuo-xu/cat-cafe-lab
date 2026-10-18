@@ -199,6 +199,17 @@ llm-brain 把 name + prompt 全文塞进 system prompt；演出模式不调用�
   `GIT_TERMINAL_PROMPT=0`、5s 超时、输出截断；本阶段不做 checkout / commit / push。
 - 房间切换是纯前端视图状态；服务端状态本来就按 roomId 隔离（消息、任务、typing、队列）。
 
+## 任务级 git 工作流（C-2）
+
+- 读写 git 工作区开任务时，`createTaskBranch` 检查「当前不在 catcafe/* 分支 + 工作树干净」后
+  切出 `catcafe/<taskId>`；失败只把 `Task.git.error` 记进任务，不阻塞协作。
+- `taskDiff`：已提交看 `git diff base...branch`，否则看工作树 `git diff` + status。
+- `commitTask`：只允许读写 git 工作区；校验任务分支、`confirm:true`、message 1–200；
+  `git add -A && git commit`，成功后 `git checkout base`，任务分支保留给人工 review。
+- `rollbackTask`：已提交拒绝；否则 `git stash push -u` 收走改动（可恢复），
+  切回 base 并删除空任务分支。
+- 安全边界不变：不 push、不 merge、不 amend；branchPerTask 关闭或没有任务分支时禁止 commit。
+
 ## 真实模式的工具调用与审批
 
 llm-brain 的输出 schema 增加第 7 种 turn：`kind:"tool"`。模型可以主动请求工具，

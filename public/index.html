@@ -247,6 +247,44 @@
             <div id="task-progress" class="task-progress" data-testid="task-progress"></div>
           </section>
 
+          <section class="card card--task-git" id="task-git-card" aria-labelledby="task-git-title" hidden>
+            <div class="card-head">
+              <h2 id="task-git-title">任务 Git</h2>
+              <span class="count" id="task-git-state">—</span>
+              <span class="card-hint">只读查看 / 人工提交</span>
+            </div>
+            <div id="task-git-body" class="task-git-body">
+              <div class="empty"><span>读取任务 git…</span></div>
+            </div>
+            <div class="task-git-actions">
+              <button
+                type="button"
+                class="btn btn--tiny btn--ghost"
+                data-action="open-task-diff"
+                id="task-diff-btn"
+              >
+                查看 diff
+              </button>
+              <button
+                type="button"
+                class="btn btn--tiny btn--primary"
+                data-action="open-task-commit"
+                id="task-commit-btn"
+              >
+                提交
+              </button>
+              <button
+                type="button"
+                class="btn btn--tiny btn--danger"
+                data-action="open-task-rollback"
+                id="task-rollback-btn"
+              >
+                回滚
+              </button>
+            </div>
+            <p class="task-git-hint" id="task-git-hint" hidden></p>
+          </section>
+
           <section class="card" aria-labelledby="handoff-title">
             <div class="card-head">
               <h2 id="handoff-title">交接卡</h2>
@@ -621,6 +659,14 @@
                   </label>
                 </div>
               </div>
+
+              <label class="switch-row workspace-branch-row">
+                <input type="checkbox" id="workspace-branch-per-task" role="switch" checked />
+                <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+                <span class="switch-text">
+                  任务开始时创建 catcafe/&lt;taskId&gt; 分支（仅读写 git 仓库生效）
+                </span>
+              </label>
 
               <label class="confirm-row" id="workspace-confirm-row" hidden>
                 <input type="checkbox" id="workspace-confirm" />
@@ -1177,6 +1223,94 @@
           <button type="button" class="btn btn--ghost" data-action="close-git">关闭</button>
           <button type="button" class="btn btn--primary" data-action="refresh-git" id="git-refresh-btn">
             刷新
+          </button>
+        </footer>
+      </div>
+    </dialog>
+
+    <!-- ── 任务 diff 弹窗 ─────────────────────────────────────────── -->
+    <dialog id="task-diff-modal" class="modal modal--git" aria-labelledby="task-diff-title">
+      <div class="modal-card git-card">
+        <header class="modal-head">
+          <div class="settings-head-text">
+            <h2 id="task-diff-title">任务 Diff</h2>
+            <p class="modal-sub" id="task-diff-sub">只读查看任务分支或工作树的改动。</p>
+          </div>
+          <button type="button" class="icon-btn" data-action="close-task-diff" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="form-error" id="task-diff-error" role="alert" hidden></p>
+        <div id="task-diff-meta" class="git-meta"></div>
+        <section class="git-section">
+          <h3>status</h3>
+          <pre id="task-diff-status" class="git-pre">读取中…</pre>
+        </section>
+        <section class="git-section">
+          <h3>diff</h3>
+          <pre id="task-diff-pre" class="git-pre task-diff-pre">读取中…</pre>
+        </section>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-task-diff">关闭</button>
+          <button type="button" class="btn btn--primary" data-action="refresh-task-diff" id="task-diff-refresh-btn">
+            刷新
+          </button>
+        </footer>
+      </div>
+    </dialog>
+
+    <!-- ── 任务提交弹窗 ───────────────────────────────────────────── -->
+    <dialog id="task-commit-modal" class="modal" aria-labelledby="task-commit-title">
+      <form id="task-commit-form" class="modal-card" novalidate>
+        <header class="modal-head">
+          <h2 id="task-commit-title">提交任务改动</h2>
+          <button type="button" class="icon-btn" data-action="close-task-commit" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub" id="task-commit-sub">提交到任务分支；不会自动合并到 base。</p>
+        <label class="field">
+          <span class="field-label">Commit message（1–200 字）</span>
+          <input
+            id="task-commit-message"
+            type="text"
+            maxlength="200"
+            required
+            placeholder="例如：实现记住我 cookie 逻辑"
+          />
+        </label>
+        <label class="confirm-row">
+          <input type="checkbox" id="task-commit-confirm" />
+          <span>我确认把当前改动提交到任务分支</span>
+        </label>
+        <p class="form-error" id="task-commit-error" role="alert" hidden></p>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-task-commit">取消</button>
+          <button type="submit" class="btn btn--primary" id="task-commit-submit" disabled>
+            提交到任务分支
+          </button>
+        </footer>
+      </form>
+    </dialog>
+
+    <!-- ── 任务回滚弹窗 ───────────────────────────────────────────── -->
+    <dialog id="task-rollback-modal" class="modal" aria-labelledby="task-rollback-title">
+      <div class="modal-card">
+        <header class="modal-head">
+          <h2 id="task-rollback-title">回滚任务改动</h2>
+          <button type="button" class="icon-btn" data-action="close-task-rollback" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub">
+          改动会收进 git stash（可恢复），并切回 base 分支；已提交的任务不能回滚。
+        </p>
+        <div id="task-rollback-info" class="git-meta"></div>
+        <p class="form-error" id="task-rollback-error" role="alert" hidden></p>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-task-rollback">取消</button>
+          <button type="button" class="btn btn--danger" data-action="confirm-task-rollback" id="task-rollback-confirm">
+            确认回滚
           </button>
         </footer>
       </div>

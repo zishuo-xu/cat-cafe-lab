@@ -3375,6 +3375,113 @@ button {
   font-weight: 700;
 }
 
+/* ── 右栏：任务 Git ───────────────────────────────────────────────────── */
+
+.card--task-git {
+  border-color: #e3d3bb;
+}
+
+.card--task-git .card-head h2 {
+  white-space: nowrap;
+}
+
+.card--task-git .card-head .card-hint {
+  display: none;
+}
+
+.task-git-body {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.task-git-branch {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+  color: var(--ink);
+  font-size: 10.5px;
+}
+
+.task-git-branch code {
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: #f4ebdd;
+  color: #6f4e37;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  overflow-wrap: anywhere;
+}
+
+.task-git-label {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.task-git-copy {
+  flex: none;
+  padding: 0 4px;
+  border: 0;
+  background: transparent;
+  color: var(--caramel-deep);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.task-git-status {
+  display: inline-flex;
+  width: fit-content;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--cream-deep);
+  color: #7a5a35;
+  font-size: 9.5px;
+  font-weight: 750;
+}
+
+.task-git-status[data-tone="ok"] {
+  background: var(--ok-soft);
+  color: #3f6a4b;
+}
+
+.task-git-status[data-tone="warn"] {
+  background: #fbf0da;
+  color: #8a6118;
+}
+
+.task-git-status[data-tone="danger"] {
+  background: #fbe9df;
+  color: #9a5b3c;
+}
+
+.task-git-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 3px;
+}
+
+.task-git-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+.task-git-hint[data-tone="danger"] {
+  color: #9a5b3c;
+}
+
+.task-diff-pre {
+  min-height: 72px;
+  max-height: 340px;
+}
+
+.workspace-branch-row {
+  margin: 2px 0;
+}
+
 /* ── 设置 · 工作区 ────────────────────────────────────────────────────── */
 
 .workspace-list {
@@ -4812,6 +4919,14 @@ button {
 
   .git-file-list {
     max-height: 120px;
+  }
+
+  .task-git-actions .btn {
+    flex: 1 1 auto;
+  }
+
+  .task-diff-pre {
+    max-height: 260px;
   }
 
   .mcp-list {

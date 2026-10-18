@@ -193,6 +193,36 @@ const roomState = {
   workspacesReady: false,
 };
 
+/** 当前任务 git 面板 / 弹窗状态。 */
+const taskGitState = {
+  taskId: null,
+  sig: "",
+  loading: false,
+  available: null,
+  info: null,
+  error: "",
+  requestId: 0,
+  workspaceSig: "",
+};
+
+const taskDiffModal = {
+  taskId: null,
+  loading: false,
+  info: null,
+  error: "",
+  requestId: 0,
+};
+
+const taskCommitModal = {
+  taskId: null,
+  saving: false,
+};
+
+const taskRollbackModal = {
+  taskId: null,
+  saving: false,
+};
+
 /** MCP server 管理状态。 */
 const mcpState = {
   loading: false,
@@ -661,6 +691,33 @@ function cacheDom() {
   els.newRoomError = $("#new-room-error");
   els.createRoomBtn = $("#create-room-btn");
   els.newRoomWorkspaceHint = $("#new-room-workspace-hint");
+  els.taskGitCard = $("#task-git-card");
+  els.taskGitState = $("#task-git-state");
+  els.taskGitBody = $("#task-git-body");
+  els.taskGitHint = $("#task-git-hint");
+  els.taskDiffBtn = $("#task-diff-btn");
+  els.taskCommitBtn = $("#task-commit-btn");
+  els.taskRollbackBtn = $("#task-rollback-btn");
+  els.taskDiffModal = $("#task-diff-modal");
+  els.taskDiffTitle = $("#task-diff-title");
+  els.taskDiffSub = $("#task-diff-sub");
+  els.taskDiffMeta = $("#task-diff-meta");
+  els.taskDiffError = $("#task-diff-error");
+  els.taskDiffStatus = $("#task-diff-status");
+  els.taskDiffPre = $("#task-diff-pre");
+  els.taskDiffRefresh = $("#task-diff-refresh-btn");
+  els.taskCommitModal = $("#task-commit-modal");
+  els.taskCommitForm = $("#task-commit-form");
+  els.taskCommitSub = $("#task-commit-sub");
+  els.taskCommitMessage = $("#task-commit-message");
+  els.taskCommitConfirm = $("#task-commit-confirm");
+  els.taskCommitError = $("#task-commit-error");
+  els.taskCommitSubmit = $("#task-commit-submit");
+  els.taskRollbackModal = $("#task-rollback-modal");
+  els.taskRollbackInfo = $("#task-rollback-info");
+  els.taskRollbackError = $("#task-rollback-error");
+  els.taskRollbackConfirm = $("#task-rollback-confirm");
+  els.workspaceBranchPerTask = $("#workspace-branch-per-task");
   els.currentWorkspaceBody = $("#current-workspace-body");
   els.currentWorkspacePolicy = $("[data-current-workspace-policy]");
   els.currentWorkspaceGitBtn = $("#current-workspace-git-btn");
@@ -1199,6 +1256,7 @@ function renderTasks() {
 
 function renderWorkspace() {
   renderProgress();
+  renderTaskGit();
   renderHandoffs();
   renderArtifacts();
   renderMemory();
@@ -2213,6 +2271,44 @@ function bindUi() {
     });
   }
 
+  if (els.taskCommitForm) {
+    els.taskCommitForm.addEventListener("submit", (event) => void submitTaskCommit(event));
+  }
+  els.taskCommitMessage?.addEventListener("input", () => {
+    hideTaskCommitError();
+    updateTaskCommitState();
+  });
+  els.taskCommitConfirm?.addEventListener("change", updateTaskCommitState);
+  for (const [modal, closer] of [
+    [els.taskDiffModal, closeTaskDiffModal],
+    [els.taskCommitModal, closeTaskCommitModal],
+    [els.taskRollbackModal, closeTaskRollbackModal],
+  ]) {
+    if (!modal) continue;
+    modal.addEventListener("click", (event) => {
+      if (event.target === modal) closer();
+    });
+  }
+  if (els.taskCommitModal) {
+    els.taskCommitModal.addEventListener("close", () => {
+      taskCommitModal.saving = false;
+      hideTaskCommitError();
+    });
+  }
+  if (els.taskRollbackModal) {
+    els.taskRollbackModal.addEventListener("close", () => {
+      taskRollbackModal.saving = false;
+      hideTaskRollbackError();
+    });
+  }
+  if (els.taskDiffModal) {
+    els.taskDiffModal.addEventListener("close", () => {
+      taskDiffModal.taskId = null;
+      taskDiffModal.info = null;
+      taskDiffModal.loading = false;
+    });
+  }
+
   if (els.catAccessForm) {
     els.catAccessForm.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -2457,6 +2553,35 @@ function onGlobalClick(event) {
     case "open-workspace-file":
       if (actionEl.dataset.workspaceId && actionEl.dataset.path) {
         void openWorkspaceFile(actionEl.dataset.workspaceId, actionEl.dataset.path);
+      }
+      break;
+    case "open-task-diff":
+      openTaskDiffModal();
+      break;
+    case "close-task-diff":
+      closeTaskDiffModal();
+      break;
+    case "refresh-task-diff":
+      if (taskDiffModal.taskId) void fetchTaskDiffModal(taskDiffModal.taskId);
+      break;
+    case "open-task-commit":
+      openTaskCommitModal();
+      break;
+    case "close-task-commit":
+      closeTaskCommitModal();
+      break;
+    case "open-task-rollback":
+      openTaskRollbackModal();
+      break;
+    case "close-task-rollback":
+      closeTaskRollbackModal();
+      break;
+    case "confirm-task-rollback":
+      void confirmTaskRollback();
+      break;
+    case "copy-task-git":
+      if (actionEl.dataset.copyText) {
+        void copyTaskGitText(actionEl.dataset.copyText, actionEl.dataset.copyLabel);
       }
       break;
     case "toggle-mcp-form":
@@ -5478,6 +5603,11 @@ function workspaceRowNode(workspace) {
         text: isSandbox ? "内置沙盒" : workspace.isGit ? "git 仓库" : "目录",
       }),
       h("span", {
+        class: "workspace-policy-badge",
+        "data-branch": workspace.branchPerTask ? "on" : "off",
+        text: `任务分支：${workspace.branchPerTask ? "开" : "关"}`,
+      }),
+      h("span", {
         class: "workspace-git-badge",
         "data-clean": gitInfo?.clean === false ? "false" : gitInfo?.clean === true ? "true" : "",
         text: gitBadgeFor(workspace),
@@ -5589,6 +5719,7 @@ function closeWorkspaceForm() {
   if (els.workspaceName) els.workspaceName.value = "";
   if (els.workspacePath) els.workspacePath.value = "";
   if (els.workspaceConfirm) els.workspaceConfirm.checked = false;
+  if (els.workspaceBranchPerTask) els.workspaceBranchPerTask.checked = true;
   const readOnly = (els.workspacePolicyInputs ?? []).find((input) => input.value === "read-only");
   if (readOnly) readOnly.checked = true;
   updateWorkspaceFormState();
@@ -5651,7 +5782,12 @@ async function saveWorkspace() {
   workspaceState.saving = true;
   updateWorkspaceFormState();
   try {
-    const body = { name, path, policy };
+    const body = {
+      name,
+      path,
+      policy,
+      branchPerTask: els.workspaceBranchPerTask ? Boolean(els.workspaceBranchPerTask.checked) : true,
+    };
     if (policy === "read-write") body.confirm = true;
     const response = await fetch("/api/workspaces", {
       method: "POST",
@@ -6018,6 +6154,612 @@ async function openWorkspaceFile(workspaceId, path) {
     if (els.sandboxFileContent) els.sandboxFileContent.textContent = "（无法读取）";
   } finally {
     sandboxState.file.loading = false;
+  }
+}
+
+
+// ── 任务 Git（分支 / diff / commit / 回滚） ────────────────────────────
+
+function shortHash(value) {
+  const text = String(value ?? "").trim();
+  return text ? text.slice(0, 8) : "";
+}
+
+function taskGitSignature(task) {
+  const workspace = currentWorkspace();
+  return [
+    app.roomId,
+    task?.id ?? "",
+    task?.updatedAt ?? "",
+    task?.git?.branch ?? "",
+    task?.git?.baseBranch ?? "",
+    task?.git?.commit ?? "",
+    task?.git?.committedAt ?? "",
+    task?.git?.stashedAt ?? "",
+    task?.git?.error ?? "",
+    workspace?.id ?? "",
+    workspace?.policy ?? "",
+  ].join("|");
+}
+
+function clearTaskGitState() {
+  taskGitState.taskId = null;
+  taskGitState.sig = "";
+  taskGitState.info = null;
+  taskGitState.error = "";
+  taskGitState.available = null;
+  taskGitState.requestId += 1;
+}
+
+function ensureTaskGitDiff(task) {
+  const workspace = currentWorkspace();
+  if (!workspace?.isGit || !task) return;
+  const sig = taskGitSignature(task);
+  if (taskGitState.taskId === task.id && taskGitState.sig === sig) return;
+  taskGitState.taskId = task.id;
+  taskGitState.sig = sig;
+  taskGitState.info = null;
+  taskGitState.error = "";
+  taskGitState.available = null;
+  taskGitState.loading = true;
+  void fetchTaskGitDiff(task.id);
+}
+
+async function fetchTaskGitDiff(taskId) {
+  const requestId = ++taskGitState.requestId;
+  try {
+    const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/diff`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (response.status === 404 || response.status === 503) {
+      throw new Error(`任务 git 服务未就绪（HTTP ${response.status}）`);
+    }
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET task diff"));
+    const payload = await response.json();
+    if (requestId !== taskGitState.requestId) return;
+    taskGitState.info = payload;
+    taskGitState.available = true;
+    taskGitState.error = "";
+  } catch (error) {
+    if (requestId !== taskGitState.requestId) return;
+    taskGitState.available = false;
+    taskGitState.error = error.message || "任务 git 读取失败";
+  } finally {
+    if (requestId === taskGitState.requestId) {
+      taskGitState.loading = false;
+      renderTaskGit();
+    }
+  }
+}
+
+function taskStatusLineCount(status) {
+  return String(status ?? "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean).length;
+}
+
+function taskGitActionState(task, workspace) {
+  const git = task?.git ?? {};
+  const unavailable = taskGitState.available === false;
+  const committed = Boolean(git.commit || git.committedAt);
+  const stashed = Boolean(git.stashedAt);
+  const readonly = workspace?.policy === "read-only";
+  const commitReason = !task
+    ? "当前没有任务"
+    : readonly
+      ? "只读工作区，不能提交"
+      : unavailable
+        ? "任务 git 服务未就绪，按钮暂时不可用"
+        : committed
+          ? "任务已提交，不能重复提交"
+          : stashed
+            ? "任务已回滚，请重新开任务再提交"
+            : git.error
+              ? "建分支失败，不能提交"
+              : !git.branch
+                ? "这个任务没有独立分支；请在工作区开启「任务分支」后重新开任务"
+                : "";
+  const rollbackReason = !task
+    ? "当前没有任务"
+    : readonly
+      ? "只读工作区，不能回滚"
+      : unavailable
+        ? "任务 git 服务未就绪，按钮暂时不可用"
+        : committed
+          ? "任务已提交，不能回滚；请手动处理分支"
+          : stashed
+            ? "任务已经回滚过了"
+            : "";
+  return {
+    diff: !task ? "当前没有任务" : unavailable ? "任务 git 服务未就绪" : "",
+    commit: commitReason,
+    rollback: rollbackReason,
+  };
+}
+
+function renderTaskGit() {
+  const card = els.taskGitCard;
+  if (!card) return;
+  const workspace = currentWorkspace();
+  if (!workspace?.isGit) {
+    card.hidden = true;
+    taskGitState.workspaceSig = "";
+    clearTaskGitState();
+    return;
+  }
+  card.hidden = false;
+  const task = activeTask();
+  const git = task?.git ?? {};
+  const actions = taskGitActionState(task, workspace);
+  const info = taskGitState.taskId === task?.id ? taskGitState.info : null;
+  const loading = taskGitState.taskId === task?.id && taskGitState.loading;
+  const unavailable = taskGitState.available === false;
+  const committed = Boolean(git.commit || git.committedAt);
+  const stashed = Boolean(git.stashedAt);
+  const readonly = workspace.policy === "read-only";
+
+  const workspaceSig =
+    `${workspace.id}|${git.branch ?? ""}|${git.commit ?? ""}|${git.stashedAt ?? ""}|` +
+    `${taskGitState.taskId === task?.id ? taskGitState.info?.status ?? "" : ""}`;
+  if (taskGitState.workspaceSig !== workspaceSig) {
+    taskGitState.workspaceSig = workspaceSig;
+    void loadWorkspaceGit(workspace.id, { silent: true });
+  }
+
+  let statusText = "—";
+  let statusTone = "";
+  if (!task) {
+    statusText = "没有任务";
+  } else if (git.error) {
+    statusText = "分支创建失败";
+    statusTone = "danger";
+  } else if (unavailable) {
+    statusText = "git 服务未就绪";
+    statusTone = "danger";
+  } else if (committed) {
+    statusText = `已提交 · ${shortHash(git.commit)}`;
+    statusTone = "ok";
+  } else if (stashed) {
+    statusText = "已回滚（stash 可恢复）";
+    statusTone = "warn";
+  } else if (readonly) {
+    statusText = "只读工作区";
+    statusTone = "danger";
+  } else if (git.branch) {
+    if (loading) {
+      statusText = "读取改动…";
+    } else {
+      const count = taskStatusLineCount(info?.status);
+      statusText = count > 0 ? `工作树有改动 · ${count} 个文件` : "工作树干净 · 已建分支";
+      statusTone = count > 0 ? "warn" : "ok";
+    }
+  } else {
+    statusText = "没有独立分支";
+    statusTone = "warn";
+  }
+
+  if (els.taskGitState) {
+    els.taskGitState.textContent = statusText;
+    els.taskGitState.dataset.tone = statusTone;
+  }
+
+  const body = els.taskGitBody;
+  if (!body) return;
+  if (!task) {
+    body.replaceChildren(emptyNote("当前任务还没有 git 信息。"));
+  } else {
+    const rows = [];
+    if (git.branch) {
+      rows.push(
+        h(
+          "div",
+          { class: "task-git-branch" },
+          h("span", { class: "task-git-label", text: "任务分支" }),
+          h("code", { text: git.branch }),
+          h("button", {
+            type: "button",
+            class: "task-git-copy",
+            "data-action": "copy-task-git",
+            "data-copy-text": git.branch,
+            "data-copy-label": "任务分支",
+            text: "复制",
+            title: "复制分支名",
+          }),
+        ),
+      );
+    }
+    if (git.baseBranch || git.baseCommit) {
+      rows.push(
+        h(
+          "div",
+          { class: "task-git-branch" },
+          h("span", { class: "task-git-label", text: "base" }),
+          h("code", {
+            text: git.baseBranch ?? "—",
+            title: git.baseCommit ? `base commit ${git.baseCommit}` : "",
+          }),
+          git.baseCommit
+            ? h("span", { class: "task-git-label", text: shortHash(git.baseCommit) })
+            : null,
+        ),
+      );
+    }
+    if (git.commit) {
+      rows.push(
+        h(
+          "div",
+          { class: "task-git-branch" },
+          h("span", { class: "task-git-label", text: "commit" }),
+          h("code", { text: shortHash(git.commit), title: git.commit }),
+          h("button", {
+            type: "button",
+            class: "task-git-copy",
+            "data-action": "copy-task-git",
+            "data-copy-text": git.commit,
+            "data-copy-label": "commit hash",
+            text: "复制",
+            title: "复制完整 hash",
+          }),
+        ),
+      );
+    }
+    rows.push(h("span", { class: "task-git-status", "data-tone": statusTone, text: statusText }));
+    if (git.error) {
+      rows.push(h("p", { class: "task-git-hint", "data-tone": "danger", text: `⚠ ${git.error}` }));
+    }
+    if (readonly) {
+      rows.push(
+        h("p", {
+          class: "task-git-hint",
+          "data-tone": "danger",
+          text: "只读工作区，不能提交/回滚；可以查看 diff 和文件。",
+        }),
+      );
+    } else if (unavailable) {
+      rows.push(
+        h("p", {
+          class: "task-git-hint",
+          "data-tone": "danger",
+          text: taskGitState.error || "任务 git 服务未就绪（接口 404/503）。",
+        }),
+      );
+    } else if (stashed) {
+      rows.push(
+        h("p", {
+          class: "task-git-hint",
+          text: "改动已收进 git stash，可用 git stash list 找回。",
+        }),
+      );
+    }
+    body.replaceChildren(...rows);
+  }
+
+  if (els.taskDiffBtn) {
+    els.taskDiffBtn.disabled = Boolean(actions.diff);
+    els.taskDiffBtn.title = actions.diff || "查看任务 diff";
+  }
+  if (els.taskCommitBtn) {
+    els.taskCommitBtn.disabled = Boolean(actions.commit);
+    els.taskCommitBtn.title = actions.commit || "提交到任务分支";
+  }
+  if (els.taskRollbackBtn) {
+    els.taskRollbackBtn.disabled = Boolean(actions.rollback);
+    els.taskRollbackBtn.title = actions.rollback || "回滚任务改动（stash）";
+  }
+  if (els.taskGitHint) {
+    const hint = unavailable
+      ? taskGitState.error || "任务 git 服务未就绪（接口 404/503），按钮暂时不可用。"
+      : actions.commit ||
+        actions.rollback ||
+        templateTaskGitHint(task, git, workspace);
+    els.taskGitHint.hidden = !hint;
+    els.taskGitHint.textContent = hint || "";
+    els.taskGitHint.dataset.tone =
+      actions.commit || actions.rollback ? "danger" : "muted";
+  }
+
+  ensureTaskGitDiff(task);
+}
+
+function templateTaskGitHint(task, git, workspace) {
+  if (!task) return "当前房间没有进行中的任务。";
+  if (workspace?.policy === "read-only") return "只读工作区，不能提交/回滚。";
+  if (git?.commit) return "已提交：任务分支保留，请人工 review / merge。";
+  if (git?.stashedAt) return "已回滚：改动在 git stash 中，可手动恢复。";
+  if (git?.branch && !git?.error) return "";
+  return "";
+}
+
+async function fetchTaskDiffModal(taskId) {
+  const requestId = ++taskDiffModal.requestId;
+  taskDiffModal.loading = true;
+  taskDiffModal.error = "";
+  renderTaskDiffModal();
+  try {
+    const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/diff`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (response.status === 404 || response.status === 503) {
+      throw new Error(`任务 git 服务未就绪（HTTP ${response.status}）`);
+    }
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET task diff"));
+    const payload = await response.json();
+    if (requestId !== taskDiffModal.requestId) return;
+    taskDiffModal.info = payload;
+  } catch (error) {
+    if (requestId !== taskDiffModal.requestId) return;
+    taskDiffModal.info = null;
+    taskDiffModal.error = error.message || "任务 diff 读取失败";
+  } finally {
+    if (requestId === taskDiffModal.requestId) {
+      taskDiffModal.loading = false;
+      renderTaskDiffModal();
+    }
+  }
+}
+
+function openTaskDiffModal() {
+  const task = activeTask();
+  if (!task) {
+    toast("当前没有任务", "warn");
+    return;
+  }
+  taskDiffModal.taskId = task.id;
+  taskDiffModal.info = null;
+  taskDiffModal.error = "";
+  taskDiffModal.loading = true;
+  if (els.taskDiffTitle) els.taskDiffTitle.textContent = `任务 Diff · ${task.title}`;
+  renderTaskDiffModal();
+  if (!els.taskDiffModal?.open) els.taskDiffModal?.showModal();
+  void fetchTaskDiffModal(task.id);
+}
+
+function closeTaskDiffModal() {
+  if (els.taskDiffModal?.open) els.taskDiffModal.close();
+}
+
+function renderTaskDiffModal() {
+  const task = taskById(taskDiffModal.taskId);
+  if (els.taskDiffSub) {
+    els.taskDiffSub.textContent = task
+      ? `${task.title} · 只读查看；已提交看 base...branch，否则看工作树。`
+      : "只读查看任务分支或工作树的改动。";
+  }
+  if (els.taskDiffRefresh) els.taskDiffRefresh.disabled = taskDiffModal.loading;
+  if (els.taskDiffError) {
+    els.taskDiffError.hidden = !taskDiffModal.error;
+    els.taskDiffError.textContent = taskDiffModal.error || "";
+  }
+  const info = taskDiffModal.info;
+  if (els.taskDiffMeta) {
+    const nodes = [];
+    if (info?.branch) nodes.push(h("span", { class: "git-branch", text: info.branch }));
+    if (info?.base) nodes.push(h("span", { text: `base ${info.base}` }));
+    const count = taskStatusLineCount(info?.status);
+    if (info && !info.error) nodes.push(h("span", { text: `${count} 个改动文件` }));
+    if (info?.error) nodes.push(h("span", { class: "workspace-warning", text: info.error }));
+    els.taskDiffMeta.replaceChildren(...nodes);
+  }
+  if (els.taskDiffStatus) {
+    els.taskDiffStatus.textContent = taskDiffModal.loading
+      ? "读取中…"
+      : info?.status
+        ? info.status
+        : "（没有改动）";
+  }
+  if (els.taskDiffPre) {
+    els.taskDiffPre.textContent = taskDiffModal.loading
+      ? "读取 diff…"
+      : info?.error
+        ? info.error
+        : info?.diff
+          ? info.diff
+          : "没有改动";
+  }
+}
+
+function openTaskCommitModal() {
+  const task = activeTask();
+  if (!task) {
+    toast("当前没有任务", "warn");
+    return;
+  }
+  const actions = taskGitActionState(task, currentWorkspace());
+  if (actions.commit) {
+    toast(actions.commit, "warn");
+    return;
+  }
+  taskCommitModal.taskId = task.id;
+  taskCommitModal.saving = false;
+  if (els.taskCommitSub) {
+    els.taskCommitSub.textContent = task.git?.branch
+      ? `提交到 ${task.git.branch}；提交后切回 base，不会自动合并。`
+      : "提交到当前任务分支；不会自动合并到 base。";
+  }
+  if (els.taskCommitMessage) els.taskCommitMessage.value = "";
+  if (els.taskCommitConfirm) els.taskCommitConfirm.checked = false;
+  hideTaskCommitError();
+  updateTaskCommitState();
+  if (!els.taskCommitModal?.open) els.taskCommitModal?.showModal();
+  requestAnimationFrame(() => els.taskCommitMessage?.focus());
+}
+
+function closeTaskCommitModal() {
+  if (els.taskCommitModal?.open) els.taskCommitModal.close();
+}
+
+function hideTaskCommitError() {
+  if (!els.taskCommitError) return;
+  els.taskCommitError.hidden = true;
+  els.taskCommitError.textContent = "";
+}
+
+function showTaskCommitError(message) {
+  if (!els.taskCommitError) return;
+  els.taskCommitError.textContent = message;
+  els.taskCommitError.hidden = false;
+}
+
+function updateTaskCommitState() {
+  if (!els.taskCommitSubmit) return;
+  const message = els.taskCommitMessage?.value.trim() ?? "";
+  const confirmed = Boolean(els.taskCommitConfirm?.checked);
+  const valid = message.length >= 1 && message.length <= 200 && confirmed;
+  els.taskCommitSubmit.disabled = taskCommitModal.saving || !valid;
+  els.taskCommitSubmit.textContent = taskCommitModal.saving ? "提交中…" : "提交到任务分支";
+}
+
+function applyUpdatedTask(updatedTask) {
+  if (!updatedTask?.id || !app.state) return;
+  const tasks = app.state.tasks ?? [];
+  const index = tasks.findIndex((task) => task.id === updatedTask.id);
+  if (index >= 0) tasks[index] = updatedTask;
+  clearTaskGitState();
+  renderAll();
+}
+
+async function submitTaskCommit(event) {
+  event.preventDefault();
+  if (taskCommitModal.saving) return;
+  const taskId = taskCommitModal.taskId;
+  const message = els.taskCommitMessage?.value.trim() ?? "";
+  if (!message || message.length > 200) {
+    showTaskCommitError("Commit message 需要 1–200 个字符。");
+    els.taskCommitMessage?.focus();
+    return;
+  }
+  if (!els.taskCommitConfirm?.checked) {
+    showTaskCommitError("请先勾选确认。");
+    return;
+  }
+  taskCommitModal.saving = true;
+  updateTaskCommitState();
+  hideTaskCommitError();
+  try {
+    const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/commit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message, confirm: true }),
+    });
+    if (!response.ok) throw new Error(await readApiError(response));
+    const payload = await response.json();
+    closeTaskCommitModal();
+    toast(`已提交 ${shortHash(payload?.commit)}`);
+    if (payload?.task) applyUpdatedTask(payload.task);
+    await refreshState().catch(() => {});
+    clearTaskGitState();
+    renderAll();
+  } catch (error) {
+    showTaskCommitError(`提交失败：${error.message}`);
+  } finally {
+    taskCommitModal.saving = false;
+    updateTaskCommitState();
+  }
+}
+
+function openTaskRollbackModal() {
+  const task = activeTask();
+  if (!task) {
+    toast("当前没有任务", "warn");
+    return;
+  }
+  const actions = taskGitActionState(task, currentWorkspace());
+  if (actions.rollback) {
+    toast(actions.rollback, "warn");
+    return;
+  }
+  taskRollbackModal.taskId = task.id;
+  taskRollbackModal.saving = false;
+  hideTaskRollbackError();
+  if (els.taskRollbackInfo) {
+    const nodes = [];
+    if (task.git?.branch) nodes.push(h("span", { class: "git-branch", text: task.git.branch }));
+    if (task.git?.baseBranch) nodes.push(h("span", { text: `base ${task.git.baseBranch}` }));
+    nodes.push(h("span", { text: "改动会进入 git stash，可恢复" }));
+    els.taskRollbackInfo.replaceChildren(...nodes);
+  }
+  if (els.taskRollbackConfirm) {
+    els.taskRollbackConfirm.disabled = false;
+    els.taskRollbackConfirm.textContent = "确认回滚";
+  }
+  if (!els.taskRollbackModal?.open) els.taskRollbackModal?.showModal();
+}
+
+function closeTaskRollbackModal() {
+  if (els.taskRollbackModal?.open) els.taskRollbackModal.close();
+}
+
+function hideTaskRollbackError() {
+  if (!els.taskRollbackError) return;
+  els.taskRollbackError.hidden = true;
+  els.taskRollbackError.textContent = "";
+}
+
+function showTaskRollbackError(message) {
+  if (!els.taskRollbackError) return;
+  els.taskRollbackError.textContent = message;
+  els.taskRollbackError.hidden = false;
+}
+
+async function confirmTaskRollback() {
+  if (taskRollbackModal.saving) return;
+  const taskId = taskRollbackModal.taskId;
+  taskRollbackModal.saving = true;
+  hideTaskRollbackError();
+  if (els.taskRollbackConfirm) {
+    els.taskRollbackConfirm.disabled = true;
+    els.taskRollbackConfirm.textContent = "回滚中…";
+  }
+  try {
+    const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/rollback`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true }),
+    });
+    if (!response.ok) throw new Error(await readApiError(response));
+    const payload = await response.json();
+    closeTaskRollbackModal();
+    toast(payload?.stash ? `已回滚，改动收进 ${payload.stash}` : payload?.note || "已回滚");
+    if (payload?.task) applyUpdatedTask(payload.task);
+    await refreshState().catch(() => {});
+    clearTaskGitState();
+    renderAll();
+  } catch (error) {
+    showTaskRollbackError(`回滚失败：${error.message}`);
+  } finally {
+    taskRollbackModal.saving = false;
+    if (els.taskRollbackConfirm) {
+      els.taskRollbackConfirm.disabled = false;
+      els.taskRollbackConfirm.textContent = "确认回滚";
+    }
+  }
+}
+
+async function copyTaskGitText(text, label) {
+  if (!text) return;
+  try {
+    await navigator.clipboard.writeText(text);
+    toast(`已复制${label ?? "内容"}`);
+    return;
+  } catch {
+    /* 降级 */
+  }
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const ok = document.execCommand("copy");
+    area.remove();
+    if (!ok) throw new Error("copy failed");
+    toast(`已复制${label ?? "内容"}`);
+  } catch {
+    toast("复制失败，请手动选择文本", "error");
   }
 }
 
