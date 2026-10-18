@@ -1534,6 +1534,60 @@
       </div>
     </dialog>
 
+    <!-- ── 任务恢复：换个方案 ─────────────────────────────────────── -->
+    <dialog id="task-pivot-modal" class="modal" aria-labelledby="task-pivot-title">
+      <form id="task-pivot-form" class="modal-card" novalidate>
+        <header class="modal-head">
+          <h2 id="task-pivot-title">换个方案</h2>
+          <button type="button" class="icon-btn" data-action="close-task-pivot" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub">把新方向作为明确指令交给主理猫，任务会解除卡住并重新拆活。</p>
+        <label class="field">
+          <span class="field-label">方向（可选，最多 500 字）</span>
+          <textarea
+            id="task-pivot-note"
+            rows="3"
+            maxlength="500"
+            placeholder="例如：别读文件了，直接写结论"
+          ></textarea>
+        </label>
+        <p class="form-error" id="task-pivot-error" role="alert" hidden></p>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-task-pivot">取消</button>
+          <button type="submit" class="btn btn--primary" id="task-pivot-submit">提交新方向</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <!-- ── 任务恢复：收尾确认 ─────────────────────────────────────── -->
+    <dialog id="task-close-modal" class="modal" aria-labelledby="task-close-title">
+      <form id="task-close-form" class="modal-card" novalidate>
+        <header class="modal-head">
+          <h2 id="task-close-title">确认收尾</h2>
+          <button type="button" class="icon-btn" data-action="close-task-close" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub">会记录为什么收尾，并写一条 manual-close 教训进共享记忆，不能撤销。</p>
+        <label class="field">
+          <span class="field-label">收尾原因（可选，最多 500 字）</span>
+          <textarea
+            id="task-close-note"
+            rows="3"
+            maxlength="500"
+            placeholder="例如：先收口，剩余问题下次再处理"
+          ></textarea>
+        </label>
+        <p class="form-error" id="task-close-error" role="alert" hidden></p>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-task-close">取消</button>
+          <button type="submit" class="btn btn--danger" id="task-close-submit">确认收尾</button>
+        </footer>
+      </form>
+    </dialog>
+
     <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
 
     <script type="module" src="/app.js"></script>

@@ -448,8 +448,22 @@ export function createDriver(deps: {
 
       case "task_action": {
         const task = studio.getTask(event.taskId);
-        if (!task || task.status === "done") return;
+        if (!task) return;
         const architect = architectOf(studio.state.cats);
+
+        // 已经 done 的任务：只有「被强制收尾」（review-loop 记忆）的才允许继续/换方案复活，
+        // 正常完成的任务不能重开，避免误操作把收尾的任务又拉起来。
+        if (task.status === "done") {
+          if (event.action === "close") return;
+          const forcedClose = studio
+            .snapshot()
+            .memory.some(
+              (entry) =>
+                entry.sourceTaskId === task.id && entry.tags.includes("review-loop"),
+            );
+          if (!forcedClose) return;
+          studio.setTaskStatus(task.id, "active");
+        }
 
         if (event.action === "close") {
           studio.closeTaskWithReason(task.id, event.note?.trim() || "铲屎官选择收尾");

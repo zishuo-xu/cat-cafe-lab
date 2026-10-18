@@ -202,3 +202,46 @@ describe("HTTP /api/tasks/:id/action", () => {
     assert.equal(missing.status, 404);
   });
 });
+
+describe("被强制收尾的任务可以复活", () => {
+  test("review-loop 的 done 任务能 continue；正常 done 任务不能", async () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    const driver = createDriver({
+      studio,
+      brain: createMockBrain(SCENARIOS),
+      wait: () => Promise.resolve(),
+      stallMs: 5000,
+    });
+    try {
+      const forced = studio.createTask({
+        roomId: "room_cafe",
+        brief: "被强制收尾的任务",
+        scenarioId: "export_csv",
+      });
+      studio.setTaskStatus(forced.id, "done");
+      studio.addMemory({
+        kind: "lesson",
+        title: "评审反复打回",
+        body: "3 轮未通过",
+        tags: ["review-loop"],
+        sourceTaskId: forced.id,
+      });
+
+      driver.submit({ type: "task_action", taskId: forced.id, action: "continue" });
+      await driver.whenIdle();
+      assert.notEqual(studio.getTask(forced.id)?.status, "done", "forced-close 任务应能复活");
+
+      const normal = studio.createTask({
+        roomId: "room_cafe",
+        brief: "正常完成的任务",
+        scenarioId: "export_csv",
+      });
+      studio.setTaskStatus(normal.id, "done");
+      driver.submit({ type: "task_action", taskId: normal.id, action: "continue" });
+      await driver.whenIdle();
+      assert.equal(studio.getTask(normal.id)?.status, "done", "正常完成的任务不应被重开");
+    } finally {
+      studio.close();
+    }
+  });
+});

@@ -712,6 +712,21 @@ button {
   background: #fbf1e3;
 }
 
+.task-item[data-status="active"] {
+  border-color: transparent;
+  background: transparent;
+}
+
+.task-item[data-status="done"] {
+  border-color: #cfe0cf;
+  background: var(--ok-soft);
+}
+
+.task-item[data-status="stalled"] {
+  border-color: #e8c9a8;
+  background: #fdf6ea;
+}
+
 .task-item.is-active {
   background: #fff6e7;
   border-color: #ebd3b2;
@@ -1859,6 +1874,111 @@ button {
   white-space: nowrap;
 }
 
+/* ── 任务恢复面板 ─────────────────────────────────────────────────────── */
+
+.task-recovery {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px;
+  border: 1px solid #e3c49a;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #fffaf1, #fbf1e3);
+}
+
+.task-recovery[data-mode="review-loop"] {
+  border-color: #d9c3a8;
+  background: #faf4ea;
+}
+
+.task-recovery-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.task-recovery-title {
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+.task-recovery-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #fbe3d6;
+  color: #a34a26;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.task-recovery-badge[data-mode="review-loop"] {
+  background: #efe2d2;
+  color: #7d5d3e;
+}
+
+.task-recovery-reason {
+  margin: 0;
+  color: #7a5a35;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.task-recovery-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.task-recovery-btn {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 7px 6px;
+  border: 1px solid var(--line-soft);
+  border-radius: 9px;
+  background: #fffdf8;
+  color: var(--ink);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-recovery-btn:hover:not(:disabled) {
+  border-color: var(--line);
+  background: #fff8ec;
+}
+
+.task-recovery-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.task-recovery-btn small {
+  color: var(--muted);
+  font-size: 8.5px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
+.task-recovery-btn[data-recovery="continue"] {
+  border-color: #cfe0cf;
+  background: var(--ok-soft);
+}
+
+.task-recovery-btn[data-recovery="close"] {
+  border-color: #ebc9b7;
+  background: #fdf7f4;
+}
+
+.task-recovery-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 9.5px;
+}
+
 .task-status-badge {
   flex: none;
   padding: 2px 8px;
@@ -1879,6 +1999,12 @@ button {
 .task-status-badge[data-status="done"] {
   background: var(--ok-soft);
   color: var(--ok);
+}
+
+.task-status-badge[data-status="pending"] {
+  background: #fbf0da;
+  color: #8a6118;
+  animation: soft-pulse 2s ease-in-out infinite;
 }
 
 .stage-track {
@@ -4759,6 +4885,60 @@ button {
   line-height: 1.5;
 }
 
+.tool-approval-countdown {
+  flex-basis: 100%;
+  color: #8a6118;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+.tool-approval-countdown[data-expired="true"] {
+  color: #9a3f32;
+}
+
+.tool-approval-more {
+  position: relative;
+  color: #8a6118;
+  font-size: 9.5px;
+}
+
+.tool-approval-more summary {
+  padding: 2px 5px;
+  border: 1px solid #e5c48c;
+  border-radius: 999px;
+  color: #8a6118;
+  font-size: 9.5px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.tool-approval-more summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool-approval-more[open] summary {
+  background: #fff0d5;
+}
+
+.tool-approval-more button {
+  margin-top: 4px;
+  padding: 4px 7px;
+  border: 1px solid #e0cfc4;
+  border-radius: 8px;
+  background: #fffdf8;
+  color: #9a5b3c;
+  font-size: 9.5px;
+  cursor: pointer;
+}
+
+.tool-approval-note {
+  flex-basis: 100%;
+  color: #a08b72;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
 .btn--approve {
   border-color: #cfe0cf;
   background: var(--ok-soft);
@@ -5265,6 +5445,15 @@ button {
   .tool-approval .btn {
     flex: 1;
     justify-content: center;
+  }
+
+  .task-recovery-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tool-approval-countdown,
+  .tool-approval-note {
+    flex-basis: 100%;
   }
 
   .icon-btn.chat-settings {

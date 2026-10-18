@@ -159,6 +159,17 @@ const approvalState = {
   lastToolSignature: "",
 };
 
+/** 审批等待超时：与服务端一致，5 分钟后自动拒绝。 */
+const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** 任务恢复弹窗状态。 */
+const taskRecoveryState = {
+  taskId: null,
+  action: "",
+  saving: false,
+  error: "",
+};
+
 /** 工作区 / 房间 / git 面板状态。 */
 const workspaceState = {
   loading: false,
@@ -764,6 +775,16 @@ function cacheDom() {
   els.newRoomError = $("#new-room-error");
   els.createRoomBtn = $("#create-room-btn");
   els.newRoomWorkspaceHint = $("#new-room-workspace-hint");
+  els.taskPivotModal = $("#task-pivot-modal");
+  els.taskPivotForm = $("#task-pivot-form");
+  els.taskPivotNote = $("#task-pivot-note");
+  els.taskPivotError = $("#task-pivot-error");
+  els.taskPivotSubmit = $("#task-pivot-submit");
+  els.taskCloseModal = $("#task-close-modal");
+  els.taskCloseForm = $("#task-close-form");
+  els.taskCloseNote = $("#task-close-note");
+  els.taskCloseError = $("#task-close-error");
+  els.taskCloseSubmit = $("#task-close-submit");
   els.testCenterModal = $("#test-center-modal");
   els.testCenterClose = $("#test-center-close");
   els.testButtons = $$("[data-test-button]");
@@ -1360,12 +1381,144 @@ function renderWorkspace() {
   renderMemory();
 }
 
+function pendingApprovalCallsForTask(taskId) {
+  if (!taskId) return [];
+  return (app.state?.toolCalls ?? []).filter(
+    (call) => call.taskId === taskId && call.status === "pending",
+  );
+}
+
+function reviewLoopMemoryForTask(taskId) {
+  if (!taskId) return null;
+  const matches = (app.state?.memory ?? []).filter(
+    (entry) =>
+      entry.sourceTaskId === taskId &&
+      Array.isArray(entry.tags) &&
+      entry.tags.includes("review-loop"),
+  );
+  return matches.length ? matches[matches.length - 1] : null;
+}
+
+function stalledMinutesForTask(task) {
+  const elapsed = Math.max(0, Date.now() - (task?.updatedAt || task?.createdAt || Date.now()));
+  return Math.max(1, Math.ceil(elapsed / 60000));
+}
+
+function taskRecoveryInfo(task) {
+  if (!task) return null;
+  if (pendingApprovalCallsForTask(task.id).length > 0) return null;
+  if (task.status === "stalled" || (task.status === "active" && isTaskStalled(task))) {
+    return {
+      mode: "stalled",
+      badge: "卡住了",
+      reason: `已 ${stalledMinutesForTask(task)} 分钟没有新动作，可以再给它一次机会或收尾。`,
+    };
+  }
+  const memory = reviewLoopMemoryForTask(task.id);
+  if (memory) {
+    return {
+      mode: "review-loop",
+      badge: "被强制收尾",
+      reason: memory.body || memory.title || "评审反复打回后已强制收尾。",
+      memory,
+    };
+  }
+  return null;
+}
+
+function recoveryPanelNode(task, info) {
+  if (!task || !info) return null;
+  const saving = taskRecoveryState.saving && taskRecoveryState.taskId === task.id;
+  const error =
+    taskRecoveryState.taskId === task.id ? taskRecoveryState.error : "";
+  return h(
+    "div",
+    {
+      class: "task-recovery",
+      "data-mode": info.mode,
+      "data-task-id": task.id,
+      role: "group",
+      "aria-label": "任务恢复",
+    },
+    h(
+      "div",
+      { class: "task-recovery-head" },
+      h("span", { class: "task-recovery-title", text: "需要你决定" }),
+      h("span", { class: "task-recovery-badge", "data-mode": info.mode, text: info.badge }),
+    ),
+    h("p", { class: "task-recovery-reason", "data-recovery-reason": "", text: info.reason }),
+    h(
+      "div",
+      { class: "task-recovery-actions" },
+      h(
+        "button",
+        {
+          type: "button",
+          class: "task-recovery-btn",
+          "data-action": "recovery-continue",
+          "data-task-id": task.id,
+          "data-recovery": "continue",
+          disabled: saving,
+        },
+        h("span", { text: "继续试试" }),
+        h("small", { text: "再给它一次机会" }),
+      ),
+      h(
+        "button",
+        {
+          type: "button",
+          class: "task-recovery-btn",
+          "data-action": "recovery-pivot",
+          "data-task-id": task.id,
+          "data-recovery": "pivot",
+          disabled: saving,
+        },
+        h("span", { text: "换个方案" }),
+        h("small", { text: "把新方向告诉猫" }),
+      ),
+      h(
+        "button",
+        {
+          type: "button",
+          class: "task-recovery-btn",
+          "data-action": "recovery-close",
+          "data-task-id": task.id,
+          "data-recovery": "close",
+          disabled: saving,
+        },
+        h("span", { text: "收尾" }),
+        h("small", { text: "记录原因并写教训" }),
+      ),
+    ),
+    h("p", {
+      class: "task-recovery-error",
+      "data-recovery-error": "",
+      role: "alert",
+      hidden: !error,
+      text: error,
+    }),
+  );
+}
+
 function renderProgress() {
   const host = els.progress;
   if (!host) return;
   const task = activeTask();
+  const pendingApprovalCount = task ? pendingApprovalCallsForTask(task.id).length : 0;
+  const recovery = task ? taskRecoveryInfo(task) : null;
+  const recoveryMemoryId = recovery?.memory?.id ?? "";
   const key = task
-    ? [task.id, task.stage, task.status, task.owner, task.updatedAt, app.selectedTaskId ?? ""].join(":")
+    ? [
+        task.id,
+        task.stage,
+        task.status,
+        task.owner,
+        task.updatedAt,
+        app.selectedTaskId ?? "",
+        pendingApprovalCount,
+        recovery?.mode ?? "",
+        recoveryMemoryId,
+      ].join(":")
     : `none:${app.selectedTaskId ?? ""}`;
   if (key === app.sig.progress) return;
   app.sig.progress = key;
@@ -1395,10 +1548,24 @@ function renderProgress() {
   }
 
   const stagedIdx = STAGE_INDEX.get(task.stage) ?? 0;
-  const stalled = isTaskStalled(task);
+  const stalled = isTaskStalled(task) && pendingApprovalCount === 0;
   const owner = catById(task.owner);
-  const status = task.status === "done" ? "done" : stalled ? "stalled" : "active";
-  const statusLabel = status === "done" ? "已完成" : status === "stalled" ? "卡住了" : "进行中";
+  const status =
+    task.status === "done"
+      ? "done"
+      : stalled
+        ? "stalled"
+        : pendingApprovalCount > 0
+          ? "pending"
+          : "active";
+  const statusLabel =
+    status === "done"
+      ? "已完成"
+      : status === "stalled"
+        ? "卡住了"
+        : status === "pending"
+          ? "等待审批"
+          : "进行中";
 
   const children = [];
   if (app.selectedTaskId) {
@@ -1449,12 +1616,15 @@ function renderProgress() {
           class: "btn btn--tiny btn--nudge",
           "data-action": "nudge",
           "data-task-id": task.id,
-          hidden: !stalled,
+          hidden: !stalled || Boolean(recovery) || pendingApprovalCount > 0,
           text: "🐾 催一下",
         }),
       ),
     ),
   );
+
+  const recoveryNode = recoveryPanelNode(task, recovery);
+  if (recoveryNode) children.push(recoveryNode);
 
   host.replaceChildren(...children);
   updateStallUi();
@@ -2136,9 +2306,25 @@ function updateStallUi() {
   const region = els.progress;
   if (!region) return;
 
-  const stalled = isTaskStalled(task);
-  const status = task.status === "done" ? "done" : stalled ? "stalled" : "active";
-  const statusLabel = status === "done" ? "已完成" : status === "stalled" ? "卡住了" : "进行中";
+  const pendingApprovalCount = pendingApprovalCallsForTask(task.id).length;
+  const recovery = taskRecoveryInfo(task);
+  const stalled = isTaskStalled(task) && pendingApprovalCount === 0;
+  const status =
+    task.status === "done"
+      ? "done"
+      : stalled
+        ? "stalled"
+        : pendingApprovalCount > 0
+          ? "pending"
+          : "active";
+  const statusLabel =
+    status === "done"
+      ? "已完成"
+      : status === "stalled"
+        ? "卡住了"
+        : status === "pending"
+          ? "等待审批"
+          : "进行中";
   const elapsed = Math.max(
     0,
     Math.floor((Date.now() - (task.updatedAt || task.createdAt || Date.now())) / 1000),
@@ -2155,20 +2341,29 @@ function updateStallUi() {
     const hardStalled = task.status === "stalled";
     const noteText =
       task.status === "done"
-        ? "任务已完成，猫猫去晒太阳了。"
-        : stalled
-          ? hardStalled
-            ? "任务卡住了，可以催一下让它继续。"
-            : `已 ${elapsed}s 没有新动作，可以催一下。`
-          : `本阶段已进行 ${elapsed}s。`;
+        ? recovery?.mode === "review-loop"
+          ? "任务已被强制收尾，可以继续试试或收尾。"
+          : "任务已完成，猫猫去晒太阳了。"
+        : pendingApprovalCount > 0
+          ? "等待你批准工具调用中，批准后猫才会继续。"
+          : stalled
+            ? hardStalled
+              ? "任务卡住了，可以继续试试或换个方案。"
+              : `已 ${elapsed}s 没有新动作，可以继续试试或换个方案。`
+            : `本阶段已进行 ${elapsed}s。`;
     if (note.textContent !== noteText) note.textContent = noteText;
   }
 
   const nudge = region.querySelector('[data-action="nudge"]');
   if (nudge) {
-    const shouldHide = !stalled;
+    const shouldHide = !stalled || Boolean(recovery) || pendingApprovalCount > 0;
     if (nudge.hidden !== shouldHide) nudge.hidden = shouldHide;
     if (nudge.dataset.taskId !== task.id) nudge.dataset.taskId = task.id;
+  }
+
+  const recoveryReason = region.querySelector("[data-recovery-reason]");
+  if (recoveryReason && recovery?.mode === "stalled") {
+    recoveryReason.textContent = recovery.reason;
   }
 }
 
@@ -2177,6 +2372,7 @@ function startTicker() {
   app.ticker = setInterval(() => {
     if (!app.state) return;
     updateStallUi();
+    updateApprovalCountdowns();
     updateTestCenterTicker();
   }, 1000);
 }
@@ -2367,6 +2563,31 @@ function bindUi() {
     });
     els.gitModal.addEventListener("close", () => {
       workspaceState.panel.open = false;
+    });
+  }
+
+  if (els.taskPivotForm) {
+    els.taskPivotForm.addEventListener("submit", (event) => void submitTaskPivot(event));
+  }
+  els.taskPivotNote?.addEventListener("input", hideTaskPivotError);
+  if (els.taskPivotModal) {
+    els.taskPivotModal.addEventListener("click", (event) => {
+      if (event.target === els.taskPivotModal) closeTaskPivotModal();
+    });
+    els.taskPivotModal.addEventListener("close", () => {
+      if (!taskRecoveryState.saving) taskRecoveryState.error = "";
+    });
+  }
+  if (els.taskCloseForm) {
+    els.taskCloseForm.addEventListener("submit", (event) => void submitTaskClose(event));
+  }
+  els.taskCloseNote?.addEventListener("input", hideTaskCloseError);
+  if (els.taskCloseModal) {
+    els.taskCloseModal.addEventListener("click", (event) => {
+      if (event.target === els.taskCloseModal) closeTaskCloseModal();
+    });
+    els.taskCloseModal.addEventListener("close", () => {
+      if (!taskRecoveryState.saving) taskRecoveryState.error = "";
     });
   }
 
@@ -2648,6 +2869,33 @@ function onGlobalClick(event) {
       break;
     case "reject-tool":
       if (actionEl.dataset.callId) void decideToolCall(actionEl.dataset.callId, "reject", actionEl);
+      break;
+    case "approve-tool-remember":
+      if (actionEl.dataset.callId) {
+        void decideToolCall(actionEl.dataset.callId, "approve", actionEl, { remember: true });
+      }
+      break;
+    case "reject-tool-remember":
+      if (actionEl.dataset.callId) {
+        void decideToolCall(actionEl.dataset.callId, "reject", actionEl, { remember: true });
+      }
+      break;
+    case "recovery-continue":
+      if (actionEl.dataset.taskId) {
+        void submitTaskAction(actionEl.dataset.taskId, "continue");
+      }
+      break;
+    case "recovery-pivot":
+      if (actionEl.dataset.taskId) openTaskPivotModal(actionEl.dataset.taskId);
+      break;
+    case "recovery-close":
+      if (actionEl.dataset.taskId) openTaskCloseModal(actionEl.dataset.taskId);
+      break;
+    case "close-task-pivot":
+      closeTaskPivotModal();
+      break;
+    case "close-task-close":
+      closeTaskCloseModal();
       break;
     case "focus-needs-me":
       focusNeedsMe();
@@ -4746,9 +4994,14 @@ function toolCardNode(call, message) {
       "div",
       { class: "tool-approval", "data-role": "approval", hidden: true },
       h("span", {
+        class: "tool-approval-countdown",
+        "data-role": "approval-countdown",
+        text: "⏱ 计算剩余时间…",
+      }),
+      h("span", {
         class: "tool-approval-hint",
         "data-role": "approval-hint",
-        text: "等你批准这次工具调用",
+        text: "等待你批准中，批准后猫才会继续；期间任务不会判定卡住。",
       }),
       h("button", {
         type: "button",
@@ -4765,6 +5018,31 @@ function toolCardNode(call, message) {
         "data-call-id": id,
         "data-role": "reject",
         text: "拒绝",
+      }),
+      h("button", {
+        type: "button",
+        class: "btn btn--tiny btn--ghost",
+        "data-action": "approve-tool-remember",
+        "data-call-id": id,
+        "data-role": "approve-remember",
+        text: "批准并记住",
+      }),
+      h(
+        "details",
+        { class: "tool-approval-more" },
+        h("summary", { text: "更多" }),
+        h("button", {
+          type: "button",
+          "data-action": "reject-tool-remember",
+          "data-call-id": id,
+          "data-role": "reject-remember",
+          text: "拒绝并记住",
+        }),
+      ),
+      h("span", {
+        class: "tool-approval-note",
+        "data-role": "approval-note",
+        text: "记住后同一只猫的同类工具调用自动放行，重启服务后失效。",
       }),
       h("span", {
         class: "tool-approval-error",
@@ -4869,6 +5147,24 @@ function showToolApprovalError(card, message) {
   error.hidden = false;
 }
 
+function approvalStartedAtFor(card) {
+  const call = toolCallById(card?.dataset?.toolCallId);
+  return Number(call?.startedAt) || Number(card?.dataset?.approvalStartedAt) || 0;
+}
+
+function approvalRemainingMs(card) {
+  const startedAt = approvalStartedAtFor(card);
+  if (!startedAt) return APPROVAL_TIMEOUT_MS;
+  return startedAt + APPROVAL_TIMEOUT_MS - Date.now();
+}
+
+function formatApprovalCountdown(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
 function updateToolApprovalUi(card) {
   if (!card) return;
   const status = card.dataset.status;
@@ -4884,25 +5180,66 @@ function updateToolApprovalUi(card) {
 
   const deciding = card.dataset.deciding || "";
   const sent = card.dataset.approvalSent || "";
+  const rememberedSent = card.dataset.approvalRemembered || "";
   const available = approvalState.available !== false;
   const hint = card.querySelector('[data-role="approval-hint"]');
+  const countdown = card.querySelector('[data-role="approval-countdown"]');
   const approveBtn = card.querySelector('[data-role="approve"]');
   const rejectBtn = card.querySelector('[data-role="reject"]');
+  const approveRememberBtn = card.querySelector('[data-role="approve-remember"]');
+  const rejectRememberBtn = card.querySelector('[data-role="reject-remember"]');
+  const remaining = approvalRemainingMs(card);
+  const expired = remaining <= 0;
 
+  if (countdown) {
+    countdown.dataset.expired = expired ? "true" : "false";
+    countdown.textContent = expired
+      ? "⏱ 已自动拒绝（超过 5 分钟）"
+      : `⏱ ${formatApprovalCountdown(remaining)} 后自动拒绝`;
+  }
+
+  const busy = Boolean(deciding) || Boolean(sent) || expired || !available;
+  for (const button of [approveBtn, rejectBtn, approveRememberBtn, rejectRememberBtn]) {
+    if (button) button.disabled = busy;
+  }
   if (approveBtn) {
-    approveBtn.disabled = !available || Boolean(deciding) || Boolean(sent);
     approveBtn.textContent = deciding === "approve" ? "批准中…" : "批准执行";
   }
   if (rejectBtn) {
-    rejectBtn.disabled = !available || Boolean(deciding) || Boolean(sent);
     rejectBtn.textContent = deciding === "reject" ? "拒绝中…" : "拒绝";
+  }
+  if (approveRememberBtn) {
+    approveRememberBtn.textContent =
+      deciding === "approve:remember" ? "记住中…" : "批准并记住";
+  }
+  if (rejectRememberBtn) {
+    rejectRememberBtn.textContent =
+      deciding === "reject:remember" ? "记住中…" : "拒绝并记住";
   }
   if (hint) {
     if (!available) hint.textContent = "审批服务未就绪（接口 404/503），暂时不能处理。";
+    else if (expired) hint.textContent = "已超过 5 分钟，服务端会按拒绝处理；等待任务状态更新…";
+    else if (rememberedSent === "approved") hint.textContent = "已批准并记住：同类工具后续自动放行。";
+    else if (rememberedSent === "rejected") hint.textContent = "已拒绝并记住：同类工具后续自动拒绝。";
     else if (sent === "approved") hint.textContent = "已批准，等待猫继续…";
     else if (sent === "rejected") hint.textContent = "已拒绝，等待状态更新…";
     else if (deciding) hint.textContent = "处理中…";
-    else hint.textContent = "等你批准这次工具调用";
+    else hint.textContent = "等待你批准中，批准后猫才会继续；期间任务不会判定卡住。";
+  }
+}
+
+function updateApprovalCountdowns() {
+  if (!els.timeline) return;
+  for (const card of $$('.tool-card[data-status="pending"]', els.timeline)) {
+    const countdown = card.querySelector('[data-role="approval-countdown"]');
+    if (!countdown) continue;
+    const remaining = approvalRemainingMs(card);
+    const expired = remaining <= 0;
+    countdown.dataset.expired = expired ? "true" : "false";
+    countdown.textContent = expired
+      ? "⏱ 已自动拒绝（超过 5 分钟）"
+      : `⏱ ${formatApprovalCountdown(remaining)} 后自动拒绝`;
+    if (expired) updateToolApprovalUi(card);
   }
 }
 
@@ -4982,7 +5319,7 @@ function focusNeedsMe() {
   if (approve) approve.focus({ preventScroll: true });
 }
 
-async function decideToolCall(callId, decision, trigger) {
+async function decideToolCall(callId, decision, trigger, options = {}) {
   const card = trigger?.closest?.(".tool-card");
   if (!card || !callId) return;
   if (card.dataset.status !== "pending" || card.dataset.approvalSent) {
@@ -4990,20 +5327,31 @@ async function decideToolCall(callId, decision, trigger) {
     return;
   }
   if (card.dataset.deciding) return;
+  if (approvalRemainingMs(card) <= 0) {
+    showToolApprovalError(card, "已经超过 5 分钟，服务端会自动拒绝。");
+    updateToolApprovalUi(card);
+    return;
+  }
   if (approvalState.available === false) {
     showToolApprovalError(card, "审批服务未就绪（接口 404/503），暂时不能处理。");
     updateToolApprovalUi(card);
     return;
   }
 
+  const remember = Boolean(options.remember);
   const verb = decision === "approve" ? "批准" : "拒绝";
-  card.dataset.deciding = decision;
+  const decidingKey = remember ? `${decision}:remember` : decision;
+  card.dataset.deciding = decidingKey;
   updateToolApprovalUi(card);
 
   try {
     const response = await fetch(
       `/api/tool-calls/${encodeURIComponent(callId)}/${decision}`,
-      { method: "POST" },
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(remember ? { remember: true } : {}),
+      },
     );
     if (!response.ok) {
       let payload = null;
@@ -5037,16 +5385,30 @@ async function decideToolCall(callId, decision, trigger) {
       return;
     }
 
-    await response.json().catch(() => null);
+    const payload = await response.json().catch(() => null);
+    const remembered = Boolean(payload?.remembered);
     card.dataset.approvalSent = decision === "approve" ? "approved" : "rejected";
+    card.dataset.approvalRemembered = remembered
+      ? decision === "approve"
+        ? "approved"
+        : "rejected"
+      : "";
     delete card.dataset.deciding;
     updateToolApprovalUi(card);
+    if (remember) {
+      const call = toolCallById(callId);
+      const cat = catById(call?.catId);
+      toast(
+        `已记住：${cat?.name ?? "这只猫"} + ${call?.tool ?? "该工具"}，后续同类调用不再询问`,
+      );
+    }
     void loadApprovals();
 
     // 兜底：8s 后仍未收到状态更新，就还原按钮并提示可以刷新。
     window.setTimeout(() => {
       if (card.isConnected && card.dataset.status === "pending") {
         delete card.dataset.approvalSent;
+        delete card.dataset.approvalRemembered;
         showToolApprovalError(card, `已${verb}，仍在等待服务端更新；可刷新页面查看。`);
         updateToolApprovalUi(card);
       }
@@ -5056,6 +5418,149 @@ async function decideToolCall(callId, decision, trigger) {
     delete card.dataset.deciding;
     updateToolApprovalUi(card);
   }
+}
+
+function showTaskRecoveryPanelError(message) {
+  taskRecoveryState.error = message || "";
+  app.sig.progress = null;
+  renderProgress();
+}
+
+async function submitTaskAction(taskId, action, note) {
+  if (!taskId || taskRecoveryState.saving) return false;
+  const task = taskById(taskId);
+  if (!task) return false;
+  taskRecoveryState.taskId = taskId;
+  taskRecoveryState.action = action;
+  taskRecoveryState.saving = true;
+  taskRecoveryState.error = "";
+  app.sig.progress = null;
+  renderProgress();
+  try {
+    const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...(note?.trim() ? { note: note.trim() } : {}) }),
+    });
+    if (response.status === 404 || response.status === 503) {
+      throw new Error("任务恢复服务未就绪（接口 404/503）");
+    }
+    if (!response.ok) throw new Error(await readApiError(response));
+    if (action === "continue") toast("已让猫继续试试，再给它一次机会");
+    else if (action === "pivot") toast("已换个方案，猫会按新方向继续");
+    else toast("已收尾，并记了一条 manual-close 教训");
+    window.setTimeout(() => {
+      void refreshState().catch(() => {});
+    }, 250);
+    return true;
+  } catch (error) {
+    showTaskRecoveryPanelError(`${action === "close" ? "收尾" : action === "pivot" ? "换方案" : "继续"}失败：${error.message}`);
+    return false;
+  } finally {
+    taskRecoveryState.saving = false;
+    app.sig.progress = null;
+    renderProgress();
+  }
+}
+
+function openTaskPivotModal(taskId) {
+  const task = taskById(taskId) ?? activeTask();
+  if (!task) return;
+  taskRecoveryState.taskId = task.id;
+  taskRecoveryState.action = "pivot";
+  taskRecoveryState.error = "";
+  if (els.taskPivotNote) els.taskPivotNote.value = "";
+  hideTaskPivotError();
+  updateTaskPivotState();
+  if (!els.taskPivotModal?.open) els.taskPivotModal?.showModal();
+  requestAnimationFrame(() => els.taskPivotNote?.focus());
+}
+
+function closeTaskPivotModal() {
+  if (els.taskPivotModal?.open) els.taskPivotModal.close();
+}
+
+function hideTaskPivotError() {
+  if (!els.taskPivotError) return;
+  els.taskPivotError.hidden = true;
+  els.taskPivotError.textContent = "";
+}
+
+function showTaskPivotError(message) {
+  if (!els.taskPivotError) return;
+  els.taskPivotError.textContent = message;
+  els.taskPivotError.hidden = false;
+}
+
+function updateTaskPivotState() {
+  if (!els.taskPivotSubmit) return;
+  els.taskPivotSubmit.disabled = taskRecoveryState.saving;
+  els.taskPivotSubmit.textContent = taskRecoveryState.saving ? "提交中…" : "提交新方向";
+}
+
+function openTaskCloseModal(taskId) {
+  const task = taskById(taskId) ?? activeTask();
+  if (!task) return;
+  taskRecoveryState.taskId = task.id;
+  taskRecoveryState.action = "close";
+  taskRecoveryState.error = "";
+  if (els.taskCloseNote) els.taskCloseNote.value = "";
+  hideTaskCloseError();
+  updateTaskCloseState();
+  if (!els.taskCloseModal?.open) els.taskCloseModal?.showModal();
+  requestAnimationFrame(() => els.taskCloseNote?.focus());
+}
+
+function closeTaskCloseModal() {
+  if (els.taskCloseModal?.open) els.taskCloseModal.close();
+}
+
+function hideTaskCloseError() {
+  if (!els.taskCloseError) return;
+  els.taskCloseError.hidden = true;
+  els.taskCloseError.textContent = "";
+}
+
+function showTaskCloseError(message) {
+  if (!els.taskCloseError) return;
+  els.taskCloseError.textContent = message;
+  els.taskCloseError.hidden = false;
+}
+
+function updateTaskCloseState() {
+  if (!els.taskCloseSubmit) return;
+  els.taskCloseSubmit.disabled = taskRecoveryState.saving;
+  els.taskCloseSubmit.textContent = taskRecoveryState.saving ? "收尾中…" : "确认收尾";
+}
+
+async function submitTaskPivot(event) {
+  event.preventDefault();
+  if (taskRecoveryState.saving) return;
+  hideTaskPivotError();
+  updateTaskPivotState();
+  const ok = await submitTaskAction(
+    taskRecoveryState.taskId,
+    "pivot",
+    els.taskPivotNote?.value ?? "",
+  );
+  if (ok) closeTaskPivotModal();
+  else showTaskPivotError(taskRecoveryState.error || "换方案失败");
+  updateTaskPivotState();
+}
+
+async function submitTaskClose(event) {
+  event.preventDefault();
+  if (taskRecoveryState.saving) return;
+  hideTaskCloseError();
+  updateTaskCloseState();
+  const ok = await submitTaskAction(
+    taskRecoveryState.taskId,
+    "close",
+    els.taskCloseNote?.value ?? "",
+  );
+  if (ok) closeTaskCloseModal();
+  else showTaskCloseError(taskRecoveryState.error || "收尾失败");
+  updateTaskCloseState();
 }
 
 function toggleToolOutput(button) {
@@ -5139,12 +5644,18 @@ function syncToolCards() {
     (app.state?.tasks ?? []).filter((task) => task.roomId === app.roomId).map((task) => task.id),
   );
 
+  const wasNearBottom = isNearBottom(els.timelineScroll);
+  let addedSynthetic = false;
   for (const call of calls) {
     if (represented.has(call.id) || existingIds.has(call.id)) continue;
     if (call.taskId && !roomTaskIds.has(call.taskId)) continue;
     if (host.querySelector(".timeline-empty")) host.replaceChildren();
     host.appendChild(syntheticToolMessageNode(call));
+    addedSynthetic = true;
   }
+  // pending 卡可能比普通消息高（多一排审批按钮），补位后如果原本在底部要跟着滚，
+  // 否则批准/拒绝按钮会落在视口外。
+  if (addedSynthetic && wasNearBottom) scrollToBottom(true);
 }
 
 // ── 沙盒 / 工作区文件面板 / 文件查看 ───────────────────────────────────
