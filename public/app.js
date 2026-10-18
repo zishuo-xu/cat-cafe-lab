@@ -193,6 +193,16 @@ const roomState = {
   workspacesReady: false,
 };
 
+/** 房间管理（菜单 / 编辑 / 删除）状态。 */
+const roomAdminState = {
+  roomId: null,
+  mode: "",
+  available: null,
+  probing: false,
+  saving: false,
+  deleting: false,
+};
+
 /** 当前任务 git 面板 / 弹窗状态。 */
 const taskGitState = {
   taskId: null,
@@ -681,6 +691,30 @@ function cacheDom() {
   els.roomTopic = $("[data-room-topic]");
   els.roomList = $("#room-list");
   els.roomCount = $("[data-room-count]");
+  els.roomMenuModal = $("#room-menu-modal");
+  els.roomMenuSub = $("#room-menu-sub");
+  els.roomMenuError = $("#room-menu-error");
+  els.roomMenuList = $("#room-menu-list");
+  els.roomMenuRetry = $("#room-menu-retry");
+  els.roomEditModal = $("#room-edit-modal");
+  els.roomEditForm = $("#room-edit-form");
+  els.roomEditTitle = $("#room-edit-title");
+  els.roomEditSub = $("#room-edit-sub");
+  els.roomEditNameField = $("#room-edit-name-field");
+  els.roomEditName = $("#room-edit-name");
+  els.roomEditTopicField = $("#room-edit-topic-field");
+  els.roomEditTopic = $("#room-edit-topic");
+  els.roomEditWorkspaceField = $("#room-edit-workspace-field");
+  els.roomEditWorkspace = $("#room-edit-workspace");
+  els.roomEditWorkspaceHint = $("#room-edit-workspace-hint");
+  els.roomEditError = $("#room-edit-error");
+  els.roomEditSave = $("#room-edit-save");
+  els.roomDeleteModal = $("#room-delete-modal");
+  els.roomDeleteSub = $("#room-delete-sub");
+  els.roomDeleteCounts = $("#room-delete-counts");
+  els.roomDeleteReason = $("#room-delete-reason");
+  els.roomDeleteError = $("#room-delete-error");
+  els.roomDeleteConfirm = $("#room-delete-confirm");
   els.roomPickerModal = $("#room-picker-modal");
   els.roomPickerList = $("#room-picker-list");
   els.newRoomModal = $("#new-room-modal");
@@ -2271,6 +2305,43 @@ function bindUi() {
     });
   }
 
+  if (els.roomMenuModal) {
+    els.roomMenuModal.addEventListener("click", (event) => {
+      if (event.target === els.roomMenuModal) closeRoomMenu();
+    });
+  }
+  if (els.roomEditForm) {
+    els.roomEditForm.addEventListener("submit", (event) => void saveRoomEdit(event));
+  }
+  for (const field of [els.roomEditName, els.roomEditTopic]) {
+    field?.addEventListener("input", () => {
+      hideRoomEditError();
+      updateRoomEditState();
+    });
+  }
+  els.roomEditWorkspace?.addEventListener("change", () => {
+    hideRoomEditError();
+    updateRoomEditState();
+  });
+  if (els.roomEditModal) {
+    els.roomEditModal.addEventListener("click", (event) => {
+      if (event.target === els.roomEditModal) closeRoomEdit();
+    });
+    els.roomEditModal.addEventListener("close", () => {
+      roomAdminState.saving = false;
+      hideRoomEditError();
+    });
+  }
+  if (els.roomDeleteModal) {
+    els.roomDeleteModal.addEventListener("click", (event) => {
+      if (event.target === els.roomDeleteModal) closeRoomDelete();
+    });
+    els.roomDeleteModal.addEventListener("close", () => {
+      roomAdminState.deleting = false;
+      hideRoomDeleteError();
+    });
+  }
+
   if (els.taskCommitForm) {
     els.taskCommitForm.addEventListener("submit", (event) => void submitTaskCommit(event));
   }
@@ -2488,6 +2559,31 @@ function onGlobalClick(event) {
       break;
     case "switch-room":
       if (actionEl.dataset.roomId) setRoom(actionEl.dataset.roomId);
+      break;
+    case "open-room-menu":
+      if (actionEl.dataset.roomId) openRoomMenu(actionEl.dataset.roomId);
+      break;
+    case "close-room-menu":
+      closeRoomMenu();
+      break;
+    case "room-action": {
+      const mode = actionEl.dataset.mode;
+      if (mode === "delete") openRoomDelete();
+      else if (mode) openRoomEdit(mode);
+      break;
+    }
+    case "retry-room-admin":
+      roomAdminState.available = null;
+      void probeRoomAdmin();
+      break;
+    case "close-room-edit":
+      closeRoomEdit();
+      break;
+    case "close-room-delete":
+      closeRoomDelete();
+      break;
+    case "confirm-room-delete":
+      void confirmRoomDelete();
       break;
     case "open-room-picker":
       openRoomPicker();
@@ -5244,31 +5340,50 @@ function renderRooms() {
   els.roomList.replaceChildren(...rooms.map((room) => roomItem(room)));
 }
 
-function roomItem(room) {
+function roomItem(room, options = {}) {
   const active = room.id === app.roomId;
   const badge = workspaceRoomBadge(room);
+  const withMenu = options.withMenu !== false;
   return h(
-    "button",
+    "div",
     {
-      type: "button",
       class: `room-item${active ? " is-active" : ""}`,
-      "data-action": "switch-room",
       "data-room-id": room.id,
-      "aria-pressed": active ? "true" : "false",
-      title: `${room.name} · ${badge.text}`,
       role: "listitem",
     },
     h(
-      "span",
-      { class: "room-item-main" },
-      h("span", { class: "room-item-name", text: room.name }),
-      h("span", {
-        class: "room-item-badge",
-        "data-policy": badge.policy,
-        text: badge.text,
-      }),
+      "button",
+      {
+        type: "button",
+        class: "room-main",
+        "data-action": "switch-room",
+        "data-room-id": room.id,
+        "aria-pressed": active ? "true" : "false",
+        title: `${room.name} · ${badge.text}`,
+      },
+      h(
+        "span",
+        { class: "room-item-main" },
+        h("span", { class: "room-item-name", text: room.name }),
+        h("span", {
+          class: "room-item-badge",
+          "data-policy": badge.policy,
+          text: badge.text,
+        }),
+      ),
+      active ? h("span", { class: "room-item-check", "aria-hidden": "true", text: "●" }) : null,
     ),
-    active ? h("span", { class: "room-item-check", "aria-hidden": "true", text: "●" }) : null,
+    withMenu
+      ? h("button", {
+          type: "button",
+          class: "room-menu-btn",
+          "data-action": "open-room-menu",
+          "data-room-id": room.id,
+          "aria-label": `管理房间「${room.name}」`,
+          title: "房间操作",
+          text: "…",
+        })
+      : null,
   );
 }
 
@@ -5276,7 +5391,9 @@ function renderRoomPicker() {
   if (!els.roomPickerList) return;
   const rooms = app.state?.rooms ?? [];
   els.roomPickerList.replaceChildren(
-    ...(rooms.length ? rooms.map((room) => roomItem(room)) : [emptyNote("还没有房间")]),
+    ...(rooms.length
+      ? rooms.map((room) => roomItem(room, { withMenu: false }))
+      : [emptyNote("还没有房间")]),
   );
 }
 
@@ -5435,6 +5552,515 @@ async function createRoom() {
   } finally {
     roomState.creating = false;
     updateNewRoomState();
+  }
+}
+
+
+// ── 房间管理：菜单 / 编辑 / 删除 ───────────────────────────────────────
+
+function roomById(id) {
+  return (app.state?.rooms ?? []).find((room) => room.id === id) ?? null;
+}
+
+function roomTaskIds(roomId) {
+  return new Set(
+    (app.state?.tasks ?? []).filter((task) => task.roomId === roomId).map((task) => task.id),
+  );
+}
+
+function roomDeleteCounts(roomId) {
+  const taskIds = roomTaskIds(roomId);
+  return {
+    tasks: (app.state?.tasks ?? []).filter((task) => task.roomId === roomId).length,
+    messages: (app.state?.messages ?? []).filter((message) => message.roomId === roomId).length,
+    handoffs: (app.state?.handoffs ?? []).filter((handoff) => taskIds.has(handoff.taskId)).length,
+    artifacts: (app.state?.artifacts ?? []).filter((artifact) => taskIds.has(artifact.taskId)).length,
+    toolCalls: (app.state?.toolCalls ?? []).filter((call) => call.taskId && taskIds.has(call.taskId)).length,
+  };
+}
+
+function activeTasksInRoom(roomId) {
+  return (app.state?.tasks ?? []).filter(
+    (task) =>
+      task.roomId === roomId && (task.status === "active" || task.status === "stalled"),
+  );
+}
+
+function roomDeleteBlockReason(room) {
+  if (!room) return "房间不存在";
+  if ((app.state?.rooms ?? []).length <= 1) return "最后一个房间不能删除";
+  if (roomAdminState.probing) return "正在检查房间管理接口…";
+  if (roomAdminState.available === false) return "房间管理服务未就绪（PATCH/DELETE 404/503）";
+  const active = activeTasksInRoom(room.id);
+  if (active.length > 0) {
+    return `还有 ${active.length} 个进行中 / 卡住的任务，先等它们结束或重置猫咖`;
+  }
+  return "";
+}
+
+async function probeRoomAdmin() {
+  if (roomAdminState.probing) return;
+  const roomId = roomAdminState.roomId;
+  if (!roomId) return;
+  roomAdminState.probing = true;
+  renderRoomMenu();
+  try {
+    // 空 PATCH 不带字段：路由存在时服务端返回 400「没有可更新的字段」，
+    // 不会改数据；路由缺失/未启用则 404/503，用来做能力探测。
+    const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    if (response.status === 400 || response.status === 200) {
+      roomAdminState.available = true;
+    } else if (response.status === 404 || response.status === 503) {
+      roomAdminState.available = false;
+    } else {
+      roomAdminState.available = false;
+    }
+  } catch {
+    roomAdminState.available = false;
+  } finally {
+    roomAdminState.probing = false;
+    renderRoomMenu();
+  }
+}
+
+function openRoomMenu(roomId) {
+  const room = roomById(roomId);
+  if (!room) return;
+  roomAdminState.roomId = roomId;
+  roomAdminState.mode = "";
+  renderRoomMenu();
+  if (!els.roomMenuModal?.open) els.roomMenuModal?.showModal();
+  if (roomAdminState.available === null) void probeRoomAdmin();
+}
+
+function closeRoomMenu() {
+  if (els.roomMenuModal?.open) els.roomMenuModal.close();
+}
+
+function roomMenuButton(mode, title, description, options = {}) {
+  return h(
+    "button",
+    {
+      type: "button",
+      class: "room-menu-item",
+      "data-action": "room-action",
+      "data-mode": mode,
+      "data-danger": options.danger ? "true" : "false",
+      disabled: Boolean(options.disabled),
+    },
+    h("span", { class: "room-menu-item-title", text: title }),
+    h("small", { text: options.disabled && options.reason ? options.reason : description }),
+  );
+}
+
+function renderRoomMenu() {
+  const room = roomById(roomAdminState.roomId);
+  if (!room) {
+    closeRoomMenu();
+    return;
+  }
+  const busy = roomAdminState.probing || roomAdminState.available === false;
+  if (els.roomMenuSub) {
+    const badge = workspaceRoomBadge(room);
+    els.roomMenuSub.textContent = `${room.name} · ${badge.text}`;
+  }
+  if (els.roomMenuError) {
+    const unavailable =
+      roomAdminState.available === false
+        ? "房间管理服务未就绪（PATCH/DELETE 404/503），菜单暂时只读。"
+        : roomAdminState.probing
+          ? "正在检查房间管理接口…"
+          : "";
+    els.roomMenuError.hidden = !unavailable;
+    els.roomMenuError.textContent = unavailable;
+  }
+  if (els.roomMenuRetry) {
+    els.roomMenuRetry.hidden = roomAdminState.available !== false;
+  }
+
+  const workspaceDisabled =
+    busy ||
+    (workspaceState.available === false &&
+      !(workspaceState.list ?? []).some((item) => item.id === room.workspaceId));
+  const workspaceReason =
+    roomAdminState.probing
+      ? "正在检查房间管理接口…"
+      : roomAdminState.available === false
+        ? "房间管理服务未就绪，暂时不能修改"
+        : workspaceState.available === false
+          ? "工作区服务未就绪，暂时不能切换"
+          : "";
+  const deleteReason = roomDeleteBlockReason(room);
+
+  if (els.roomMenuList) {
+    els.roomMenuList.replaceChildren(
+      roomMenuButton("name", "重命名", `当前名称：${room.name}`, {
+        disabled: busy,
+        reason:
+          roomAdminState.available === false
+            ? "房间管理服务未就绪，暂时不能修改"
+            : roomAdminState.probing
+              ? "正在检查房间管理接口…"
+              : "",
+      }),
+      roomMenuButton("topic", "修改主题", room.topic || "（没有主题）", {
+        disabled: busy,
+        reason:
+          roomAdminState.available === false
+            ? "房间管理服务未就绪，暂时不能修改"
+            : roomAdminState.probing
+              ? "正在检查房间管理接口…"
+              : "",
+      }),
+      roomMenuButton("workspace", "更换工作区", `当前：${workspaceRoomBadge(room).text}`, {
+        disabled: workspaceDisabled,
+        reason: workspaceReason,
+      }),
+      roomMenuButton(
+        "delete",
+        "删除房间",
+        roomDeleteCounts(room.id).tasks
+          ? `会删除 ${roomDeleteCounts(room.id).tasks} 个任务及相关数据`
+          : "删除该房间及其任务/消息/产物",
+        {
+          danger: true,
+          disabled: Boolean(deleteReason),
+          reason: deleteReason,
+        },
+      ),
+    );
+  }
+}
+
+function openRoomEdit(mode) {
+  const room = roomById(roomAdminState.roomId);
+  if (!room) return;
+  if (roomAdminState.probing || roomAdminState.available === false) {
+    toast(roomAdminState.probing ? "正在检查房间管理接口…" : "房间管理服务未就绪", "warn");
+    return;
+  }
+  if (mode === "workspace" && workspaceState.available === false) {
+    toast("工作区服务未就绪，暂时不能切换", "warn");
+    return;
+  }
+  roomAdminState.mode = mode;
+  closeRoomMenu();
+  if (els.roomEditNameField) els.roomEditNameField.hidden = mode !== "name";
+  if (els.roomEditTopicField) els.roomEditTopicField.hidden = mode !== "topic";
+  if (els.roomEditWorkspaceField) els.roomEditWorkspaceField.hidden = mode !== "workspace";
+  if (els.roomEditName) els.roomEditName.value = room.name;
+  if (els.roomEditTopic) els.roomEditTopic.value = room.topic ?? "";
+  if (els.roomEditError) {
+    els.roomEditError.hidden = true;
+    els.roomEditError.textContent = "";
+  }
+  let title = "编辑房间";
+  let sub = "修改房间信息。";
+  let saveText = "保存";
+  if (mode === "name") {
+    title = "重命名房间";
+    sub = "房间名会显示在左栏和聊天头部，1–30 个字符。";
+    saveText = "保存名称";
+  } else if (mode === "topic") {
+    title = "修改房间主题";
+    sub = "房间主题显示在聊天头部，最多 120 个字符。";
+    saveText = "保存主题";
+  } else if (mode === "workspace") {
+    title = "更换工作区";
+    sub = "切换后这个房间的文件、沙盒与 git 状态会跟着变。";
+    saveText = "保存工作区";
+  }
+  if (els.roomEditTitle) els.roomEditTitle.textContent = title;
+  if (els.roomEditSub) els.roomEditSub.textContent = sub;
+  if (els.roomEditSave) els.roomEditSave.textContent = saveText;
+  if (mode === "workspace") {
+    void populateRoomWorkspaceSelect(room);
+  }
+  updateRoomEditState();
+  if (!els.roomEditModal?.open) els.roomEditModal?.showModal();
+  requestAnimationFrame(() => {
+    if (mode === "name") {
+      els.roomEditName?.focus();
+      els.roomEditName?.select();
+    } else if (mode === "topic") {
+      els.roomEditTopic?.focus();
+      els.roomEditTopic?.select();
+    }
+  });
+}
+
+async function populateRoomWorkspaceSelect(room) {
+  const select = els.roomEditWorkspace;
+  if (!select) return;
+  if (!workspaceState.loaded) await loadWorkspaces();
+  const options = (workspaceState.list ?? []).map((workspace) =>
+    h("option", {
+      value: workspace.id,
+      text:
+        workspace.kind === "sandbox"
+          ? `${workspace.name}（内置沙盒）`
+          : `${workspace.name} · ${workspacePolicyLabel(workspace.policy)}`,
+    }),
+  );
+  if (!options.length) {
+    options.push(h("option", { value: "", text: "工作区服务未就绪" }));
+  }
+  select.replaceChildren(...options);
+  if ([...select.options].some((option) => option.value === room.workspaceId)) {
+    select.value = room.workspaceId;
+  }
+  if (els.roomEditWorkspaceHint) {
+    els.roomEditWorkspaceHint.textContent =
+      workspaceState.available === false
+        ? "工作区服务未就绪，暂时不能切换工作区。"
+        : "切换后当前房间的文件、沙盒与 git 状态会跟着变。";
+  }
+  updateRoomEditState();
+}
+
+function closeRoomEdit() {
+  if (els.roomEditModal?.open) els.roomEditModal.close();
+}
+
+function hideRoomEditError() {
+  if (!els.roomEditError) return;
+  els.roomEditError.hidden = true;
+  els.roomEditError.textContent = "";
+}
+
+function showRoomEditError(message) {
+  if (!els.roomEditError) return;
+  els.roomEditError.textContent = message;
+  els.roomEditError.hidden = false;
+}
+
+function updateRoomEditState() {
+  if (!els.roomEditSave) return;
+  const mode = roomAdminState.mode;
+  let valid = true;
+  if (mode === "name") {
+    const name = els.roomEditName?.value.trim() ?? "";
+    valid = name.length >= 1 && name.length <= 30;
+  } else if (mode === "topic") {
+    valid = (els.roomEditTopic?.value.length ?? 0) <= 120;
+  } else if (mode === "workspace") {
+    valid =
+      workspaceState.available !== false &&
+      Boolean(els.roomEditWorkspace?.value);
+  }
+  els.roomEditSave.disabled = roomAdminState.saving || !valid;
+  const labels = { name: "保存名称", topic: "保存主题", workspace: "保存工作区" };
+  els.roomEditSave.textContent = roomAdminState.saving
+    ? "保存中…"
+    : labels[mode] ?? "保存";
+}
+
+function applyUpdatedRoom(updated) {
+  if (!updated?.id || !app.state) return;
+  const rooms = app.state.rooms ?? [];
+  const index = rooms.findIndex((room) => room.id === updated.id);
+  const previous = index >= 0 ? rooms[index] : null;
+  const workspaceChanged = Boolean(previous && previous.workspaceId !== updated.workspaceId);
+  if (index >= 0) rooms[index] = updated;
+  app.sig.rooms = null;
+  if (workspaceChanged && app.roomId === updated.id) {
+    app.sig.currentWorkspace = null;
+    sandboxState.files = [];
+    sandboxState.loaded = false;
+    sandboxState.workspaceId = null;
+    clearTaskGitState();
+  }
+  renderAll();
+  if (workspaceChanged) {
+    void loadWorkspaces();
+    if (app.roomId === updated.id) ensureCurrentWorkspaceData();
+  }
+}
+
+async function saveRoomEdit(event) {
+  event.preventDefault();
+  if (roomAdminState.saving) return;
+  const room = roomById(roomAdminState.roomId);
+  if (!room) return;
+  const mode = roomAdminState.mode;
+  const patch = {};
+  if (mode === "name") {
+    const name = els.roomEditName?.value.trim() ?? "";
+    if (name.length < 1 || name.length > 30) {
+      showRoomEditError("房间名需要 1–30 个字符。");
+      els.roomEditName?.focus();
+      return;
+    }
+    patch.name = name;
+  } else if (mode === "topic") {
+    const topic = els.roomEditTopic?.value.trim() ?? "";
+    if (topic.length > 120) {
+      showRoomEditError("主题不能超过 120 个字符。");
+      els.roomEditTopic?.focus();
+      return;
+    }
+    patch.topic = topic;
+  } else if (mode === "workspace") {
+    const workspaceId = els.roomEditWorkspace?.value ?? "";
+    if (!workspaceId) {
+      showRoomEditError("请选择一个工作区。");
+      return;
+    }
+    patch.workspaceId = workspaceId;
+  } else {
+    return;
+  }
+
+  roomAdminState.saving = true;
+  hideRoomEditError();
+  updateRoomEditState();
+  try {
+    const response = await fetch(`/api/rooms/${encodeURIComponent(room.id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (response.status === 404 || response.status === 503) {
+      roomAdminState.available = false;
+    }
+    if (!response.ok) throw new Error(await readApiError(response));
+    const updated = await response.json();
+    closeRoomEdit();
+    applyUpdatedRoom(updated);
+    if (mode === "name") toast(`房间已重命名为「${updated.name}」`);
+    else if (mode === "topic") toast("房间主题已更新");
+    else toast("房间工作区已切换");
+  } catch (error) {
+    showRoomEditError(`保存失败：${error.message}`);
+  } finally {
+    roomAdminState.saving = false;
+    updateRoomEditState();
+  }
+}
+
+function openRoomDelete() {
+  const room = roomById(roomAdminState.roomId);
+  if (!room) return;
+  closeRoomMenu();
+  roomAdminState.mode = "delete";
+  const counts = roomDeleteCounts(room.id);
+  const reason = roomDeleteBlockReason(room);
+  if (els.roomDeleteSub) els.roomDeleteSub.textContent = `确认删除「${room.name}」？`;
+  if (els.roomDeleteCounts) {
+    els.roomDeleteCounts.replaceChildren(
+      h("span", { class: "room-delete-count", text: `任务 ${counts.tasks}` }),
+      h("span", { class: "room-delete-count", text: `消息 ${counts.messages}` }),
+      h("span", { class: "room-delete-count", text: `交接卡 ${counts.handoffs}` }),
+      h("span", { class: "room-delete-count", text: `产物 ${counts.artifacts}` }),
+      h("span", { class: "room-delete-count", text: `工具记录 ${counts.toolCalls}` }),
+    );
+  }
+  if (els.roomDeleteReason) {
+    els.roomDeleteReason.hidden = !reason;
+    els.roomDeleteReason.textContent = reason || "";
+  }
+  if (els.roomDeleteError) {
+    els.roomDeleteError.hidden = true;
+    els.roomDeleteError.textContent = "";
+  }
+  if (els.roomDeleteConfirm) {
+    els.roomDeleteConfirm.disabled = Boolean(reason) || roomAdminState.deleting;
+    els.roomDeleteConfirm.textContent = roomAdminState.deleting ? "删除中…" : "确认删除";
+  }
+  if (!els.roomDeleteModal?.open) els.roomDeleteModal?.showModal();
+}
+
+function closeRoomDelete() {
+  if (els.roomDeleteModal?.open) els.roomDeleteModal.close();
+}
+
+function showRoomDeleteError(message) {
+  if (!els.roomDeleteError) return;
+  els.roomDeleteError.textContent = message;
+  els.roomDeleteError.hidden = false;
+}
+
+function hideRoomDeleteError() {
+  if (!els.roomDeleteError) return;
+  els.roomDeleteError.hidden = true;
+  els.roomDeleteError.textContent = "";
+}
+
+function removeRoomLocally(roomId) {
+  if (!app.state) return;
+  const taskIds = roomTaskIds(roomId);
+  app.state.rooms = (app.state.rooms ?? []).filter((room) => room.id !== roomId);
+  app.state.messages = (app.state.messages ?? []).filter((message) => message.roomId !== roomId);
+  app.state.tasks = (app.state.tasks ?? []).filter((task) => task.roomId !== roomId);
+  app.state.handoffs = (app.state.handoffs ?? []).filter((handoff) => !taskIds.has(handoff.taskId));
+  app.state.artifacts = (app.state.artifacts ?? []).filter((artifact) => !taskIds.has(artifact.taskId));
+  app.state.toolCalls = (app.state.toolCalls ?? []).filter(
+    (call) => !call.taskId || !taskIds.has(call.taskId),
+  );
+  app.state.memory = (app.state.memory ?? []).filter(
+    (entry) => !entry.sourceTaskId || !taskIds.has(entry.sourceTaskId),
+  );
+  delete app.state.typing?.[roomId];
+  app.sig.rooms = null;
+}
+
+async function confirmRoomDelete() {
+  if (roomAdminState.deleting) return;
+  const room = roomById(roomAdminState.roomId);
+  if (!room) return;
+  const reason = roomDeleteBlockReason(room);
+  if (reason) {
+    if (els.roomDeleteReason) {
+      els.roomDeleteReason.hidden = false;
+      els.roomDeleteReason.textContent = reason;
+    }
+    return;
+  }
+  const wasCurrent = app.roomId === room.id;
+  roomAdminState.deleting = true;
+  hideRoomDeleteError();
+  if (els.roomDeleteConfirm) {
+    els.roomDeleteConfirm.disabled = true;
+    els.roomDeleteConfirm.textContent = "删除中…";
+  }
+  try {
+    const response = await fetch(`/api/rooms/${encodeURIComponent(room.id)}`, {
+      method: "DELETE",
+    });
+    if (response.status === 404 || response.status === 503) {
+      roomAdminState.available = false;
+    }
+    if (!response.ok) throw new Error(await readApiError(response));
+    const payload = await response.json();
+    closeRoomDelete();
+    const removed = payload?.removed ?? {};
+    await refreshState().catch(() => {});
+    if ((app.state?.rooms ?? []).some((item) => item.id === room.id)) {
+      removeRoomLocally(room.id);
+    }
+    const remaining = app.state?.rooms ?? [];
+    if (wasCurrent || !remaining.some((item) => item.id === app.roomId)) {
+      if (remaining[0]) setRoom(remaining[0].id);
+    } else {
+      renderAll();
+    }
+    void loadWorkspaces();
+    toast(
+      `已删除房间「${room.name}」` +
+        (removed.tasks ? `（任务 ${removed.tasks} / 消息 ${removed.messages ?? 0}）` : ""),
+    );
+  } catch (error) {
+    showRoomDeleteError(`删除失败：${error.message}`);
+  } finally {
+    roomAdminState.deleting = false;
+    if (els.roomDeleteConfirm) {
+      els.roomDeleteConfirm.disabled = false;
+      els.roomDeleteConfirm.textContent = "确认删除";
+    }
   }
 }
 

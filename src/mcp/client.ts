@@ -5,6 +5,12 @@
  *
  * 只实现需要的能力：initialize → tools/list → tools/call。
  * MCP server 是用户自己在设置里添加的本地程序，默认风险标 needs_approval。
+ *
+ * 鉴权与隐私：
+ * - stdio 支持 config.env（合并 process.env）；
+ * - http 支持 config.headers（每个 JSON-RPC 请求都带）；
+ * - env / headers 的值在本文件里统一走 redact()：任何日志、lastError、抛出的错误
+ *   都不会出现明文值。值只交给子进程环境或 http 请求头。
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -63,8 +69,23 @@ export class McpClient {
   >();
   private tools: ToolDefinition[] = [];
 
+  /** env / headers 里所有非空值，用于日志与错误信息脱敏（长的先替换）。 */
+  private readonly secretValues: string[];
+
   constructor(config: McpServerConfig) {
     this.config = config;
+    const values = [
+      ...Object.values(config.env ?? {}),
+      ...Object.values(config.headers ?? {}),
+    ].filter((value) => typeof value === "string" && value.length > 0);
+    this.secretValues = [...new Set(values)].sort((a, b) => b.length - a.length);
+  }
+
+  /** 把配置里的鉴权值从文本里抹掉（日志 / 错误信息双保险）。 */
+  private redact(text: string): string {
+    let output = text;
+    for (const secret of this.secretValues) output = output.split(secret).join("***");
+    return output;
   }
 
   listTools(): ToolDefinition[] {
@@ -93,9 +114,9 @@ export class McpClient {
       return this.tools;
     } catch (err) {
       this.status = "error";
-      this.lastError = err instanceof Error ? err.message : String(err);
+      this.lastError = this.redact(err instanceof Error ? err.message : String(err));
       await this.close();
-      throw err;
+      throw new Error(this.lastError);
     }
   }
 
@@ -114,7 +135,9 @@ export class McpClient {
     } catch (err) {
       return {
         status: "error",
-        output: `MCP 调用失败：${err instanceof Error ? err.message : String(err)}`,
+        output: this.redact(
+          `MCP 调用失败：${err instanceof Error ? err.message : String(err)}`,
+        ),
       };
     }
   }
@@ -144,7 +167,8 @@ export class McpClient {
     if (!command) throw new Error("stdio server 缺少 command");
     const child = spawn(command, this.config.args ?? [], {
       stdio: ["pipe", "pipe", "pipe"],
-      env: { ...process.env },
+      // 用户配置的 env 覆盖同名 process.env；值只进子进程，不回传 / 不落日志。
+      env: { ...process.env, ...(this.config.env ?? {}) },
     });
     this.child = child;
     child.stdout.setEncoding("utf8");
@@ -152,13 +176,13 @@ export class McpClient {
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => {
       const text = chunk.trim();
-      if (text) console.warn(`[mcp:${this.config.id}] ${text.slice(0, 300)}`);
+      if (text) console.warn(`[mcp:${this.config.id}] ${this.redact(text.slice(0, 300))}`);
     });
     child.on("error", (err) => this.failAll(err));
     child.on("exit", (code) => {
       if (this.status === "connected") {
         this.status = "error";
-        this.lastError = `MCP server 退出（code ${code ?? "?"}）`;
+        this.lastError = this.redact(`MCP server 退出（code ${code ?? "?"}）`);
       }
       this.failAll(new Error(`MCP server 退出（code ${code ?? "?"}）`));
     });
@@ -180,7 +204,9 @@ export class McpClient {
     try {
       message = JSON.parse(line) as RpcResponse;
     } catch {
-      console.warn(`[mcp:${this.config.id}] 无法解析输出：${line.slice(0, 200)}`);
+      console.warn(
+        `[mcp:${this.config.id}] 无法解析输出：${this.redact(line.slice(0, 200))}`,
+      );
       return;
     }
     if (typeof message.id === "number") this.settle(message.id, message);
@@ -198,6 +224,30 @@ export class McpClient {
     return result;
   }
 
+  /**
+   * 合并 http 请求头：先放协议必需的 content-type / accept / mcp-session-id，
+   * 再叠加 config.headers。用户不能覆盖 content-type 与 mcp-session-id，
+   * accept 允许覆盖（有些 MCP server 只返回 JSON）。
+   */
+  private httpHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      "content-type": "application/json",
+      accept: "application/json, text/event-stream",
+    };
+    const forbidden = new Set(["content-type", "mcp-session-id"]);
+    for (const [rawKey, value] of Object.entries(this.config.headers ?? {})) {
+      const key = rawKey.trim();
+      if (!key || forbidden.has(key.toLowerCase())) continue;
+      for (const existing of Object.keys(headers)) {
+        if (existing.toLowerCase() === key.toLowerCase()) delete headers[existing];
+      }
+      headers[key] = value;
+    }
+    // 服务端下发的 session id 永远是最终值，用户 header 覆盖不了。
+    if (this.sessionId) headers["mcp-session-id"] = this.sessionId;
+    return headers;
+  }
+
   private async httpRequest(
     method: string,
     params: Record<string, unknown>,
@@ -207,11 +257,7 @@ export class McpClient {
     const id = nextRequestId++;
     const response = await fetch(url, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        ...(this.sessionId ? { "mcp-session-id": this.sessionId } : {}),
-      },
+      headers: this.httpHeaders(),
       body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
@@ -244,11 +290,7 @@ export class McpClient {
     if (!url) return;
     await fetch(url, {
       method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json, text/event-stream",
-        ...(this.sessionId ? { "mcp-session-id": this.sessionId } : {}),
-      },
+      headers: this.httpHeaders(),
       body: JSON.stringify({ jsonrpc: "2.0", method, params }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     }).catch(() => undefined);
@@ -302,7 +344,9 @@ export class McpClient {
   private unwrap(message: RpcResponse): unknown {
     if (message.error) {
       throw new Error(
-        `MCP 错误 ${message.error.code ?? ""}: ${message.error.message ?? "unknown"}`,
+        this.redact(
+          `MCP 错误 ${message.error.code ?? ""}: ${message.error.message ?? "unknown"}`,
+        ),
       );
     }
     return message.result;

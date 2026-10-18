@@ -3320,6 +3320,123 @@ button {
   width: min(520px, calc(100vw - 28px));
 }
 
+/* ── 房间管理菜单 ─────────────────────────────────────────────────────── */
+
+.room-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.room-menu-btn {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.35;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.room-item:hover .room-menu-btn,
+.room-menu-btn:focus-visible {
+  opacity: 0.9;
+  background: rgba(111, 78, 55, 0.08);
+}
+
+.room-menu-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.room-menu-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 11px;
+  background: #fffdf8;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.room-menu-item:hover:not(:disabled) {
+  border-color: var(--line);
+  background: #fbf1e3;
+}
+
+.room-menu-item:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.room-menu-item-title {
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.room-menu-item small {
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.45;
+}
+
+.room-menu-item[data-danger="true"] .room-menu-item-title {
+  color: #9a3f32;
+}
+
+.room-menu-item[data-danger="true"] {
+  border-color: #ebc9b7;
+}
+
+.room-delete-warning {
+  margin: 0;
+  padding: 8px 9px;
+  border: 1px solid #ebc9b7;
+  border-radius: 10px;
+  background: #fdf7f4;
+  color: #9a5b3c;
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.room-delete-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.room-delete-count {
+  padding: 4px 8px;
+  border-radius: 8px;
+  background: var(--cream-deep);
+  color: #6f4e37;
+  font-size: 9.5px;
+}
+
+.modal--room-menu {
+  width: min(460px, calc(100vw - 28px));
+}
+
 /* ── 右栏：当前工作区 ─────────────────────────────────────────────────── */
 
 .card--current-workspace {
@@ -4907,6 +5024,14 @@ button {
 
   .room-name--switch {
     max-width: 62vw;
+  }
+
+  .room-menu-btn {
+    opacity: 0.65;
+  }
+
+  .room-menu-item {
+    padding: 10px;
   }
 
   .workspace-policy-options {

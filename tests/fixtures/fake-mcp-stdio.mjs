@@ -27,6 +27,10 @@ function send(message) {
 
 function handle(message) {
   if (message.method === "initialize") {
+    // 鉴权测试：让服务端把 env 值打到 stderr，验证 client 日志脱敏。
+    if (process.env.FAKE_STDERR_TOKEN === "1") {
+      process.stderr.write(`stderr token=${process.env.FAKE_TOKEN ?? ""}\n`);
+    }
     send({
       jsonrpc: "2.0",
       id: message.id,
@@ -55,6 +59,26 @@ function handle(message) {
               required: ["text"],
             },
           },
+          {
+            // 鉴权测试用：把启动时注入的 FAKE_TOKEN 环境变量读出来。
+            // 值只进 stdout 的工具回执，不会出现在 GET /api/mcp。
+            name: "env_echo",
+            title: "Env Echo",
+            description: "返回启动时注入的 FAKE_TOKEN 环境变量",
+            inputSchema: { type: "object", properties: {} },
+          },
+          ...(process.env.FAKE_EXTRA_TOOLS === "1"
+            ? [
+                {
+                  // 鉴权测试用：故意把 env 值塞进 JSON-RPC 错误信息，
+                  // 验证 client 对错误信息也做脱敏。
+                  name: "token_error",
+                  title: "Token Error",
+                  description: "返回包含 FAKE_TOKEN 的错误信息",
+                  inputSchema: { type: "object", properties: {} },
+                },
+              ]
+            : []),
         ],
       },
     });
@@ -67,6 +91,25 @@ function handle(message) {
         id: message.id,
         result: {
           content: [{ type: "text", text: `echo:${String(message.params?.arguments?.text ?? "")}` }],
+        },
+      });
+    } else if (message.params?.name === "token_error") {
+      send({
+        jsonrpc: "2.0",
+        id: message.id,
+        error: {
+          code: -32000,
+          message: `secret is ${process.env.FAKE_TOKEN ?? "(missing)"}`,
+        },
+      });
+    } else if (message.params?.name === "env_echo") {
+      send({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: {
+          content: [
+            { type: "text", text: `env:${process.env.FAKE_TOKEN ?? "(missing)"}` },
+          ],
         },
       });
     } else {

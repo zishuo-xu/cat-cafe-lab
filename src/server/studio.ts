@@ -446,6 +446,63 @@ export class Studio {
     return room;
   }
 
+  /** 房间编辑：改名 / 改主题 / 换工作区。 */
+  updateRoom(
+    roomId: RoomId,
+    patch: { name?: string; topic?: string; workspaceId?: string },
+  ): Room {
+    const room = this.requireRoom(roomId);
+    if (patch.name !== undefined) {
+      const name = patch.name.trim();
+      if (name.length < 1 || name.length > 30) throw new Error("房间名需要 1–30 个字符");
+      if (this.state.rooms.some((other) => other.id !== roomId && other.name === name)) {
+        throw new Error(`房间「${name}」已存在`);
+      }
+      room.name = name;
+    }
+    if (patch.topic !== undefined) {
+      const topic = patch.topic.trim();
+      if (topic.length > 120) throw new Error("主题不能超过 120 个字符");
+      room.topic = topic;
+    }
+    if (patch.workspaceId !== undefined) room.workspaceId = patch.workspaceId;
+    this.notify();
+    return room;
+  }
+
+  /** 删除房间并级联清理它的任务/消息/交接/产物/工具记录。 */
+  deleteRoom(roomId: RoomId): { tasks: number; messages: number; handoffs: number; artifacts: number; toolCalls: number } {
+    if (this.state.rooms.length <= 1) throw new Error("至少保留一个房间");
+    const index = this.state.rooms.findIndex((room) => room.id === roomId);
+    if (index < 0) throw new Error(`room not found: ${roomId}`);
+    const active = this.state.tasks.filter(
+      (task) => task.roomId === roomId && (task.status === "active" || task.status === "stalled"),
+    );
+    if (active.length > 0) {
+      throw new Error(`这个房间还有 ${active.length} 个进行中的任务，先等它们结束或重置猫咖`);
+    }
+    const taskIds = new Set(this.state.tasks.filter((task) => task.roomId === roomId).map((task) => task.id));
+    const removed = {
+      tasks: taskIds.size,
+      messages: this.state.messages.filter((message) => message.roomId === roomId).length,
+      handoffs: this.state.handoffs.filter((handoff) => taskIds.has(handoff.taskId)).length,
+      artifacts: this.state.artifacts.filter((artifact) => taskIds.has(artifact.taskId)).length,
+      toolCalls: this.state.toolCalls.filter((call) => call.taskId && taskIds.has(call.taskId)).length,
+    };
+    this.state.rooms.splice(index, 1);
+    this.state.tasks = this.state.tasks.filter((task) => task.roomId !== roomId);
+    this.state.messages = this.state.messages.filter((message) => message.roomId !== roomId);
+    this.state.handoffs = this.state.handoffs.filter((handoff) => !taskIds.has(handoff.taskId));
+    this.state.artifacts = this.state.artifacts.filter((artifact) => !taskIds.has(artifact.taskId));
+    this.state.toolCalls = this.state.toolCalls.filter((call) => !call.taskId || !taskIds.has(call.taskId));
+    this.state.memory = this.state.memory.filter(
+      (entry) => !entry.sourceTaskId || !taskIds.has(entry.sourceTaskId),
+    );
+    delete this.state.typing[roomId];
+    this.notify();
+    return removed;
+  }
+
   setRoomWorkspace(roomId: RoomId, workspaceId: string): Room {
     const room = this.requireRoom(roomId);
     room.workspaceId = workspaceId;

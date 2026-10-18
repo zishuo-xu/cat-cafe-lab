@@ -414,6 +414,90 @@ export function createHttpServer(deps: HttpDeps): Server {
 
     {
       const roomMatch = /^\/api\/rooms\/([^/]+)$/.exec(pathname);
+      if (roomMatch && method === "PATCH") {
+        const roomId = decodeURIComponent(roomMatch[1] ?? "");
+        if (!studio.getRoom(roomId)) {
+          fail(res, 404, "房间不存在");
+          return;
+        }
+        const rawBody = await readBody(req);
+        if (!rawBody || typeof rawBody !== "object" || Array.isArray(rawBody)) {
+          fail(res, 400, "请求体必须是对象");
+          return;
+        }
+        const body = rawBody as {
+          name?: unknown;
+          topic?: unknown;
+          workspaceId?: unknown;
+        };
+        const patch: { name?: string; topic?: string; workspaceId?: string } = {};
+        if (body.name !== undefined) {
+          if (typeof body.name !== "string") {
+            fail(res, 400, "name 必须是字符串");
+            return;
+          }
+          const name = body.name.trim();
+          if (name.length < 1 || name.length > 30) {
+            fail(res, 400, "房间名需要 1–30 个字符");
+            return;
+          }
+          if (studio.state.rooms.some((room) => room.id !== roomId && room.name === name)) {
+            fail(res, 400, `房间「${name}」已存在`);
+            return;
+          }
+          patch.name = name;
+        }
+        if (body.topic !== undefined) {
+          if (typeof body.topic !== "string") {
+            fail(res, 400, "topic 必须是字符串");
+            return;
+          }
+          const topic = body.topic.trim();
+          if (topic.length > 120) {
+            fail(res, 400, "主题不能超过 120 个字符");
+            return;
+          }
+          patch.topic = topic;
+        }
+        if (body.workspaceId !== undefined) {
+          if (!workspaces) {
+            fail(res, 503, "workspace manager not enabled");
+            return;
+          }
+          if (typeof body.workspaceId !== "string" || !workspaces.get(body.workspaceId)) {
+            fail(res, 400, "workspaceId 不存在");
+            return;
+          }
+          patch.workspaceId = body.workspaceId;
+        }
+        if (Object.keys(patch).length === 0) {
+          fail(res, 400, "没有可更新的字段");
+          return;
+        }
+        try {
+          json(res, 200, studio.updateRoom(roomId, patch));
+        } catch (err) {
+          fail(res, 400, err instanceof Error ? err.message : "invalid room patch");
+        }
+        return;
+      }
+      if (roomMatch && method === "DELETE") {
+        const roomId = decodeURIComponent(roomMatch[1] ?? "");
+        if (!studio.getRoom(roomId)) {
+          fail(res, 404, "房间不存在");
+          return;
+        }
+        try {
+          json(res, 200, { ok: true, removed: studio.deleteRoom(roomId) });
+        } catch (err) {
+          fail(res, 400, err instanceof Error ? err.message : "cannot delete room");
+        }
+        return;
+      }
+    }
+
+    {
+      const roomMatch = /^\/api\/rooms\/([^/]+)$/.exec(pathname);
       if (roomMatch && method === "PUT") {
         if (!workspaces) {
           fail(res, 503, "workspace manager not enabled");
@@ -482,6 +566,23 @@ export function createHttpServer(deps: HttpDeps): Server {
             return;
           }
           json(res, 200, { ok: true });
+          return;
+        }
+        if (method === "PUT" && !action) {
+          const body = (await readBody(req)) as McpInput;
+          if (!body || typeof body !== "object" || Array.isArray(body)) {
+            fail(res, 400, "invalid mcp payload");
+            return;
+          }
+          if (!mcp.list().some((server) => server.id === serverId)) {
+            fail(res, 404, "MCP server 不存在");
+            return;
+          }
+          try {
+            json(res, 200, { server: await mcp.update(serverId, body) });
+          } catch (err) {
+            fail(res, 400, err instanceof Error ? err.message : "invalid mcp server");
+          }
           return;
         }
         if (method === "POST" && action === "test") {

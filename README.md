@@ -40,7 +40,7 @@
 ```bash
 cd cat-cafe-lab
 pnpm install          # 只装 typescript + @types/node 两个 devDependency
-node src/main.ts      # 或 pnpm start
+node src/main.ts
 ```
 
 打开 <http://127.0.0.1:4318>。
@@ -48,12 +48,12 @@ node src/main.ts      # 或 pnpm start
 点「＋ 新任务」→ 选「记住我」示例 → 「让猫猫开工」，然后看着就行。
 
 ```bash
-node --test tests/    # 181 个测试
+node --test tests/    # 195 个测试
 npx tsc --noEmit      # 类型检查
 ```
 
-默认端口 4318，可用 `PORT=4400` 覆盖；数据落在 `data/studio.json`，
-沙盒项目在 `data/workspace/`，删掉这两个目录就是重开一局。
+默认端口 4318，可用 `PORT=4400` 覆盖；数据落在 `data/`（studio.json / settings.json /
+workspaces.json / mcp.json / workspace/），删掉这个目录就是完整重开一局。
 
 ---
 
@@ -170,10 +170,15 @@ run_command node --test ...      ✓ exit 0（砚砚放行）
 - 改成读写必须显式确认（「我确认写入会修改真实文件」），并且会一直有醒目提示。
 - git 部分目前是**只读查询**：分支、clean/dirty、status、diff、文件浏览。
   不会自动 checkout、不会自动 commit、不会 push。
-- 房间切换后，timeline / 任务 / 交接卡 / 产物 / 记忆 / 输入框都按当前房间隔离；
+- 房间支持新建 / 重命名 / 改主题 / 换工作区 / 删除（左栏「…」菜单）。删除会级联清掉该房间的
+任务、消息、交接卡、产物和工具记录；最后一个房间、以及还有进行中任务的房间不能删。
+
+房间切换后，timeline / 任务 / 交接卡 / 产物 / 记忆 / 输入框都按当前房间隔离；
   只读房间跑任务时，写文件工具会显示只读错误，仓库一个字节都不会被改。
 
 ![房间与当前工作区](docs/images/workspaces-main.png)
+
+![房间操作菜单](docs/images/rooms.png)
 
 ![工作区管理](docs/images/workspaces.png)
 
@@ -300,6 +305,7 @@ node src/main.ts
 | 审批策略 | auto / commands / all；只对真实模式下模型主动发起的工具生效 |
 | MCP 工具 | 添加/启停/测试/删除 MCP server，工具动态进注册表 |
 | 工具与技能 | 每只猫的工具白名单与技能包（技能注入真实模式 prompt） |
+| MCP 鉴权 | stdio 用 env、http 用 headers 传鉴权；值只存本地、绝不回传前端或进日志 |
 | 工作区 | 添加真实目录（默认只读）、读写二次确认、任务分支开关、git 状态/diff/文件浏览 |
 | 任务 Git | 分支 / 真实 diff / 人工确认 commit / stash 回滚（仅读写 git 工作区） |
 
@@ -377,7 +383,8 @@ src/domain/types.ts   唯一契约
   改成读写必须显式确认。commit 必须人工填 message + 二次确认；不会自动 push / merge；
   回滚走 stash，可恢复。
 - **本地单人**：没有鉴权、没有多用户、没有数据库。JSON 文件就是全部持久化。
-- **MCP server 由你负责**：项目只连接你显式添加的 server；默认没有鉴权配置，也不内置任何 server。
+- **MCP server 由你负责**：项目只连接你显式添加的 server，不内置任何 server。
+  env / headers 里的值不会回传前端、不会进日志（错误信息会脱敏），只持久化在本地 0600 文件里。
 - **剧本台词不会自动改名**：改猫名后，@ 路由、名册、消息作者都用新名字，但剧本里写死的旧名字不会自动替换（剧本是数据，不是模板变量）。
 - **剧本要自己写**：内置两个（记住我、CSV 导出），也可以在「剧本库」导入 JSON；不写剧本的需求会走通用兜底回复。
 
@@ -398,9 +405,9 @@ cat-cafe-lab/
 │   ├── agents/        personas.ts、scenarios.ts、mock-brain.ts、llm-brain.ts
 │   └── main.ts
 ├── public/            index.html、app.js、styles.css、avatars.js
-├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / workspaces / task-git / smoke（181 个）
-├── docs/              architecture.md、llm.md、images/
-├── data/              studio.json、workspace/（gitignore）
+├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / workspaces / task-git / rooms / mcp / smoke（195 个）
+├── docs/              architecture.md、llm.md、mcp.md、real-model.md、images/
+├── data/              studio.json、settings.json、workspaces.json、mcp.json、workspace/（gitignore）
 └── PLAN.md            设计与分工记录
 ```
 

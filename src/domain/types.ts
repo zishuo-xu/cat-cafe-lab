@@ -504,6 +504,10 @@ export interface McpServerConfig {
   enabled: boolean;
   /** MCP 工具默认风险等级；默认 needs_approval。 */
   risk?: "safe" | "needs_approval";
+  /** stdio：子进程环境变量（合并 process.env）。值绝不回传前端。 */
+  env?: Record<string, string>;
+  /** http：每个 JSON-RPC 请求附带的鉴权头。值绝不回传前端。 */
+  headers?: Record<string, string>;
 }
 
 /** 一次工具执行的回执，喂回给 brain 做下一步判断。 */

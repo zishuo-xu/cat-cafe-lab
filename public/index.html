@@ -1316,6 +1316,89 @@
       </div>
     </dialog>
 
+    <!-- ── 房间操作菜单 ───────────────────────────────────────────── -->
+    <dialog id="room-menu-modal" class="modal modal--room-menu" aria-labelledby="room-menu-title">
+      <div class="modal-card">
+        <header class="modal-head">
+          <h2 id="room-menu-title">房间操作</h2>
+          <button type="button" class="icon-btn" data-action="close-room-menu" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub" id="room-menu-sub">管理这个房间的名称、主题和工作区。</p>
+        <p class="form-error" id="room-menu-error" role="alert" hidden></p>
+        <div id="room-menu-list" class="room-menu-list"></div>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="retry-room-admin" id="room-menu-retry" hidden>
+            重试接口
+          </button>
+          <button type="button" class="btn btn--ghost" data-action="close-room-menu">关闭</button>
+        </footer>
+      </div>
+    </dialog>
+
+    <!-- ── 房间编辑（重命名 / 主题 / 工作区） ───────────────────── -->
+    <dialog id="room-edit-modal" class="modal" aria-labelledby="room-edit-title">
+      <form id="room-edit-form" class="modal-card" novalidate>
+        <header class="modal-head">
+          <h2 id="room-edit-title">编辑房间</h2>
+          <button type="button" class="icon-btn" data-action="close-room-edit" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub" id="room-edit-sub">修改房间信息。</p>
+
+        <label class="field" id="room-edit-name-field">
+          <span class="field-label">房间名（1–30 字）</span>
+          <input id="room-edit-name" type="text" maxlength="30" required />
+        </label>
+
+        <label class="field" id="room-edit-topic-field" hidden>
+          <span class="field-label">房间主题（≤120 字）</span>
+          <input id="room-edit-topic" type="text" maxlength="120" />
+        </label>
+
+        <div class="field" id="room-edit-workspace-field" hidden>
+          <label class="field-label" for="room-edit-workspace">绑定工作区</label>
+          <select id="room-edit-workspace"></select>
+          <span class="field-hint" id="room-edit-workspace-hint">
+            切换后当前房间的文件、沙盒与 git 状态会跟着变。
+          </span>
+        </div>
+
+        <p class="form-error" id="room-edit-error" role="alert" hidden></p>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-room-edit">取消</button>
+          <button type="submit" class="btn btn--primary" id="room-edit-save">保存</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <!-- ── 删除房间确认 ───────────────────────────────────────────── -->
+    <dialog id="room-delete-modal" class="modal" aria-labelledby="room-delete-title">
+      <div class="modal-card">
+        <header class="modal-head">
+          <h2 id="room-delete-title">删除房间</h2>
+          <button type="button" class="icon-btn" data-action="close-room-delete" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub" id="room-delete-sub">确认要删除这个房间吗？</p>
+        <p class="room-delete-warning">
+          会删除该房间的任务 / 消息 / 交接卡 / 产物 / 工具记录，不能撤销。
+        </p>
+        <div id="room-delete-counts" class="room-delete-counts"></div>
+        <p class="form-error" id="room-delete-reason" hidden></p>
+        <p class="form-error" id="room-delete-error" role="alert" hidden></p>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-room-delete">取消</button>
+          <button type="button" class="btn btn--danger" data-action="confirm-room-delete" id="room-delete-confirm">
+            确认删除
+          </button>
+        </footer>
+      </div>
+    </dialog>
+
     <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
 
     <script type="module" src="/app.js"></script>

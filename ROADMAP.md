@@ -80,6 +80,15 @@ stash 可恢复回滚；只读/脏树/未收尾分支都有明确拒绝。181 �
 
 ---
 
+---
+
+## D. 收尾轮（可继续）
+
+- **真实 provider 联调**：见 [real-model.md](./docs/real-model.md)，需要真实 key；
+- ~~房间编辑/解绑~~：已完成（PATCH / DELETE /api/rooms/:id + 左栏房间菜单）；
+- ~~MCP 鉴权~~：已完成（stdio env / http headers，值不泄露）；
+- 下一步候选：任务分支 merge 收尾 UI、MCP server 市场示例、多用户/鉴权。
+
 ## 不做清单（现阶段）
 
 - 不做公网多租户、不做计费、不接真实支付；

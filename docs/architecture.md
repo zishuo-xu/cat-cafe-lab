@@ -186,6 +186,10 @@ driver 只依赖 `ToolRegistry`，执行时先查内置、再遍历 provider；M
 `Cat.skills` 缺省时按角色回落。driver 用 `skillsForCat(cat)` 填 `TurnContext.skills`，
 llm-brain 把 name + prompt 全文塞进 system prompt；演出模式不调用模型，技能自然不生效。
 
+**鉴权**：stdio server 支持 `env`（合并进子进程环境），http server 支持 `headers`（每个 JSON-RPC
+请求都带）。值的边界很硬：不回传前端（GET 只给 `envKeys` / `headerKeys`）、不进日志、错误信息脱敏、
+只落 `data/mcp.json`（0600）。用户 header 不能覆盖 `content-type` 和 `mcp-session-id`。
+
 **安全**：MCP server 是用户自己添加的本地进程/服务；MCP 工具默认 `risk = needs_approval`，
 模型主动调用会进审批队列；审批策略为 `auto` 时才全自动放行。
 
@@ -198,6 +202,9 @@ llm-brain 把 name + prompt 全文塞进 system prompt；演出模式不调用�
 - git 是只读的：`git rev-parse` / `status --porcelain` / `diff` / `log -1`，
   `GIT_TERMINAL_PROMPT=0`、5s 超时、输出截断；本阶段不做 checkout / commit / push。
 - 房间切换是纯前端视图状态；服务端状态本来就按 roomId 隔离（消息、任务、typing、队列）。
+- 房间管理：`PATCH /api/rooms/:id`（改名 / 主题 / 换工作区）、`DELETE /api/rooms/:id`
+  （最后一个房间和还有进行中任务的房间拒绝；删除时由 `Studio.deleteRoom` 级联清理
+  tasks / messages / handoffs / artifacts / toolCalls / typing / 关联 memory）。
 
 ## 任务级 git 工作流（C-2）
 
@@ -235,7 +242,7 @@ driver 执行后用 `trigger.kind="tool_result"` 再叫同一只猫，把 exitCo
 
 ## 有意不做的事
 
-- **不做鉴权 / 多用户**：本地单人工作台。
+- **不做多用户 / 账号体系**：本地单人工作台（工作台本身没有登录；MCP server 的鉴权由你配置）。
 - **不做增量 patch 同步**：全量快照换简单。
 - **不做前端构建**：零依赖、零构建，打开源码就能改。
 - **不做真实任务执行**：猫交付的是 spec / design / patch 摘要，不是真的改你的仓库。
