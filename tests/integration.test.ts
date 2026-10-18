@@ -1,0 +1,423 @@
+/**
+ * 端到端集成测试（T4 验收）：
+ *
+ *   POST /api/tasks  →  真实 driver + 场景 beats 跑完整六阶段  →  任务 done
+ *   →  五栏 handoff / review 打回后 v2 patch / memory 有 decision  /  SSE 可连
+ *
+ * 依赖：T1 `src/engine/driver.ts` 的真实状态机 + T2 场景 beats（均已落地）。
+ * 不跳任何用例：这条链路是 M4 的验收项，必须真跑。
+ */
+
+import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { after, before, describe, test } from "node:test";
+
+import { createLlmBrain } from "../src/agents/llm-brain.ts";
+import { createMockBrain } from "../src/agents/mock-brain.ts";
+import { CATS, SCENARIOS } from "../src/agents/personas.ts";
+import type {
+  Artifact,
+  Driver,
+  Handoff,
+  MemoryEntry,
+  Message,
+  StudioState,
+  Task,
+  TaskStage,
+} from "../src/domain/types.ts";
+import { createDriver } from "../src/engine/driver.ts";
+import { createHttpServer } from "../src/server/http.ts";
+import { Studio } from "../src/server/studio.ts";
+
+const BRIEF = "给登录页加一个「记住我」勾选框，7 天内免登录。";
+const TASK_TIMEOUT_MS = 20_000;
+
+// ───────────────────────── 小工具 ─────────────────────────
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolveSleep) => setTimeout(resolveSleep, ms));
+}
+
+async function getState(base: string): Promise<StudioState> {
+  const res = await fetch(`${base}/api/state`);
+  assert.equal(res.status, 200, "GET /api/state 必须 200");
+  return (await res.json()) as StudioState;
+}
+
+function findTask(state: StudioState, taskId: string): Task {
+  const task = state.tasks.find((candidate) => candidate.id === taskId);
+  if (!task) throw new Error(`state 里找不到任务 ${taskId}`);
+  return task;
+}
+
+/** Studio 是 200ms debounce 落盘，这里轮询等文件真正出现（最多 1s）。 */
+async function waitForFile(path: string, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (existsSync(path)) return;
+    await sleep(25);
+  }
+  throw new Error(`文件未在 ${timeoutMs}ms 内落盘：${path}`);
+}
+
+/**
+ * 轮询 /api/state 直到任务 done。
+ * 演示场景里埋了 missed_mention 故障，靠「催一下」恢复，所以卡住时自动 nudge（最多 3 次）。
+ */
+async function waitForTaskDone(
+  base: string,
+  taskId: string,
+  timeoutMs = TASK_TIMEOUT_MS,
+): Promise<StudioState> {
+  const deadline = Date.now() + timeoutMs;
+  let lastStage = "";
+  let lastChangeAt = Date.now();
+  let nudges = 0;
+
+  while (Date.now() < deadline) {
+    const state = await getState(base);
+    const task = findTask(state, taskId);
+    if (task.status === "done" || task.stage === "done") return state;
+
+    if (task.stage !== lastStage) {
+      lastStage = task.stage;
+      lastChangeAt = Date.now();
+    }
+    const stuck = task.status === "stalled" || Date.now() - lastChangeAt > 1200;
+    if (stuck && nudges < 3) {
+      nudges += 1;
+      const res = await fetch(`${base}/api/tasks/${taskId}/nudge`, { method: "POST" });
+      assert.equal(res.status, 202, "nudge 应返回 202");
+      lastChangeAt = Date.now();
+    }
+    await sleep(40);
+  }
+
+  const snapshot = await getState(base);
+  const task = findTask(snapshot, taskId);
+  const history = snapshot.messages
+    .filter((message) => message.taskId === taskId)
+    .map((message) => `[${message.kind}] ${message.author}: ${message.text}`)
+    .join("\n");
+  throw new Error(
+    `任务 ${TASK_TIMEOUT_MS}ms 内未 done（stage=${task.stage}, status=${task.status}）\n${history}`,
+  );
+}
+
+/** 读 SSE 的第一条 data 事件（连接时服务端会先推一次全量快照）。 */
+async function readFirstSseEvent(
+  base: string,
+): Promise<{ seq: number; state: StudioState }> {
+  const controller = new AbortController();
+  try {
+    const res = await fetch(`${base}/api/events`, { signal: controller.signal });
+    assert.equal(res.status, 200, "GET /api/events 必须 200");
+    assert.match(String(res.headers.get("content-type")), /text\/event-stream/);
+
+    const body = res.body;
+    assert.ok(body, "SSE 响应应有 body");
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const deadline = Date.now() + 3000;
+
+    while (Date.now() < deadline) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const match = /data: ([^\n]+)\n\n/.exec(buffer);
+      if (match?.[1]) {
+        return JSON.parse(match[1]) as { seq: number; state: StudioState };
+      }
+    }
+    throw new Error(`SSE 3s 内没有收到 data 事件，已收到：${buffer.slice(0, 200)}`);
+  } finally {
+    controller.abort();
+  }
+}
+
+// ───────────────────────── 用例 ─────────────────────────
+
+describe("集成 · 完整协作链路（mock 模式）", () => {
+  let dataDir: string;
+  let studio: Studio;
+  let driver: Driver;
+  let server: ReturnType<typeof createHttpServer>;
+  let base: string;
+  let taskId: string;
+  let state: StudioState;
+
+  before(async () => {
+    dataDir = mkdtempSync(join(tmpdir(), "catcafe-e2e-"));
+    studio = new Studio({ cats: CATS, mode: "mock", dataDir });
+    driver = createDriver({
+      studio,
+      brain: createMockBrain(SCENARIOS),
+      // 测试里不需要真等打字延迟，瞬间推进。
+      wait: async () => {},
+      stallMs: 300,
+    });
+    server = createHttpServer({
+      studio,
+      driver,
+      publicDir: resolve(import.meta.dirname, "../public"),
+      scenarios: SCENARIOS,
+      mode: "mock",
+    });
+    await new Promise<void>((resolveListen) =>
+      server.listen(0, "127.0.0.1", () => resolveListen()),
+    );
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    base = `http://127.0.0.1:${address.port}`;
+
+    // 起任务：走 HTTP，和真实用户路径一致。
+    const res = await fetch(`${base}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roomId: "room_cafe", brief: BRIEF }),
+    });
+    assert.equal(res.status, 201, "POST /api/tasks 应返回 201");
+    const task = (await res.json()) as Task;
+    assert.equal(task.stage, "intake");
+    taskId = task.id;
+
+    state = await waitForTaskDone(base, taskId);
+  });
+
+  after(async () => {
+    await driver.whenIdle().catch(() => {});
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    studio.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  test("任务最终 done，且六个阶段都走过", () => {
+    const task = findTask(state, taskId);
+    assert.equal(task.status, "done");
+    assert.equal(task.stage, "done");
+    assert.ok(task.steps.length >= 3, `应走过至少 3 个阶段，实际 ${task.steps.length} 步`);
+
+    const stages = new Set<TaskStage>(task.steps.map((step) => step.stage));
+    for (const stage of [
+      "intake",
+      "planning",
+      "working",
+      "reviewing",
+      "revising",
+      "done",
+    ] satisfies TaskStage[]) {
+      assert.ok(stages.has(stage), `阶段轨迹里应有 ${stage}，实际：${[...stages].join(",")}`);
+    }
+  });
+
+  test("至少一张五栏交接卡，且五栏都不缺", () => {
+    const handoffs = state.handoffs.filter(
+      (handoff: Handoff) => handoff.taskId === taskId,
+    );
+    assert.ok(handoffs.length >= 1, "至少要有一次 handoff");
+
+    for (const handoff of handoffs) {
+      const card = handoff.card;
+      assert.equal(typeof card.what, "string");
+      assert.equal(typeof card.why, "string");
+      assert.equal(typeof card.tradeoff, "string");
+      assert.equal(typeof card.nextAction, "string");
+      assert.ok(Array.isArray(card.openQuestions), "openQuestions 必须是数组");
+      assert.ok(card.what.trim(), "what 不能为空");
+      assert.ok(card.why.trim(), "why 不能为空");
+      assert.ok(card.tradeoff.trim(), "tradeoff 不能为空");
+      assert.ok(card.nextAction.trim(), "nextAction 不能为空");
+      assert.notEqual(handoff.from, handoff.to, "交接双方不能是同一只猫");
+    }
+
+    // 先把设计和实现两张卡发出去，才有后面的评审链。
+    const targets = new Set(handoffs.map((handoff) => handoff.to));
+    assert.ok(targets.has("shuoshuo"), "应有一张给烁烁的设计交接卡");
+    assert.ok(targets.has("jinjianceng"), "应有一张给金渐层的实现交接卡");
+  });
+
+  test("review 打回后产生了 v2 patch", () => {
+    const messages = state.messages.filter(
+      (message: Message) => message.taskId === taskId,
+    );
+    const reviewArtifacts = state.artifacts.filter(
+      (artifact: Artifact) =>
+        artifact.taskId === taskId && artifact.kind === "review",
+    );
+    const reviewTraces = [
+      ...messages.filter((message) => message.kind === "review").map((m) => m.text),
+      ...reviewArtifacts.map((artifact) => `${artifact.title}\n${artifact.body}`),
+    ];
+    assert.ok(reviewTraces.length > 0, "应有 review 记录（message.kind=review + review artifact）");
+    const requestedChanges = reviewTraces.some((text) =>
+      /request_changes|打回|要求修改|blocker|需要修改/i.test(text),
+    );
+    assert.ok(requestedChanges, `review 应打回过一次，实际记录：\n${reviewTraces.join("\n---\n")}`);
+    assert.ok(
+      reviewArtifacts.some((artifact) => /verdict:\s*approve/.test(artifact.body)),
+      "打回改完后应有一次 approve",
+    );
+
+    const patches = state.artifacts.filter(
+      (artifact: Artifact) => artifact.taskId === taskId && artifact.kind === "patch",
+    );
+    assert.ok(patches.length >= 1, "实现稿应产出 patch");
+    assert.ok(
+      patches.some((patch) => patch.version >= 2),
+      `打回后应出现 v2 patch，实际版本：${patches.map((p) => p.version).join(",")}`,
+    );
+    // patch 作者是实现猫，review 作者是 reviewer（跨猫互审）。
+    assert.ok(
+      patches.every((patch) => patch.author === "jinjianceng"),
+      "实现稿应由金渐层产出",
+    );
+    assert.ok(
+      reviewArtifacts.every((artifact) => artifact.author === "yanyan"),
+      "review 应由砚砚产出",
+    );
+  });
+
+  test("memory 里有本任务的 decision 和 lesson", () => {
+    const taskMemory = state.memory.filter(
+      (entry: MemoryEntry) => entry.sourceTaskId === taskId,
+    );
+    const decisions = taskMemory.filter((entry) => entry.kind === "decision");
+    assert.ok(
+      decisions.length >= 1,
+      `应有 decision 记忆，实际 memory：${JSON.stringify(state.memory)}`,
+    );
+    assert.ok(decisions[0]?.title.trim(), "decision 应有标题");
+    assert.ok(decisions[0]?.body.trim(), "decision 应有正文");
+    assert.ok(
+      taskMemory.some((entry) => entry.kind === "lesson"),
+      "review 发现的问题应沉淀成 lesson",
+    );
+  });
+
+  test("SSE /api/events 能连上并先推全量快照", async () => {
+    const event = await readFirstSseEvent(base);
+    assert.equal(event.seq, event.state.seq);
+    assert.ok(event.state.tasks.length >= 1);
+    assert.equal(event.state.mode, "mock");
+  });
+
+  test("任务状态落盘到临时 dataDir", async () => {
+    const file = join(dataDir, "studio.json");
+    await waitForFile(file);
+    const persisted = JSON.parse(readFileSync(file, "utf8")) as StudioState;
+    const task = persisted.tasks.find((candidate) => candidate.id === taskId);
+    assert.ok(task, "dataDir/studio.json 里应有任务");
+    assert.equal(task?.status, "done");
+    assert.ok(persisted.memory.length >= 1);
+    assert.ok(persisted.handoffs.length >= 1);
+  });
+});
+
+describe("集成 · 真实模式降级后协作仍能跑完", () => {
+  let dataDir: string;
+  let studio: Studio;
+  let driver: Driver;
+  let server: ReturnType<typeof createHttpServer>;
+  let base: string;
+  let taskId: string;
+  let state: StudioState;
+  let warnLines: string[] = [];
+  let originalWarn: typeof console.warn | null = null;
+
+  before(async () => {
+    dataDir = mkdtempSync(join(tmpdir(), "catcafe-e2e-llm-"));
+    studio = new Studio({ cats: CATS, mode: "llm", dataDir });
+
+    // 断头端点：真实模式每次调用都会失败 → 应该全部降级到 mock brain，
+    // 但六阶段协作链必须照常跑完。
+    const llm = createLlmBrain(
+      {
+        baseUrl: "http://127.0.0.1:1/v1",
+        apiKey: "sk-integration-secret-key",
+        model: "dead-model",
+        temperature: 0.7,
+      },
+      createMockBrain(SCENARIOS),
+      { timeoutMs: 800 },
+    );
+
+    driver = createDriver({ studio, brain: llm, wait: async () => {}, stallMs: 300 });
+    server = createHttpServer({
+      studio,
+      driver,
+      publicDir: resolve(import.meta.dirname, "../public"),
+      scenarios: SCENARIOS,
+      mode: "llm",
+    });
+    await new Promise<void>((resolveListen) =>
+      server.listen(0, "127.0.0.1", () => resolveListen()),
+    );
+    const address = server.address();
+    assert.ok(address && typeof address === "object");
+    base = `http://127.0.0.1:${address.port}`;
+
+    // 收集降级日志，最后统一断言（避免刷屏）。
+    originalWarn = console.warn;
+    warnLines = [];
+    console.warn = (...args: unknown[]) => {
+      warnLines.push(args.map((arg) => String(arg)).join(" "));
+    };
+
+    const res = await fetch(`${base}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roomId: "room_cafe", brief: BRIEF }),
+    });
+    assert.equal(res.status, 201);
+    taskId = ((await res.json()) as Task).id;
+    state = await waitForTaskDone(base, taskId);
+  });
+
+  after(async () => {
+    if (originalWarn) console.warn = originalWarn;
+    await driver.whenIdle().catch(() => {});
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    studio.close();
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  test("模型全程不可用，任务仍按场景跑完并留下完整链路", () => {
+    const task = findTask(state, taskId);
+    assert.equal(task.status, "done");
+    assert.ok(state.handoffs.length >= 1, "降级后台词来自 mock brain，交接仍应发生");
+    assert.ok(
+      state.artifacts.some((artifact) => artifact.kind === "review"),
+      "review 仍应落库",
+    );
+    assert.ok(
+      state.artifacts.some((artifact) => artifact.kind === "patch" && artifact.version >= 2),
+      "revise 后的 v2 patch 仍应出现",
+    );
+    assert.ok(
+      state.memory.some((entry) => entry.kind === "decision"),
+      "decision 仍应写进共享记忆",
+    );
+  });
+
+  test("每次 LLM 失败都降级并只打一行 warn，且不泄露 apiKey", () => {
+    const llmWarns = warnLines.filter((line) => line.includes("[llm-brain]"));
+    assert.ok(llmWarns.length >= 1, `应有降级日志，实际：${warnLines.join("\n")}`);
+    for (const line of llmWarns) {
+      assert.match(line, /降级 fallback/, `降级日志格式应说明去向：${line}`);
+      assert.ok(
+        !line.includes("sk-integration-secret-key"),
+        `日志里绝不能出现 apiKey：${line}`,
+      );
+    }
+  });
+
+  test("真实模式下 /api/health 报告 mode=llm", async () => {
+    const res = await fetch(`${base}/api/health`);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { ok: boolean; mode: string };
+    assert.equal(body.mode, "llm");
+  });
+});

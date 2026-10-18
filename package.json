@@ -1,0 +1,21 @@
+{
+  "name": "cat-cafe-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "猫咖工作台 —— 铲屎官提需求，四只猫在共享工作台上协作",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/main.ts",
+    "dev": "node --watch src/main.ts",
+    "test": "node --test tests/",
+    "check": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  }
+}

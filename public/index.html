@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light" />
+    <meta name="theme-color" content="#FBF6EE" />
+    <meta
+      name="description"
+      content="猫咖工作台：铲屎官提一句需求，四只猫在同一个房间里把它做出来。"
+    />
+    <title>Cat Café Lab · 猫咖工作台</title>
+    <!-- 内联 SVG 猫爪 favicon：零请求、零 404、离线可用 -->
+    <link
+      rel="icon"
+      type="image/svg+xml"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23FBF6EE'/%3E%3Ccircle cx='32' cy='32' r='26' fill='%23D9A066' opacity='.22'/%3E%3Cellipse cx='32' cy='42' rx='12' ry='9' fill='%236F4E37'/%3E%3Cellipse cx='19' cy='28' rx='4' ry='5.4' fill='%236F4E37'/%3E%3Cellipse cx='27' cy='22' rx='4' ry='5.6' fill='%236F4E37'/%3E%3Cellipse cx='37' cy='22' rx='4' ry='5.6' fill='%236F4E37'/%3E%3Cellipse cx='45' cy='28' rx='4' ry='5.4' fill='%236F4E37'/%3E%3C/svg%3E"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body data-tab="chat">
+    <a class="skip-link" href="#composer-input">跳到输入框</a>
+
+    <main id="app" class="app-shell">
+      <!-- ── 左栏：招牌 / 猫猫名册 / 任务列表 ───────────────────────── -->
+      <aside class="panel panel--left" aria-label="猫咖招牌、猫猫名册与任务列表">
+        <header class="brand">
+          <div class="brand-mark" id="brand-mark" aria-hidden="true"></div>
+          <div class="brand-text">
+            <h1 class="brand-title">Cat Café <span>Lab</span></h1>
+            <p class="brand-sub">猫咖工作台 · 四只猫，一张桌子</p>
+          </div>
+          <div class="brand-pills">
+            <span class="pill pill--mode" data-mode>演出模式</span>
+            <span class="pill pill--conn" data-conn data-state="connecting">
+              <span class="dot" data-conn-dot></span>
+              <span data-conn-text>连接中…</span>
+            </span>
+            <span class="pill pill--seq" data-seq>seq 0</span>
+          </div>
+        </header>
+
+        <section class="card card--roster" aria-labelledby="roster-title">
+          <div class="card-head">
+            <h2 id="roster-title">猫猫名册</h2>
+            <span class="count" data-roster-count>0 只</span>
+            <span class="card-hint">点名字 @ 它</span>
+          </div>
+          <div id="cat-roster" class="roster" data-testid="cat-roster"></div>
+        </section>
+
+        <section class="card card--tasks" aria-labelledby="tasks-title">
+          <div class="card-head">
+            <h2 id="tasks-title">任务列表</h2>
+            <span class="count" data-task-count>0</span>
+            <button type="button" class="btn btn--tiny btn--primary" data-action="new-task">
+              ＋ 新任务
+            </button>
+          </div>
+          <div id="task-list" class="task-list" data-testid="task-list"></div>
+        </section>
+        <p class="side-note">
+          <span aria-hidden="true">🐾</span>
+          不 @ 任何人时，宪宪会接住需求；@ 谁只唤醒谁。
+        </p>
+      </aside>
+
+      <!-- ── 中栏：timeline + 输入框 ───────────────────────────────── -->
+      <section class="panel panel--chat" aria-label="房间消息流">
+        <header class="chat-head">
+          <div class="chat-head-main">
+            <h2 class="room-name" data-room-name>猫咖 · 客厅</h2>
+            <p class="room-topic" data-room-topic>把需求丢进来，猫猫们会在同一张桌子上把它做出来。</p>
+          </div>
+          <div class="chat-head-status">
+            <button
+              type="button"
+              class="btn btn--tiny btn--primary chat-new-task"
+              data-action="new-task"
+              aria-label="新建任务"
+            >
+              ＋ 任务
+            </button>
+            <span class="pill pill--conn pill--ghost" data-conn data-state="connecting">
+              <span class="dot" data-conn-dot></span>
+              <span data-conn-text>连接中…</span>
+            </span>
+            <span class="pill pill--seq" data-seq>seq 0</span>
+          </div>
+        </header>
+
+        <div class="conn-banner" id="conn-banner" role="status" hidden>
+          连接中断，正在自动重连…（画面保留，收到快照会补齐）
+        </div>
+
+        <div class="timeline-wrap">
+          <div
+            class="timeline-scroll"
+            id="timeline-scroll"
+            data-testid="timeline-scroll"
+          >
+            <div
+              class="timeline"
+              id="timeline"
+              role="log"
+              aria-live="polite"
+              aria-relevant="additions"
+              aria-label="房间消息"
+              data-testid="timeline"
+            ></div>
+          </div>
+          <div class="jump-latest" id="jump-latest" hidden>
+            <button type="button" data-action="jump-latest">
+              ↓ <span data-jump-count>0</span> 条新消息
+            </button>
+          </div>
+        </div>
+
+        <div class="composer-shell">
+          <div class="typing-hint" id="typing-hint" hidden>
+            <span class="typing-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+            <span data-typing-name></span><span>正在输入…</span>
+          </div>
+
+          <div
+            class="mention-popup"
+            id="mention-popup"
+            role="listbox"
+            aria-label="选择要 @ 的猫"
+            hidden
+          ></div>
+
+          <form class="composer" id="composer" autocomplete="off">
+            <label class="sr-only" for="composer-input">输入消息</label>
+            <textarea
+              id="composer-input"
+              name="text"
+              rows="1"
+              maxlength="2000"
+              placeholder="跟猫猫说点什么… 输入 @ 唤醒某只猫，Enter 发送 / Shift+Enter 换行"
+              data-testid="composer-input"
+            ></textarea>
+            <div class="composer-actions">
+              <span class="composer-hint" data-char>Enter 发送 · Shift+Enter 换行</span>
+              <button type="submit" class="btn btn--send" id="send-btn" disabled>
+                发送 <kbd>↵</kbd>
+              </button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <!-- ── 右栏：任务进度 / 交接卡 / 产物 / 记忆 ─────────────────── -->
+      <aside class="panel panel--work" aria-label="任务工作台">
+        <header class="work-head">
+          <h2>工作台</h2>
+          <p class="work-sub">任务进度 · 交接卡 · 产物 · 共享记忆</p>
+        </header>
+        <div class="work-scroll">
+          <section class="card" aria-labelledby="progress-title">
+            <div class="card-head">
+              <h2 id="progress-title">任务进度</h2>
+              <span class="card-hint" data-progress-hint></span>
+            </div>
+            <div id="task-progress" class="task-progress" data-testid="task-progress"></div>
+          </section>
+
+          <section class="card" aria-labelledby="handoff-title">
+            <div class="card-head">
+              <h2 id="handoff-title">交接卡</h2>
+              <span class="count" data-handoff-count>0</span>
+            </div>
+            <div id="handoff-list" class="handoff-list list-scroll"></div>
+          </section>
+
+          <section class="card" aria-labelledby="artifact-title">
+            <div class="card-head">
+              <h2 id="artifact-title">产物</h2>
+              <span class="count" data-artifact-count>0</span>
+            </div>
+            <div id="artifact-list" class="artifact-list list-scroll"></div>
+          </section>
+
+          <section class="card" aria-labelledby="memory-title">
+            <div class="card-head">
+              <h2 id="memory-title">共享记忆</h2>
+              <span class="count" data-memory-count>0</span>
+            </div>
+            <div id="memory-list" class="memory-list list-scroll"></div>
+          </section>
+        </div>
+      </aside>
+
+      <!-- ── 移动端底部 tab ────────────────────────────────────────── -->
+      <nav class="tabbar" aria-label="面板切换">
+        <button type="button" class="tab is-active" data-action="tab" data-tab="chat">
+          💬 聊天<span class="tab-dot" data-tab-dot hidden></span>
+        </button>
+        <button type="button" class="tab" data-action="tab" data-tab="cats">🐱 猫猫</button>
+        <button type="button" class="tab" data-action="tab" data-tab="work">🧰 工作台</button>
+      </nav>
+    </main>
+
+    <!-- ── 新任务弹窗 ─────────────────────────────────────────────── -->
+    <dialog id="new-task-modal" class="modal" aria-labelledby="new-task-title">
+      <form id="new-task-form" class="modal-card" novalidate>
+        <header class="modal-head">
+          <h2 id="new-task-title">给猫猫一个新任务</h2>
+          <button type="button" class="icon-btn" data-action="close-modal" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub">用一句话说清要做什么。宪宪会先接住，再把活拆给其他猫。</p>
+        <label class="field">
+          <span class="field-label">需求（至少 4 个字）</span>
+          <textarea
+            id="brief-input"
+            rows="4"
+            maxlength="2000"
+            required
+            placeholder="例如：给登录页加一个「记住我」勾选框，7 天内免登录。"
+          ></textarea>
+        </label>
+        <div class="chips" role="group" aria-label="示例需求">
+          <span class="chips-label">试试：</span>
+          <button
+            type="button"
+            class="chip"
+            data-brief="给登录页加一个「记住我」勾选框，7 天内免登录。"
+          >
+            🍪 记住我
+          </button>
+          <button
+            type="button"
+            class="chip"
+            data-brief="给任务列表加「导出 CSV」按钮，按当前筛选条件导出所有任务。"
+          >
+            📄 CSV 导出
+          </button>
+        </div>
+        <p class="form-error" id="new-task-error" role="alert" hidden></p>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-modal">取消</button>
+          <button type="submit" class="btn btn--primary" id="create-task-btn" disabled>
+            让猫猫开工 🐾
+          </button>
+        </footer>
+      </form>
+    </dialog>
+
+    <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

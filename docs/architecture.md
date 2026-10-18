@@ -1,0 +1,117 @@
+# 架构
+
+> 一句话：一个小到能一晚上读完的服务端 + 一个不依赖框架的前端。
+> 复杂度全部花在"协作怎么发生"上，而不是基础设施上。
+
+## 分层
+
+```
+┌──────────────────────────────────────────────┐
+│  public/            原生 ESM + CSS，无构建    │
+│  app.js  ──SSE──►   每条 {seq, state}         │
+└───────────────▲──────────────────────────────┘
+                │ fetch / EventSource
+┌───────────────┴──────────────────────────────┐
+│  src/server/http.ts    REST + SSE + 静态资源  │
+├──────────────────────────────────────────────┤
+│  src/server/studio.ts  唯一状态容器 + 写入口   │
+│    · 所有 mutator 都走这里                     │
+│    · seq 单调递增 → SSE 去重                   │
+│    · debounce 200ms 落盘 data/studio.json      │
+├──────────────────────────────────────────────┤
+│  src/engine/driver.ts  协作会话驱动            │
+│    · 每房间串行队列                            │
+│    · 阶段推进 / @ 路由 / typing / 延迟         │
+│    · 故障注入（漏 @）与 nudge 恢复             │
+├──────────────────────────────────────────────┤
+│  src/agents/          猫猫的"大脑"             │
+│    mock-brain.ts   场景 beats → CatTurn[]     │
+│    llm-brain.ts    真实模型 → CatTurn[]       │
+│    personas.ts     四猫人格 + 场景数据         │
+└──────────────────────────────────────────────┘
+```
+
+依赖方向是单向的：`agents ← engine ← server ← main`。`domain/types.ts` 是唯一共享契约。
+
+## 为什么这样切
+
+### 1. 状态只有一个写入口
+
+多 Agent 系统最容易烂的地方是"谁都能改状态"。这里所有变更都经过 `Studio` 的方法，
+前端只读快照，driver 只调 mutator。好处：
+
+- SSE 可以无脑推全量快照（状态小，几十 KB），前端不需要自己合并增量；
+- 持久化、seq、订阅三件事只写一次，不会漏；
+- 测试可以脱离 HTTP 直接驱动 `Studio`。
+
+**代价**：每个状态变更都递增 `seq` 并广播。高频打字态也会触发广播，但这是本地单用户场景，
+用带宽换掉一整类同步 bug，是划算的。
+
+### 2. Brain 是可替换的纯函数
+
+`CatBrain.think(ctx) → Promise<CatTurn[]>`。driver 不关心台词从哪来：
+
+- `mock-brain` 从场景 beats 取数据，确定、离线、可测试；
+- `llm-brain` 拼 prompt 调模型，失败降级到 mock。
+
+**代价**：mock 演出是"半脚本"的——猫的反应由场景数据 + 当前阶段决定，
+不会真的理解新需求。这是有意的取舍：没有 key 也能完整演示协作流程，接了 key 才换脑子。
+
+### 3. @ 路由不是装饰
+
+`message.mentions` 是真实的路由依据：
+
+- 用户消息只唤醒被 @ 的猫；没 @ 时唤醒任务 owner（无任务时宪宪）；
+- 猫的交接（handoff）只唤醒接收方；
+- 未被唤醒的猫不产生任何 token / 动作，前端显示睡眠。
+
+这条规则让"漏 @"成为可观察的故障：卡片照写、消息照发，但接收猫没被唤醒，
+任务 `status` 变 `stalled`，铲屎官点「催一下」后由宪宪补投递。这是 Cat Café 教程里
+第 4 课的真实教训，在这个项目里被做成了可复现的一幕。
+
+## 任务阶段机
+
+```
+intake ──► planning ──► working ──► reviewing ──► done
+                            ▲            │
+                            └── revising ◄┘
+```
+
+| 阶段 | owner | 产出 |
+|---|---|---|
+| intake | 宪宪 | 接住需求、复述风险 |
+| planning | 宪宪 | 方案骨架 + 两张五栏交接卡 |
+| working | 烁烁 / 金渐层 | design / patch 产物 |
+| reviewing | 砚砚 | review 产物（blocker / minor + verdict） |
+| revising | 金渐层 | v2 patch |
+| done | 宪宪 | decision 产物 + 记忆 |
+
+阶段推进由 driver 根据 `CatTurn.kind` 决定：`handoff` → 下一阶段，`review.request_changes`
+→ revising，`review.approve` → 等宪宪落 decision，`decision` → done。台词内容不属于状态机。
+
+## 实时更新
+
+- 初始化：`GET /api/state` 拉一次全量。
+- 之后：`GET /api/events` SSE，每条 `data: {seq, state}`。
+- 客户端按 `seq` 去重；断线后先重连，再补一次 `/api/state`（防止漏帧）。
+- 服务端每 15s 发一次 `: ping` 心跳，避免代理掐连接。
+
+## 持久化
+
+`data/studio.json`，debounce 200ms 原子写（tmp + rename）。
+启动时若无文件则种下房间 + 四猫招呼；若有则恢复（并把残留的 typing 清空）。
+没有数据库：这个体量的数据用 JSON 足够，且方便直接 `cat` 出来看。
+
+## 真实模式
+
+`LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` 齐了才进入 `llm` 模式。key 只存在进程内存，
+不落盘、不进日志。任何调用失败都降级到 mock，保证界面永远有内容。
+详见 [llm.md](./llm.md)。
+
+## 有意不做的事
+
+- **不做鉴权 / 多用户**：本地单人工作台。
+- **不做增量 patch 同步**：全量快照换简单。
+- **不做前端构建**：零依赖、零构建，打开源码就能改。
+- **不做真实任务执行**：猫交付的是 spec / design / patch 摘要，不是真的改你的仓库。
+  这个项目的目标是"协作过程本身"，不是 coding agent。

@@ -1,0 +1,274 @@
+/**
+ * HTTP 层：REST + SSE + 静态前端。只做校验和转发，所有状态变更都在 Studio / Driver 里。
+ */
+
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { readFile } from "node:fs/promises";
+import { extname, join, normalize, resolve } from "node:path";
+
+import type {
+  CatId,
+  Driver,
+  RoomId,
+  Scenario,
+  StudioState,
+  TaskId,
+} from "../domain/types.ts";
+import type { Studio } from "./studio.ts";
+
+export interface HttpDeps {
+  studio: Studio;
+  driver: Driver;
+  publicDir: string;
+  scenarios: Scenario[];
+  mode: "mock" | "llm";
+  /** 前端用来判断「卡住」的阈值；不传按 driver.stallMs / 12s。 */
+  stallMs?: number;
+}
+
+const MAX_BODY = 64 * 1024;
+const MAX_TEXT = 2000;
+
+const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".json": "application/json; charset=utf-8",
+};
+
+function json(res: ServerResponse, status: number, payload: unknown): void {
+  const body = JSON.stringify(payload);
+  res.writeHead(status, {
+    "Content-Type": "application/json; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Content-Length": Buffer.byteLength(body),
+  });
+  res.end(body);
+}
+
+function fail(res: ServerResponse, status: number, message: string): void {
+  json(res, status, { error: message });
+}
+
+async function readBody(req: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    const buf = chunk as Buffer;
+    size += buf.length;
+    if (size > MAX_BODY) throw new Error("request body too large");
+    chunks.push(buf);
+  }
+  if (chunks.length === 0) return {};
+  const raw = Buffer.concat(chunks).toString("utf8");
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw new Error("invalid JSON body");
+  }
+}
+
+/** 从文本里解析 @名字 / @id。 */
+export function parseMentions(text: string, studio: Studio, roomId: RoomId): CatId[] {
+  const room = studio.getRoom(roomId);
+  if (!room) return [];
+  const cats = studio.state.cats.filter((c) => room.catIds.includes(c.id));
+  const found = new Set<CatId>();
+  const re = /@([^\s@，。！？,.!?、:：;；]+)/g;
+  for (const match of text.matchAll(re)) {
+    const token = match[1] ?? "";
+    const byName = cats.find((c) => token.startsWith(c.name) || token === c.name);
+    const byId = cats.find((c) => token === c.id);
+    const cat = byName ?? byId;
+    if (cat) found.add(cat.id);
+  }
+  return [...found];
+}
+
+function pickScenario(scenarios: Scenario[], brief: string): string {
+  const text = brief.toLowerCase();
+  let best: { id: string; score: number } | null = null;
+  for (const scenario of scenarios) {
+    let score = 0;
+    for (const tag of scenario.tags) if (text.includes(tag.toLowerCase())) score += 2;
+    for (const word of scenario.sampleBrief.split(/[\s，。,.!?？、]+/)) {
+      if (word.length >= 2 && text.includes(word.toLowerCase())) score += 1;
+    }
+    if (!best || score > best.score) best = { id: scenario.id, score };
+  }
+  return best?.id ?? scenarios[0]?.id ?? "remember_me";
+}
+
+function serveStatic(res: ServerResponse, publicDir: string, pathname: string): void {
+  const rel = pathname === "/" ? "index.html" : pathname.replace(/^\/+/, "");
+  if (rel.includes("..") || rel.startsWith(".")) {
+    fail(res, 400, "bad path");
+    return;
+  }
+  const allowed = new Set([".html", ".js", ".css", ".svg", ".png", ".ico"]);
+  if (!allowed.has(extname(rel))) {
+    fail(res, 404, "not found");
+    return;
+  }
+  const root = resolve(publicDir);
+  const file = normalize(join(root, rel));
+  if (!file.startsWith(root)) {
+    fail(res, 400, "bad path");
+    return;
+  }
+  readFile(file)
+    .then((buf) => {
+      res.writeHead(200, {
+        "Content-Type": MIME[extname(rel)] ?? "application/octet-stream",
+        "Cache-Control": "no-cache",
+      });
+      res.end(buf);
+    })
+    .catch(() => {
+      if (extname(rel) === ".html") fail(res, 404, "index.html missing");
+      else fail(res, 404, "not found");
+    });
+}
+
+export function createHttpServer(deps: HttpDeps): Server {
+  const { studio, driver, scenarios, mode } = deps;
+  const publicDir = deps.publicDir;
+
+  return createServer((req, res) => {
+    void handle(req, res).catch((err: unknown) => {
+      const message = err instanceof Error ? err.message : "internal error";
+      if (!res.headersSent) fail(res, 500, message);
+      else res.end();
+    });
+  });
+
+  async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const url = new URL(req.url ?? "/", "http://127.0.0.1");
+    const pathname = url.pathname;
+    const method = req.method ?? "GET";
+
+    if (method === "GET" && pathname === "/api/health") {
+      json(res, 200, {
+        ok: true,
+        mode,
+        seq: studio.state.seq,
+        stallMs: deps.stallMs ?? driver.stallMs ?? 12000,
+      });
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/state") {
+      json(res, 200, studio.snapshot());
+      return;
+    }
+
+    if (method === "GET" && pathname === "/api/events") {
+      streamEvents(req, res);
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/reset") {
+      const state = studio.reset();
+      json(res, 200, { ok: true, seq: state.seq });
+      return;
+    }
+
+    const msgMatch = /^\/api\/rooms\/([^/]+)\/messages$/.exec(pathname);
+    if (method === "POST" && msgMatch) {
+      const roomId = decodeURIComponent(msgMatch[1] ?? "");
+      const body = (await readBody(req)) as { text?: unknown };
+      const text = typeof body.text === "string" ? body.text.trim() : "";
+      if (text.length < 1 || text.length > MAX_TEXT) {
+        fail(res, 400, `text must be 1..${MAX_TEXT} chars`);
+        return;
+      }
+      const mentions = parseMentions(text, studio, roomId);
+      const message = studio.appendMessage({
+        roomId,
+        author: "user",
+        kind: "chat",
+        text,
+        mentions,
+      });
+      driver.submit({ type: "user_message", roomId, text, mentions });
+      json(res, 201, message);
+      return;
+    }
+
+    if (method === "POST" && pathname === "/api/tasks") {
+      const body = (await readBody(req)) as {
+        roomId?: unknown;
+        brief?: unknown;
+        scenarioId?: unknown;
+      };
+      const roomId = typeof body.roomId === "string" ? body.roomId : "room_cafe";
+      const brief = typeof body.brief === "string" ? body.brief.trim() : "";
+      if (brief.length < 4 || brief.length > MAX_TEXT) {
+        fail(res, 400, `brief must be 4..${MAX_TEXT} chars`);
+        return;
+      }
+      const scenarioId =
+        typeof body.scenarioId === "string" && scenarios.some((s) => s.id === body.scenarioId)
+          ? body.scenarioId
+          : pickScenario(scenarios, brief);
+      const task = studio.createTask({ roomId, brief, scenarioId });
+      studio.appendMessage({
+        roomId,
+        author: "user",
+        kind: "chat",
+        text: brief,
+        taskId: task.id,
+      });
+      driver.submit({ type: "task_created", roomId, taskId: task.id });
+      json(res, 201, task);
+      return;
+    }
+
+    const nudgeMatch = /^\/api\/tasks\/([^/]+)\/nudge$/.exec(pathname);
+    if (method === "POST" && nudgeMatch) {
+      const taskId = decodeURIComponent(nudgeMatch[1] ?? "") as TaskId;
+      const task = studio.getTask(taskId);
+      if (!task) {
+        fail(res, 404, "task not found");
+        return;
+      }
+      driver.submit({ type: "nudge", taskId });
+      json(res, 202, { ok: true });
+      return;
+    }
+
+    if (method === "GET") {
+      serveStatic(res, publicDir, pathname);
+      return;
+    }
+
+    fail(res, 404, "not found");
+  }
+
+  function streamEvents(req: IncomingMessage, res: ServerResponse): void {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write("retry: 3000\n\n");
+
+    const send = (state: StudioState): void => {
+      res.write(`data: ${JSON.stringify({ seq: state.seq, state })}\n\n`);
+    };
+    send(studio.snapshot());
+
+    const unsubscribe = studio.subscribe(send);
+    const heartbeat = setInterval(() => res.write(": ping\n\n"), 15000);
+    heartbeat.unref?.();
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+  }
+}
