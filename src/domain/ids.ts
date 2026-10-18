@@ -24,4 +24,5 @@ export const ids = {
   artifact: () => newId("art"),
   memory: () => newId("mem"),
   workspace: () => newId("ws"),
+  testRun: () => newId("tst"),
 };

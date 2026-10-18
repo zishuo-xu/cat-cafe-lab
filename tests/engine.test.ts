@@ -1882,3 +1882,102 @@ describe("同房间并发任务的 stall 判定", () => {
     }
   });
 });
+
+
+describe("评审拉锯保护", () => {
+  test("反复 request_changes 超过上限后强制收尾，并记一条 lesson", async () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    let reviewCount = 0;
+    const brain = {
+      mode: "mock" as const,
+      async think(ctx: { task: { stage: string } | null; cat: { id: string; role: string } }) {
+        const stage = ctx.task?.stage;
+        if (stage === "intake") {
+          return [{ kind: "message" as const, text: "接需求" }];
+        }
+        if (stage === "planning") {
+          return [
+            {
+              kind: "handoff" as const,
+              to: "jinjianceng",
+              card: {
+                what: "实现",
+                why: "拆活",
+                tradeoff: "先做最小实现",
+                openQuestions: [],
+                nextAction: "交实现",
+              },
+            },
+          ];
+        }
+        if (stage === "working" || stage === "revising") {
+          return [
+            {
+              kind: "artifact" as const,
+              artifact: { kind: "patch" as const, title: "实现稿", body: "diff" },
+              mentions: ["yanyan"],
+            },
+            {
+              kind: "handoff" as const,
+              to: "yanyan",
+              card: {
+                what: "评审",
+                why: "交叉评审",
+                tradeoff: "先看最小实现",
+                openQuestions: [],
+                nextAction: "给结论",
+              },
+            },
+          ];
+        }
+        if (stage === "reviewing") {
+          reviewCount += 1;
+          return [
+            {
+              kind: "review" as const,
+              verdict: "request_changes" as const,
+              title: "还要改",
+              findings: [{ severity: "blocker" as const, title: "问题", detail: "细节" }],
+              text: "继续改",
+              mentions: ["jinjianceng"],
+            },
+          ];
+        }
+        if (stage === "done") {
+          return [{ kind: "message" as const, text: "收尾" }];
+        }
+        return [{ kind: "message" as const, text: "..." }];
+      },
+    };
+
+    const driver = createDriver({
+      studio,
+      brain: brain as never,
+      wait: () => Promise.resolve(),
+      stallMs: 5000,
+    });
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "反复打回的任务",
+        scenarioId: "export_csv",
+      });
+      driver.submit({ type: "task_created", roomId: "room_cafe", taskId: task.id });
+      await driver.whenIdle();
+      // 再跑几轮，让拉锯触发上限。
+      for (let i = 0; i < 12; i += 1) {
+        await driver.whenIdle();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      }
+      const final = studio.getTask(task.id);
+      assert.ok(final);
+      assert.equal(final?.status, "done", `应强制收尾，实际 ${final?.stage}/${final?.status}，评审 ${reviewCount} 次`);
+      assert.ok(
+        studio.snapshot().memory.some((entry) => entry.tags.includes("review-loop")),
+        "应记录 review-loop 教训",
+      );
+    } finally {
+      studio.close();
+    }
+  });
+});

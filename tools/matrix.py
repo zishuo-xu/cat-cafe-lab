@@ -33,7 +33,7 @@ def names_map(s):
 
 def scenario_basic_task():
     """A：真实模型跑一个完整任务（自动批准所有工具）。"""
-    result = run_task("给登录页加一个「记住我」勾选框，7 天内免登录。")
+    result = run_task("给登录页加一个「记住我」勾选框，7 天内免登录。", timeout=540)
     s = result.get("state") or state()
     summary = summarize(s, result["id"])
     ok = result["status"] == "done" and summary["artifacts"] >= 1
@@ -43,7 +43,8 @@ def scenario_basic_task():
 
 def scenario_reject_flow():
     """B：拒绝审批后模型不应重复申请同一命令，且任务应能收尾或明确说明。"""
-    result = run_task("跑一下测试，然后把结论写下来。", auto_approve=False, auto_reject=True)
+    result = run_task("跑一下测试，然后把结论写下来。", auto_approve=False, auto_reject=True,
+                      timeout=480)
     s = result.get("state") or state()
     calls = [c for c in s.get("toolCalls", []) if c.get("taskId") == result["id"]]
     rejected = [c for c in calls if c["status"] == "rejected"]
@@ -59,7 +60,7 @@ def scenario_reject_flow():
 def scenario_nudge_recovery():
     """C：卡住后催一下能否恢复。"""
     result = run_task("给后台加一个导出 CSV 功能，要校验权限。", auto_approve=False,
-                      auto_reject=True, timeout=150)
+                      auto_reject=True, timeout=480)
     record("nudge_recovery", result.get("nudges", 0) >= 0, {
         "status": result["status"], "nudges": result.get("nudges"),
         "stage": result.get("stage"),
@@ -82,8 +83,8 @@ def scenario_multi_room():
         return
     room_id = room["id"]
 
-    t1 = run_task("在沙盒里加一个 hello 函数，写注释说明用途。", room="room_cafe", timeout=150)
-    t2 = run_task("在沙盒里加一个时间格式化工具函数。", room=room_id, timeout=150)
+    t1 = run_task("在沙盒里加一个 hello 函数，写注释说明用途。", room="room_cafe", timeout=480)
+    t2 = run_task("在沙盒里加一个时间格式化工具函数。", room=room_id, timeout=480)
     s = state()
     m1 = [m for m in s["messages"] if m.get("taskId") == t1["id"]]
     m2 = [m for m in s["messages"] if m.get("taskId") == t2["id"]]
@@ -103,7 +104,7 @@ def scenario_concurrent_tasks():
     time.sleep(2)
     code2, second = req("POST", "/api/tasks", {"roomId": "room_cafe", "brief": "再写一个 sub(a,b) 函数。"})
     started = time.time()
-    while time.time() - started < 240:
+    while time.time() - started < 600:
         approve_all()
         s = state()
         done = [t for t in s["tasks"] if t["id"] in (first["id"], second["id"]) and t["status"] == "done"]
@@ -154,7 +155,7 @@ def scenario_permission_boundary():
     original = next((c for c in (before or {}).get("cats", []) if c["id"] == cat), {}).get("tools")
     req("PUT", f"/api/cats/{cat}", {"tools": ["read_file"]})
     try:
-        result = run_task("写一个 greet.js，跑一下测试确认。", timeout=150)
+        result = run_task("写一个 greet.js，跑一下测试确认。", timeout=480)
         s = result.get("state") or state()
         calls = [c for c in s.get("toolCalls", []) if c.get("taskId") == result["id"]]
         denied = [c for c in calls if "没有权限" in (c.get("output") or "")]
@@ -191,7 +192,7 @@ def scenario_no_tools_mode():
     """I：关闭工具执行——任务仍应能跑完，只是不产生工具调用。"""
     req("PUT", "/api/settings", {"toolsEnabled": False})
     try:
-        result = run_task("写一段说明文字，介绍记住我功能。", timeout=120)
+        result = run_task("写一段说明文字，介绍记住我功能。", timeout=360)
         s = result.get("state") or state()
         calls = [c for c in s.get("toolCalls", []) if c.get("taskId") == result["id"]]
         ok = result["status"] in ("done", "timeout") and len(calls) == 0

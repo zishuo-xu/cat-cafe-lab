@@ -48,7 +48,7 @@ node src/main.ts
 点「＋ 新任务」→ 选「记住我」示例 → 「让猫猫开工」，然后看着就行。
 
 ```bash
-node --test tests/    # 201 个测试
+node --test tests/    # 218 个测试
 npx tsc --noEmit      # 类型检查
 ```
 
@@ -408,7 +408,7 @@ cat-cafe-lab/
 │   └── main.ts
 ├── public/            index.html、app.js、styles.css、avatars.js
 ├── tools/             probe.py、matrix.py（真实模型测试驱动）
-├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / workspaces / task-git / rooms / mcp / smoke（201 个）
+├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / workspaces / task-git / rooms / mcp / test-runner / smoke（218 个）
 ├── docs/              architecture.md、llm.md、mcp.md、real-model.md、
 │                      real-model-test-report.md、images/
 ├── data/              studio.json、settings.json、workspaces.json、mcp.json、workspace/（gitignore）

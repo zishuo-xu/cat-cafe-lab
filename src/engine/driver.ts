@@ -86,6 +86,14 @@ const RECENT_TOOL_RESULTS = 8;
  * 基于已有信息收尾，而不是继续消耗预算。
  */
 const MAX_CONSECUTIVE_TOOL_FAILURES = 3;
+/**
+ * 同一任务允许的「打回 → 修订」轮数上限。
+ *
+ * 真实模型下 reviewer 可能持续要求修改（实测一条任务打回 4 次以上，
+ * 任务永远在 reviewing ↔ revising 之间打转）。到上限后强制收尾：
+ * 记录一条 lesson，任务转 done，避免无限循环消耗预算。
+ */
+const MAX_REVISION_ROUNDS = 3;
 
 type TurnOf<K extends CatTurn["kind"]> = Extract<CatTurn, { kind: K }>;
 type HandoffTurn = TurnOf<"handoff">;
@@ -271,6 +279,8 @@ interface TaskRuntime {
   /** 漏 @ 卡住的交接；只有 nudge 能救。 */
   missed: MissedDelivery | null;
   stallTimer: ReturnType<typeof setTimeout> | null;
+  /** 已发生的「打回 → 修订」轮数。 */
+  revisions: number;
 }
 
 interface ReviewApplied {
@@ -972,6 +982,32 @@ export function createDriver(deps: {
         };
 
         if (move.stage === "revising") {
+          runtime.revisions += 1;
+          if (runtime.revisions > MAX_REVISION_ROUNDS) {
+            // 到轮数上限：强制收尾，把「没改完」记成教训，而不是无限拉锯。
+            studio.addMemory({
+              kind: "lesson",
+              title: "评审反复打回时先收敛，不要无限修订",
+              body:
+                `任务「${task.title}」在 ${MAX_REVISION_ROUNDS} 轮修订后仍未通过评审，` +
+                `最后一轮意见：${applied.review.text.slice(0, 200)}`,
+              tags: ["review-loop", "process"],
+              sourceTaskId: task.id,
+            });
+            studio.appendMessage({
+              roomId: room.id,
+              author: cat.id,
+              kind: "system",
+              text: `已经修订 ${MAX_REVISION_ROUNDS} 轮仍未通过，我先收口并记一条教训；剩余问题请铲屎官决定是否继续。`,
+              mentions: [],
+              taskId: task.id,
+            });
+            beginStage(task, "done", architectOf(studio.state.cats)?.id ?? cat.id);
+            studio.finishStep(task.id, "done");
+            studio.setTaskStatus(task.id, "done");
+            clearStall(task.id);
+            return;
+          }
           runtime.workers += 1;
           enqueueWake({
             roomId: room.id,
@@ -993,6 +1029,7 @@ export function createDriver(deps: {
       }
 
       case "decision": {
+        if (!studio.getTask(task.id)) return;
         studio.finishStep(task.id, "done");
         studio.setTaskStatus(task.id, "done");
         clearStall(task.id);
@@ -1179,6 +1216,9 @@ export function createDriver(deps: {
   // ── 阶段 / step / owner ───────────────────────────────
 
   function beginStage(task: Task, stage: TaskStage, owner: CatId): void {
+    // 任务可能已经被「重置猫咖」删掉，而队列里还残留着旧 wake：
+    // 这种情况安静跳过，不要让一个已删除的任务把整条队列打断。
+    if (!studio.getTask(task.id)) return;
     if (task.stage === stage) return;
     studio.finishStep(task.id, task.stage);
     studio.updateTaskStage(task.id, stage, owner);
@@ -1225,7 +1265,7 @@ export function createDriver(deps: {
   function runtimeFor(taskId: TaskId): TaskRuntime {
     let runtime = runtimes.get(taskId);
     if (!runtime) {
-      runtime = { workers: 0, deferredReviewer: null, missed: null, stallTimer: null };
+      runtime = { workers: 0, deferredReviewer: null, missed: null, stallTimer: null, revisions: 0 };
       runtimes.set(taskId, runtime);
     }
     return runtime;

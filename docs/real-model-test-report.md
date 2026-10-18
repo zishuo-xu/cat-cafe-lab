@@ -95,6 +95,44 @@
 | memory | 跨任务记忆复用 | ✅ 第二个任务引用第一条记忆 |
 | notools | 关闭工具执行 | ✅ 0 次工具调用，任务仍可收尾 |
 
+### 7. 模型输出裸对象 / 多个对象拼接（严重）
+
+**现象**：`模型输出不是可用的 CatTurn[]` 高频出现，但模型内容看起来是合法 JSON。
+
+**证据**：日志里能看到两种形态：
+- `{"kind":"tool",...}`（没有外层 `[...]`）；
+- `{"kind":"tool",...} {"kind":"tool",...}`（多个对象用空格拼接）。
+
+**修复**：`extractJsonArray` 在找不到 `[...]` 时，按平衡花括号切出所有顶层对象再包成数组；
+字符串里的 `{` / `}` / 转义引号不会误切。
+
+### 8. 模型把 `cmd` 写成 `command`
+
+**修复**：`run_command` 同时接受 `cmd` 与 `command`。
+
+### 9. 工具不在本轮目录时被静默丢弃 → 整轮降级
+
+**现象**：宪宪（只有 read_file/list_files 权限）请求 `write_file`，turn 被丢弃 →
+如果一轮里只有这类 turn，整轮降级到 mock，模型永远学不到「没权限」。
+
+**修复**：内置工具名即使不在 `availableTools` 里也保留，交给 driver 拒绝并回喂
+「没有权限使用 write_file」；完全编造的工具名（如 `delete_everything`）仍然丢弃。
+
+### 10. 评审 ↔ 修订无限拉锯
+
+**现象**：reviewer 反复 `request_changes`，任务永远在 revising/reviewing 之间打转；
+实测一条任务打回 4 次以上仍未收尾。
+
+**修复**：`MAX_REVISION_ROUNDS = 3`。超过上限后强制收尾（任务置 done），
+并把最后一轮评审意见记成 `review-loop` 教训，避免无限消耗预算。
+
+### 11. 重置后残留 wake 抛 `task not found`
+
+**现象**：`/api/reset` 清空任务后，队列里还排着旧的 wake，处理时抛
+`Error: task not found`，打断队列。
+
+**修复**：`beginStage` / decision 分支先检查任务是否还存在，不存在就安静跳过。
+
 ## 四、仍然存在的限制（未修）
 
 1. **推理型模型慢**：单任务 80–180s，比演出模式慢一个数量级；这是 provider 特性。

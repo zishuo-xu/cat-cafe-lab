@@ -33,6 +33,13 @@ import type {
   TurnContext,
 } from "../domain/types.ts";
 
+/**
+ * 内置工具名。真实模型常请求「真实存在但不在这只猫权限里」的工具（例如宪宪请求 write_file）。
+ * 这类 turn 要保留，交给 driver 拒绝并回喂「没有权限」，模型才能学到边界；
+ * 而完全编造的工具名（delete_everything）直接丢弃。
+ */
+const BUILTIN_TOOL_NAMES = new Set(["read_file", "write_file", "list_files", "run_command"]);
+
 /** 默认请求超时：20s。真实模型偶尔慢，再久就不如先让猫猫动起来。 */
 export const DEFAULT_TIMEOUT_MS = 20_000;
 /**
@@ -264,13 +271,53 @@ function extractJsonArray(content: string): string | null {
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text);
   if (fenced?.[1]) text = fenced[1].trim();
 
-  // 真实模型经常在 JSON 数组前后加一句人话（"我先说结论…" / "能跑，但我知道有个坑…"），
-  // 甚至 fenced 里也带尾巴。统一按「第一个 [ 到最后一个 ]」切片，前后解说都丢掉。
-  // 只在整个响应本身就是数组时才直接返回，避免把数组内部的括号当边界。
+  // 情况一：正常的 JSON 数组（前后可能带解说）。
   const start = text.indexOf("[");
   const end = text.lastIndexOf("]");
-  if (start < 0 || end <= start) return null;
-  return text.slice(start, end + 1);
+  if (start >= 0 && end > start) return text.slice(start, end + 1);
+
+  // 情况二：模型没写外层数组，直接给了裸对象，甚至多个对象用空格拼在一起。
+  //   {"kind":"tool",...} {"kind":"tool",...}
+  // 这种情况按「平衡花括号」把对象一个个切出来，再包成数组。
+  const objects = extractBalancedObjects(text);
+  if (objects.length === 0) return null;
+  return `[${objects.join(",")}]`;
+}
+
+/** 从任意文本里切出顶层 JSON 对象（考虑字符串里的花括号与转义）。 */
+function extractBalancedObjects(text: string): string[] {
+  const objects: string[] = [];
+  let depth = 0;
+  let start = -1;
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === "{") {
+      if (depth === 0) start = i;
+      depth += 1;
+      continue;
+    }
+    if (ch === "}") {
+      if (depth === 0) continue;
+      depth -= 1;
+      if (depth === 0 && start >= 0) {
+        objects.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+  return objects;
 }
 
 /**
@@ -347,14 +394,21 @@ function parseToolTurn(
   const tool = rawTool.trim();
   if (!tool) return null;
 
-  // 只允许本轮目录里真实存在的工具（含 MCP 动态注册的工具）。
+  // 目录里有的工具按 schema 校验；目录里没有的（模型幻觉 / 没授权的工具）也保留，
+  // 交给 driver 拒绝并把「工具不存在 / 没有权限」作为 tool_result 回喂给模型。
+  //
+  // 不能在这里静默丢弃：实测模型会输出「只有 tool turn」的数组，一旦被丢光，
+  // 整轮就会降级到 mock，模型永远学不到「这个工具不能用」。
   const definition = ctx.availableTools.find((candidate) => candidate.name === tool);
-  if (!definition) {
-    // 不在 tools/list 里的工具直接丢弃，保留同轮其他合法 turn。
+  if (!definition && !BUILTIN_TOOL_NAMES.has(tool)) {
+    // 完全编造的工具名：丢弃。
     return null;
   }
-
-  const input = parseToolInput(definition, item.input);
+  const input = definition
+    ? parseToolInput(definition, item.input)
+    : isRecord(item.input)
+      ? { ...item.input }
+      : {};
   if (!input) return null;
 
   const turn: CatTurn = { kind: "tool", tool, input };
@@ -509,7 +563,8 @@ function parseToolInput(
     case "list_files":
       return {};
     case "run_command": {
-      const cmd = requiredText(input.cmd);
+      // 真实模型经常把 cmd 写成 command；两个都收。
+      const cmd = requiredText(input.cmd) ?? requiredText(input.command);
       if (!cmd) return null;
       const rawArgs = input.args;
       const args: string[] = [];

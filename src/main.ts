@@ -14,10 +14,12 @@ import { readSettings } from "./server/settings.ts";
 import { SettingsStore, SwitchableBrain } from "./server/settings-store.ts";
 import { Studio } from "./server/studio.ts";
 import { WorkspaceManager } from "./workspaces/manager.ts";
+import { TestRunner } from "./server/test-runner.ts";
 import { DEFAULT_WORKSPACE_ID } from "./domain/constants.ts";
 
 const settings = readSettings();
 const dataDir = resolve(settings.dataDir);
+const projectRoot = resolve(import.meta.dirname, "..");
 
 const studio = new Studio({ cats: CATS, mode: settings.mode, dataDir });
 
@@ -62,6 +64,13 @@ const driver = createDriver({
   approvalMode: () => settingsStore.approvalMode(),
 });
 
+// 测试中心：在页面上跑单元测试 / 真实模型矩阵，输出实时推给前端。
+const testRunner = new TestRunner({
+  projectRoot,
+  port: settings.port,
+  realModelReady: () => settingsStore.getPublic().mode === "llm" && settingsStore.getPublic().llm.hasKey,
+});
+
 const server = createHttpServer({
   studio,
   driver,
@@ -75,6 +84,7 @@ const server = createHttpServer({
   tools: registry,
   mcp,
   workspaces,
+  tests: testRunner,
 });
 
 server.listen(settings.port, "127.0.0.1", () => {
@@ -106,6 +116,7 @@ function shutdown(): void {
   server.close();
   void mcp.close();
   workspaces.close();
+  testRunner.close();
   studio.close();
   setTimeout(() => process.exit(0), 100).unref?.();
 }

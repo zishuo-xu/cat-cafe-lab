@@ -1005,10 +1005,12 @@ describe("llm-brain · 动态工具目录与技能注入", () => {
     assert.ok(!toolLines.some((line) => line.includes("write_file")));
   });
 
-  test("目录外的工具 turn 被丢弃，MCP 工具 turn 保留且 input 原样透传", async () => {
+  test("内置工具不在目录里也保留（交给 driver 拒绝）；编造工具名丢弃；MCP 工具 input 原样透传", async () => {
     const content = JSON.stringify([
-      // 内置工具不在本轮目录里 → 丢弃
+      // 内置工具但不在本轮目录里（比如这只猫没权限）→ 保留，交给 driver 回「没有权限」
       { kind: "tool", tool: "read_file", input: { path: "src/app.js" } },
+      // 完全编造的工具名 → 丢弃
+      { kind: "tool", tool: "delete_everything", input: {} },
       // MCP 工具合法：任意对象 input 原样透传
       {
         kind: "tool",
@@ -1031,13 +1033,18 @@ describe("llm-brain · 动态工具目录与技能注入", () => {
         const turns = await brain.think(makeContext({ availableTools: MCP_TOOLS }));
 
         assert.equal(fallback.calls(), 0, "还有合法 turn 时不应整轮降级");
-        assert.equal(turns.length, 1);
-        const toolTurn = turns[0];
-        assert.equal(toolTurn?.kind, "tool");
-        if (toolTurn?.kind === "tool") {
-          assert.equal(toolTurn.tool, "github__list_issues");
-          assert.deepEqual(toolTurn.input, { repo: "cat-cafe", state: "open" });
-          assert.equal(toolTurn.label, "看 issue");
+        // read_file 是内置工具（保留给 driver 判定权限）、github__list_issues 合法、
+        // delete_everything 编造（丢弃）、fs__read_text input 非对象（丢弃）。
+        assert.equal(turns.length, 2, `实际 ${turns.length}`);
+        const tools = turns.filter((turn) => turn.kind === "tool");
+        assert.deepEqual(
+          tools.map((turn) => (turn as { tool: string }).tool),
+          ["read_file", "github__list_issues"],
+        );
+        const mcpTurn = tools[1];
+        if (mcpTurn?.kind === "tool") {
+          assert.deepEqual(mcpTurn.input, { repo: "cat-cafe", state: "open" });
+          assert.equal(mcpTurn.label, "看 issue");
         }
       },
     );
@@ -1233,5 +1240,50 @@ describe("真实模型的输出噪声容错", () => {
     const turns = parseTurns('[{"kind":"message","text":"数组 arr[0] 要小心 ]"}]', ctx);
     assert.equal(turns.length, 1);
     assert.match((turns[0] as { text: string }).text, /arr\[0\]/);
+  });
+});
+
+
+describe("真实模型的输出格式兜底", () => {
+  test("裸对象（没有外层数组）也能解析", () => {
+    const ctx = makeContext();
+    const turns = parseTurns('{"kind":"tool","tool":"read_file","input":{"path":"a.js"}}', ctx);
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0]?.kind, "tool");
+  });
+
+  test("多个裸对象用空格拼在一起也能解析", () => {
+    const ctx = makeContext();
+    const content =
+      '{"kind":"tool","tool":"read_file","input":{"path":"a.js"}} ' +
+      '{"kind":"tool","tool":"read_file","input":{"path":"b.js"}}';
+    const turns = parseTurns(content, ctx);
+    assert.equal(turns.length, 2);
+  });
+
+  test("run_command 接受 command 作为 cmd 的别名", () => {
+    const ctx = makeContext();
+    const turns = parseTurns(
+      '[{"kind":"tool","tool":"run_command","input":{"command":"npm","args":["test"]}}]',
+      ctx,
+    );
+    assert.equal(turns.length, 1);
+    const turn = turns[0];
+    assert.equal(turn?.kind, "tool");
+    if (turn?.kind === "tool") {
+      assert.equal(turn.input["cmd"], "npm");
+      assert.deepEqual(turn.input["args"], ["test"]);
+    }
+  });
+
+  test("字符串里的花括号 / 转义引号不会切断对象", () => {
+    const ctx = makeContext();
+    const content = '[{"kind":"tool","tool":"write_file","input":{"path":"a.js","content":"const x = {a:1}; \\"q\\""}}]';
+    const turns = parseTurns(content, ctx);
+    assert.equal(turns.length, 1);
+    const turn = turns[0];
+    if (turn?.kind === "tool") {
+      assert.match(String(turn.input["content"]), /\{a:1\}/);
+    }
   });
 });

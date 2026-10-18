@@ -203,6 +203,43 @@ const roomAdminState = {
   deleting: false,
 };
 
+/** 测试中心：全局运行状态、SSE 日志缓存与面板状态。 */
+const TEST_KIND_LABEL = {
+  unit: "单元测试",
+  real: "真实模型矩阵",
+  scenario: "单场景",
+};
+
+const TEST_STATUS_LABEL = {
+  running: "运行中",
+  passed: "通过",
+  failed: "失败",
+  cancelled: "已取消",
+  idle: "空闲",
+};
+
+const testCenterState = {
+  available: null,
+  loading: false,
+  open: false,
+  runs: [],
+  running: new Set(),
+  liveId: null,
+  selectedId: null,
+  details: new Map(),
+  detailLoading: false,
+  socket: null,
+  socketOpen: false,
+  disconnected: false,
+  error: "",
+  polling: false,
+  lastPollAt: 0,
+  onlyFailures: false,
+  autoScroll: true,
+  lineNumbers: true,
+  rendered: { runId: "", count: 0, filter: false, lineNumbers: true },
+};
+
 /** 当前任务 git 面板 / 弹窗状态。 */
 const taskGitState = {
   taskId: null,
@@ -671,6 +708,7 @@ async function boot() {
   void loadWorkspaces().finally(() => void loadWorkspace());
   void loadApprovals();
   void loadToolCatalog();
+  void initTestCenter();
   try {
     await refreshState("boot");
   } catch {
@@ -725,6 +763,31 @@ function cacheDom() {
   els.newRoomError = $("#new-room-error");
   els.createRoomBtn = $("#create-room-btn");
   els.newRoomWorkspaceHint = $("#new-room-workspace-hint");
+  els.testCenterModal = $("#test-center-modal");
+  els.testCenterClose = $("#test-center-close");
+  els.testButtons = $$("[data-test-button]");
+  els.testDots = $$("[data-test-dot]");
+  els.testStatusBadge = $("#test-status-badge");
+  els.testStatusText = $("#test-status-text");
+  els.testDuration = $("#test-duration");
+  els.testExit = $("#test-exit");
+  els.testSummary = $("#test-summary");
+  els.testError = $("#test-error");
+  els.testRunUnit = $("#test-run-unit");
+  els.testRunReal = $("#test-run-real");
+  els.testScenario = $("#test-scenario");
+  els.testRunScenario = $("#test-run-scenario");
+  els.testStopBtn = $("#test-stop-btn");
+  els.testReturnLive = $("#test-return-live");
+  els.testLog = $("#test-log");
+  els.testLineNumbers = $("#test-line-numbers");
+  els.testFailBtn = $("#test-fail-btn");
+  els.testLogHint = $("#test-log-hint");
+  els.testBackBottom = $("#test-back-bottom");
+  els.testHistoryList = $("#test-history-list");
+  els.testRealConfirm = $("#test-real-confirm");
+  els.testRealConfirmBtn = $("#test-real-confirm-btn");
+  els.testRealError = $("#test-real-error");
   els.taskGitCard = $("#task-git-card");
   els.taskGitState = $("#task-git-state");
   els.taskGitBody = $("#task-git-body");
@@ -2113,6 +2176,7 @@ function startTicker() {
   app.ticker = setInterval(() => {
     if (!app.state) return;
     updateStallUi();
+    updateTestCenterTicker();
   }, 1000);
 }
 
@@ -2436,6 +2500,7 @@ function bindUi() {
   });
   window.addEventListener("pagehide", () => {
     if (app.sse) app.sse.close();
+    if (testCenterState.socket) testCenterState.socket.close();
   });
 }
 
@@ -6783,6 +6848,785 @@ async function openWorkspaceFile(workspaceId, path) {
   }
 }
 
+
+
+// ── 测试中心 ───────────────────────────────────────────────────────────
+
+function formatTestDuration(ms) {
+  const total = Math.max(0, Math.round(Number(ms) / 1000));
+  if (total < 60) return `${total}s`;
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+}
+
+function testRunDuration(run) {
+  if (!run) return 0;
+  const start = Number(run.startedAt) || 0;
+  const end = Number(run.finishedAt) || (run.status === "running" ? Date.now() : start);
+  return Math.max(0, end - start);
+}
+
+function testRunById(id) {
+  return testCenterState.runs.find((run) => run.id === id) ?? null;
+}
+
+function selectedTestRun() {
+  const detail = testCenterState.details.get(testCenterState.selectedId);
+  return detail ?? testRunById(testCenterState.selectedId) ?? testRunById(testCenterState.liveId);
+}
+
+function testRunStatusLabel(run) {
+  return TEST_STATUS_LABEL[run?.status] ?? "空闲";
+}
+
+function testKindLabel(run) {
+  if (!run) return "";
+  const base = TEST_KIND_LABEL[run.kind] ?? run.kind;
+  return run.kind === "scenario" && run.scenario ? `${base} · ${run.scenario}` : base;
+}
+
+function syncTestRunningFromRuns() {
+  const running = new Set(
+    testCenterState.runs.filter((run) => run.status === "running").map((run) => run.id),
+  );
+  testCenterState.running = running;
+  const latest = [...running][0] ?? null;
+  if (latest) {
+    if (!testCenterState.liveId || !running.has(testCenterState.liveId)) {
+      testCenterState.liveId = latest;
+    }
+  } else {
+    testCenterState.liveId = null;
+  }
+}
+
+function updateTestTopButton() {
+  if (!els.testButtons?.length && !els.testDots?.length) return;
+  const runningCount = testCenterState.running.size;
+  const latest = testCenterState.runs[0] ?? null;
+  let state = "idle";
+  if (testCenterState.available === false) state = "unavailable";
+  else if (runningCount > 0) state = "running";
+  else if (latest?.status) state = latest.status;
+  for (const dot of els.testDots ?? []) dot.dataset.state = state;
+  const title =
+    testCenterState.available === false
+      ? "测试服务未就绪"
+      : runningCount > 0
+        ? `测试运行中（${runningCount}）`
+        : latest
+          ? `上次测试：${testRunStatusLabel(latest)}`
+          : "测试中心";
+  for (const button of els.testButtons ?? []) {
+    button.title = title;
+    button.setAttribute("aria-label", title);
+  }
+}
+
+async function loadTestRuns(options = {}) {
+  if (testCenterState.loading) return;
+  testCenterState.loading = true;
+  try {
+    const response = await fetch("/api/tests/runs", {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (response.status === 404 || response.status === 503) {
+      testCenterState.available = false;
+      testCenterState.error = "测试服务未就绪（GET /api/tests/runs 404/503）";
+      updateTestTopButton();
+      if (testCenterState.open) renderTestCenter();
+      return;
+    }
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET /api/tests/runs"));
+    const payload = await response.json();
+    testCenterState.runs = Array.isArray(payload?.runs) ? payload.runs : [];
+    testCenterState.available = true;
+    if (testCenterState.error === "测试服务未就绪（GET /api/tests/runs 404/503）") {
+      testCenterState.error = "";
+    }
+    syncTestRunningFromRuns();
+    for (const run of testCenterState.runs) {
+      const detail = testCenterState.details.get(run.id);
+      if (detail) {
+        detail.status = run.status;
+        if (run.finishedAt) detail.finishedAt = run.finishedAt;
+        if (run.exitCode !== undefined) detail.exitCode = run.exitCode;
+        if (run.summary) detail.summary = run.summary;
+      }
+    }
+    if (!testCenterState.selectedId || !testCenterState.runs.some((run) => run.id === testCenterState.selectedId)) {
+      testCenterState.selectedId = testCenterState.liveId ?? testCenterState.runs[0]?.id ?? null;
+    }
+    updateTestTopButton();
+    if (testCenterState.available && !testCenterState.socket) connectTestStream();
+    if (testCenterState.open) {
+      renderTestCenter();
+      const selected = testCenterState.selectedId;
+      if (selected && !testCenterState.details.has(selected)) void loadTestRunDetail(selected);
+    }
+  } catch (error) {
+    testCenterState.error = `测试服务读取失败：${error.message}`;
+    updateTestTopButton();
+    if (testCenterState.open) renderTestCenter();
+  } finally {
+    testCenterState.loading = false;
+  }
+}
+
+async function initTestCenter() {
+  await loadTestRuns();
+  updateTestTopButton();
+}
+
+function connectTestStream() {
+  if (testCenterState.socket || testCenterState.available === false) return;
+  let source;
+  try {
+    source = new EventSource("/api/tests/stream");
+  } catch {
+    testCenterState.error = "测试日志流无法连接";
+    return;
+  }
+  testCenterState.socket = source;
+  source.onopen = () => {
+    const recovered = testCenterState.disconnected;
+    testCenterState.socketOpen = true;
+    testCenterState.disconnected = false;
+    if (recovered) {
+      appendTestSystemLine("连接已恢复，正在补齐日志…");
+      const id = testCenterState.selectedId ?? testCenterState.liveId;
+      if (id) void loadTestRunDetail(id);
+    }
+    if (testCenterState.open) renderTestLog(false);
+  };
+  source.onmessage = (event) => {
+    let payload;
+    try {
+      payload = JSON.parse(event.data);
+    } catch {
+      return;
+    }
+    if (!payload || typeof payload !== "object" || !payload.runId) return;
+    handleTestStreamEvent(payload);
+  };
+  source.onerror = () => {
+    if (!testCenterState.disconnected) {
+      testCenterState.disconnected = true;
+      appendTestSystemLine("连接断开，重连中…");
+    }
+  };
+}
+
+function handleTestStreamEvent(event) {
+  const runId = String(event.runId ?? "");
+  if (!runId) return;
+  if (event.event === "start") {
+    if (!testCenterState.running.has(runId)) testCenterState.running.add(runId);
+    testCenterState.liveId = runId;
+    if (!testRunById(runId)) {
+      testCenterState.runs.unshift({
+        id: runId,
+        kind: "unit",
+        status: "running",
+        startedAt: Date.now(),
+        lineCount: 0,
+      });
+      if (testCenterState.runs.length > 20) testCenterState.runs.length = 20;
+    }
+    if (testCenterState.open && (!testCenterState.selectedId || testCenterState.followLive !== false)) {
+      testCenterState.selectedId = runId;
+      testCenterState.autoScroll = true;
+    }
+    updateTestTopButton();
+    void loadTestRunDetail(runId);
+    void loadTestRuns({ silent: true });
+    if (testCenterState.open) renderTestCenter();
+    return;
+  }
+  if (event.event === "exit") {
+    testCenterState.running.delete(runId);
+    if (testCenterState.liveId === runId) {
+      testCenterState.liveId = [...testCenterState.running][0] ?? null;
+    }
+    const summary = testRunById(runId);
+    if (summary) {
+      summary.status = event.code === 0 ? "passed" : "failed";
+      summary.exitCode = event.code ?? undefined;
+      summary.finishedAt = Date.now();
+    }
+    const detail = testCenterState.details.get(runId);
+    if (detail) {
+      detail.status = event.code === 0 ? "passed" : "failed";
+      detail.exitCode = event.code ?? undefined;
+      detail.finishedAt = Date.now();
+      detail.summary = detail.summary ?? summarizeTestLines(detail.lines);
+    }
+    updateTestTopButton();
+    void loadTestRunDetail(runId);
+    void loadTestRuns({ silent: true });
+    if (testCenterState.open) renderTestCenter();
+    return;
+  }
+  if (typeof event.line === "string") {
+    appendTestLine(runId, {
+      at: Number(event.at) || Date.now(),
+      stream: event.stream === "stderr" ? "stderr" : "stdout",
+      text: event.line,
+    });
+  }
+}
+
+function appendTestLine(runId, line) {
+  let detail = testCenterState.details.get(runId);
+  if (!detail) {
+    const summary = testRunById(runId);
+    detail = {
+      id: runId,
+      kind: summary?.kind ?? "unit",
+      ...(summary?.scenario ? { scenario: summary.scenario } : {}),
+      status: summary?.status ?? "running",
+      startedAt: summary?.startedAt ?? Date.now(),
+      lines: [],
+    };
+    testCenterState.details.set(runId, detail);
+  }
+  detail.lines.push(line);
+  if (detail.lines.length > 2000) {
+    detail.lines.splice(0, detail.lines.length - 2000);
+  }
+  const summary = testRunById(runId);
+  if (summary) summary.lineCount = detail.lines.length;
+  if (testCenterState.open && testCenterState.selectedId === runId) {
+    renderTestLog(false);
+    renderTestStatus();
+    renderTestHistory();
+  }
+}
+
+function appendTestSystemLine(text) {
+  const id = testCenterState.selectedId ?? testCenterState.liveId;
+  if (!id) return;
+  appendTestLine(id, {
+    at: Date.now(),
+    stream: "stdout",
+    text,
+    system: true,
+  });
+}
+
+function summarizeTestLines(lines) {
+  let tests = 0;
+  let pass = 0;
+  let fail = 0;
+  for (const line of lines) {
+    const text = String(line.text ?? "");
+    const passMatch = /^#\s*pass\s+(\d+)/i.exec(text);
+    const failMatch = /^#\s*fail\s+(\d+)/i.exec(text);
+    const testsMatch = /^#\s*tests\s+(\d+)/i.exec(text);
+    if (testsMatch) tests = Number(testsMatch[1]);
+    if (passMatch) pass = Number(passMatch[1]);
+    if (failMatch) fail = Number(failMatch[1]);
+  }
+  return tests || pass || fail ? { tests, pass, fail } : undefined;
+}
+
+async function loadTestRunDetail(runId) {
+  if (!runId) return;
+  try {
+    const response = await fetch(`/api/tests/runs/${encodeURIComponent(runId)}`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (response.status === 404 || response.status === 503) {
+      if (response.status === 503) testCenterState.available = false;
+      if (testCenterState.selectedId === runId) {
+        testCenterState.error =
+          response.status === 503 ? "测试服务未就绪（HTTP 503）" : "测试记录不存在";
+      }
+      return;
+    }
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET test run"));
+    const detail = await response.json();
+    if (!detail?.id) return;
+    if (!Array.isArray(detail.lines)) detail.lines = [];
+    testCenterState.details.set(detail.id, detail);
+    // 缓存最近查看的 detail，避免无限增长。
+    while (testCenterState.details.size > 6) {
+      const oldest = [...testCenterState.details.keys()].find(
+        (id) => id !== testCenterState.selectedId && id !== testCenterState.liveId,
+      );
+      if (!oldest) break;
+      testCenterState.details.delete(oldest);
+    }
+    const summary = testRunById(detail.id);
+    if (summary) {
+      summary.status = detail.status;
+      summary.exitCode = detail.exitCode;
+      summary.finishedAt = detail.finishedAt;
+      summary.summary = detail.summary;
+      summary.lineCount = detail.lines.length;
+    }
+    if (testCenterState.open && testCenterState.selectedId === detail.id) {
+      renderTestCenter();
+    }
+    updateTestTopButton();
+  } catch (error) {
+    if (testCenterState.selectedId === runId) {
+      testCenterState.error = `测试日志读取失败：${error.message}`;
+      if (testCenterState.open) renderTestCenter();
+    }
+  }
+}
+
+async function startTest(kind, scenario) {
+  if (testCenterState.available === false) {
+    setTestError("测试服务未就绪，暂时不能运行测试。");
+    return;
+  }
+  const alreadyRunning = testCenterState.runs.some(
+    (run) => run.kind === kind && run.status === "running",
+  );
+  if (alreadyRunning) {
+    setTestError(`${TEST_KIND_LABEL[kind] ?? kind} 已经在跑，等它结束或先停止。`);
+    return;
+  }
+  clearTestError();
+  const body = { kind };
+  if (kind === "scenario") body.scenario = scenario;
+  try {
+    const response = await fetch("/api/tests/run", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (response.status === 404 || response.status === 503) {
+      testCenterState.available = false;
+      setTestError("测试服务未就绪（HTTP 404/503），暂时不能运行测试。");
+      updateTestTopButton();
+      return;
+    }
+    if (!response.ok) {
+      const message = await readApiError(response);
+      setTestError(message);
+      return;
+    }
+    const payload = await response.json();
+    const runId = payload?.runId;
+    if (!runId) {
+      setTestError("测试启动失败：服务端没有返回 runId。");
+      return;
+    }
+    const placeholder = {
+      id: runId,
+      kind,
+      ...(scenario ? { scenario } : {}),
+      status: "running",
+      startedAt: Number(payload?.startedAt) || Date.now(),
+      lineCount: 0,
+    };
+    testCenterState.runs = [placeholder, ...testCenterState.runs.filter((run) => run.id !== runId)];
+    if (testCenterState.runs.length > 20) testCenterState.runs.length = 20;
+    testCenterState.running.add(runId);
+    testCenterState.liveId = runId;
+    testCenterState.selectedId = runId;
+    testCenterState.followLive = true;
+    testCenterState.onlyFailures = false;
+    testCenterState.autoScroll = true;
+    testCenterState.details.set(runId, { ...placeholder, lines: [] });
+    updateTestTopButton();
+    if (testCenterState.open) renderTestCenter();
+    if (!testCenterState.socket) connectTestStream();
+    void loadTestRunDetail(runId);
+    setTimeout(() => void loadTestRuns({ silent: true }), 350);
+  } catch (error) {
+    setTestError(`启动测试失败：${error.message}`);
+  }
+}
+
+async function stopSelectedTest() {
+  const run = selectedTestRun();
+  if (!run || run.status !== "running") return;
+  clearTestError();
+  try {
+    const response = await fetch(`/api/tests/runs/${encodeURIComponent(run.id)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) {
+      const message = await readApiError(response);
+      setTestError(`停止失败：${message}`);
+      return;
+    }
+    testCenterState.running.delete(run.id);
+    if (testCenterState.liveId === run.id) testCenterState.liveId = [...testCenterState.running][0] ?? null;
+    const detail = testCenterState.details.get(run.id);
+    if (detail) {
+      detail.status = "cancelled";
+      detail.finishedAt = Date.now();
+    }
+    const summary = testRunById(run.id);
+    if (summary) {
+      summary.status = "cancelled";
+      summary.finishedAt = Date.now();
+    }
+    if (testCenterState.open) renderTestCenter();
+    updateTestTopButton();
+    void loadTestRunDetail(run.id);
+  } catch (error) {
+    setTestError(`停止失败：${error.message}`);
+  }
+}
+
+function selectTestRun(runId) {
+  if (!runId) return;
+  testCenterState.selectedId = runId;
+  testCenterState.followLive = testCenterState.running.has(runId);
+  testCenterState.onlyFailures = false;
+  testCenterState.autoScroll = true;
+  if (testCenterState.open) renderTestCenter();
+  if (!testCenterState.details.has(runId) || testCenterState.running.has(runId)) {
+    void loadTestRunDetail(runId);
+  }
+}
+
+function updateTestCenterTicker() {
+  if (!testCenterState.open && testCenterState.running.size === 0) return;
+  if (testCenterState.open) {
+    renderTestStatus();
+    renderTestControls();
+  }
+  const now = Date.now();
+  const shouldPoll =
+    testCenterState.available !== false &&
+    !testCenterState.polling &&
+    now - testCenterState.lastPollAt > 4000 &&
+    (testCenterState.running.size > 0 || testCenterState.open);
+  if (shouldPoll) {
+    testCenterState.polling = true;
+    testCenterState.lastPollAt = now;
+    void loadTestRuns({ silent: true }).finally(() => {
+      testCenterState.polling = false;
+    });
+  }
+}
+
+function clearTestError() {
+  testCenterState.error = "";
+  if (els.testError) {
+    els.testError.hidden = true;
+    els.testError.textContent = "";
+  }
+}
+
+function setTestError(message) {
+  testCenterState.error = message;
+  if (els.testError) {
+    els.testError.textContent = message;
+    els.testError.hidden = false;
+  }
+  if (testCenterState.open) renderTestControls();
+}
+
+function openTestCenter() {
+  if (!els.testCenterModal) return;
+  testCenterState.open = true;
+  testCenterState.autoScroll = true;
+  testCenterState.followLive = true;
+  if (!els.testCenterModal.open) els.testCenterModal.showModal();
+  if (testCenterState.runs.length === 0 && testCenterState.available !== false) {
+    void loadTestRuns();
+  }
+  if (testCenterState.liveId) {
+    testCenterState.selectedId = testCenterState.liveId;
+  } else if (!testCenterState.selectedId) {
+    testCenterState.selectedId = testCenterState.runs[0]?.id ?? null;
+  }
+  renderTestCenter();
+  const selected = testCenterState.selectedId;
+  if (selected) void loadTestRunDetail(selected);
+  requestAnimationFrame(() => els.testCenterClose?.focus());
+}
+
+function closeTestCenter() {
+  testCenterState.open = false;
+  if (els.testCenterModal?.open) els.testCenterModal.close();
+}
+
+function openTestRealConfirm() {
+  if (!els.testRealConfirm) return;
+  if (els.testRealError) {
+    els.testRealError.hidden = true;
+    els.testRealError.textContent = "";
+  }
+  if (!els.testRealConfirm.open) els.testRealConfirm.showModal();
+  requestAnimationFrame(() => els.testRealConfirmBtn?.focus());
+}
+
+function closeTestRealConfirm() {
+  if (els.testRealConfirm?.open) els.testRealConfirm.close();
+}
+
+async function confirmTestReal() {
+  closeTestRealConfirm();
+  await startTest("real");
+}
+
+function renderTestCenter() {
+  updateTestTopButton();
+  renderTestControls();
+  renderTestStatus();
+  renderTestHistory();
+  renderTestLog(false);
+  if (els.testError) {
+    els.testError.hidden = !testCenterState.error;
+    els.testError.textContent = testCenterState.error || "";
+  }
+}
+
+function renderTestControls() {
+  const unavailable = testCenterState.available === false;
+  const runningKinds = new Set(
+    testCenterState.runs.filter((run) => run.status === "running").map((run) => run.kind),
+  );
+  if (els.testRunUnit) {
+    els.testRunUnit.disabled = unavailable || runningKinds.has("unit");
+    els.testRunUnit.title = unavailable ? "测试服务未就绪" : runningKinds.has("unit") ? "单元测试运行中" : "跑单元测试";
+  }
+  if (els.testRunReal) {
+    els.testRunReal.disabled = unavailable || runningKinds.has("real");
+    els.testRunReal.title = unavailable ? "测试服务未就绪" : runningKinds.has("real") ? "真实模型测试运行中" : "跑真实模型矩阵";
+  }
+  if (els.testRunScenario) {
+    els.testRunScenario.disabled = unavailable || runningKinds.has("scenario");
+    els.testRunScenario.title = unavailable ? "测试服务未就绪" : runningKinds.has("scenario") ? "场景测试运行中" : "跑单个场景";
+  }
+  if (els.testScenario) els.testScenario.disabled = unavailable;
+  const selected = selectedTestRun();
+  if (els.testStopBtn) {
+    els.testStopBtn.hidden = selected?.status !== "running";
+    els.testStopBtn.disabled = unavailable;
+  }
+  if (els.testReturnLive) {
+    els.testReturnLive.hidden = !(
+      testCenterState.liveId &&
+      testCenterState.liveId !== testCenterState.selectedId &&
+      testCenterState.running.has(testCenterState.liveId)
+    );
+  }
+}
+
+function updateTestStatusDom(run) {
+  const status = run?.status ?? "idle";
+  if (els.testStatusBadge) {
+    els.testStatusBadge.dataset.state = status;
+    els.testStatusBadge.textContent = testRunStatusLabel(run);
+  }
+  if (els.testStatusText) {
+    if (!run) els.testStatusText.textContent = "空闲";
+    else if (run.status === "running") {
+      els.testStatusText.textContent = `${testKindLabel(run)} · 运行中 · 已用时 ${formatTestDuration(testRunDuration(run))}`;
+    } else {
+      els.testStatusText.textContent = `${testKindLabel(run)} · ${testRunStatusLabel(run)} · 耗时 ${formatTestDuration(testRunDuration(run))}`;
+    }
+  }
+  if (els.testDuration) {
+    els.testDuration.textContent = run ? `开始 ${fmtTime(run.startedAt)}` : "";
+  }
+  if (els.testExit) {
+    els.testExit.textContent = run && run.exitCode !== undefined ? `退出码 ${run.exitCode}` : "";
+  }
+  if (els.testSummary) {
+    const summary = run?.summary;
+    if (!summary) {
+      els.testSummary.textContent = run?.lineCount ? `${run.lineCount} 行` : "";
+    } else if (summary.tests !== undefined || summary.pass !== undefined || summary.fail !== undefined) {
+      els.testSummary.textContent = `${summary.tests ?? 0} 项 · ${summary.pass ?? 0} pass / ${summary.fail ?? 0} fail`;
+    } else if (summary.scenarios !== undefined) {
+      els.testSummary.textContent = `${summary.scenarios ?? 0} 场景 · ${summary.failed ?? 0} 失败`;
+    } else {
+      els.testSummary.textContent = "";
+    }
+  }
+}
+
+function renderTestStatus() {
+  const run = selectedTestRun();
+  updateTestStatusDom(run);
+  renderTestControls();
+}
+
+function testFailLines(lines) {
+  return (lines ?? []).filter(
+    (line) => line.stream === "stderr" && /^\s*✖/.test(String(line.text ?? "")),
+  );
+}
+
+function renderTestHistory() {
+  if (!els.testHistoryList) return;
+  const runs = testCenterState.runs;
+  const sig = runs
+    .map((run) => [run.id, run.status, run.finishedAt ?? "", run.lineCount ?? ""].join(":"))
+    .join("|") + `|sel:${testCenterState.selectedId ?? ""}`;
+  if (els.testHistoryList.dataset.sig === sig) return;
+  els.testHistoryList.dataset.sig = sig;
+  if (!runs.length) {
+    els.testHistoryList.replaceChildren(emptyNote("还没有测试运行。点上方按钮跑一次。"));
+    return;
+  }
+  els.testHistoryList.replaceChildren(
+    ...runs.slice(0, 20).map((run) => {
+      const active = run.id === testCenterState.selectedId;
+      return h(
+        "button",
+        {
+          type: "button",
+          class: `test-history-item${active ? " is-active" : ""}`,
+          "data-action": "select-test-run",
+          "data-run-id": run.id,
+          title: testKindLabel(run),
+        },
+        h(
+          "span",
+          { class: "test-history-top" },
+          h("span", { text: testKindLabel(run) }),
+          h("span", {
+            class: "test-history-status",
+            "data-state": run.status,
+            text: testRunStatusLabel(run),
+          }),
+        ),
+        h(
+          "span",
+          { class: "test-history-meta" },
+          h("span", { text: fmtTime(run.startedAt) }),
+          h("span", { text: " · " }),
+          h("span", { text: formatTestDuration(testRunDuration(run)) }),
+          run.exitCode !== undefined ? h("span", { text: ` · 退出 ${run.exitCode}` }) : null,
+        ),
+      );
+    }),
+  );
+}
+
+function testLogLineNode(line, index) {
+  const text = String(line.text ?? "");
+  const failed = line.stream === "stderr" && /^\s*✖/.test(text);
+  const node = h(
+    "div",
+    {
+      class: `test-line${failed ? " is-fail-line" : ""}${line.system ? " is-system" : ""}`,
+      "data-stream": line.stream ?? "stdout",
+    },
+    h("span", { class: "test-line-no", text: String(index + 1) }),
+    h("span", { class: "test-line-text", text }),
+  );
+  return node;
+}
+
+function isTestLogNearBottom() {
+  const log = els.testLog;
+  if (!log) return true;
+  return log.scrollHeight - log.scrollTop - log.clientHeight < 48;
+}
+
+function updateTestBackBottom() {
+  if (!els.testBackBottom) return;
+  const log = els.testLog;
+  const overflowing = Boolean(log && log.scrollHeight > log.clientHeight + 8);
+  els.testBackBottom.hidden = testCenterState.autoScroll || !overflowing;
+}
+
+function renderTestLog(force) {
+  const log = els.testLog;
+  if (!log) return;
+  const run = selectedTestRun();
+  const detail = testCenterState.details.get(testCenterState.selectedId);
+  const failBtn = els.testFailBtn;
+  const failLines = testFailLines(detail?.lines);
+  if (failBtn) {
+    failBtn.hidden = !(run && run.status !== "running" && failLines.length > 0);
+    failBtn.textContent = testCenterState.onlyFailures ? "看全部日志" : "查看失败详情";
+    failBtn.classList.toggle("is-active", testCenterState.onlyFailures);
+  }
+  log.classList.toggle("no-line-numbers", !testCenterState.lineNumbers);
+  if (els.testLineNumbers) els.testLineNumbers.checked = testCenterState.lineNumbers;
+
+  const lines = detail?.lines ?? [];
+  if (!detail) {
+    log.replaceChildren();
+    testCenterState.rendered = { runId: "", count: 0, filter: false, lineNumbers: testCenterState.lineNumbers };
+    if (els.testLogHint) {
+      els.testLogHint.textContent = testCenterState.detailLoading ? "读取日志…" : "";
+    }
+    updateTestBackBottom();
+    return;
+  }
+
+  const shouldRebuild =
+    force ||
+    testCenterState.onlyFailures ||
+    testCenterState.rendered.runId !== detail.id ||
+    testCenterState.rendered.filter !== testCenterState.onlyFailures ||
+    testCenterState.rendered.lineNumbers !== testCenterState.lineNumbers ||
+    testCenterState.rendered.count > lines.length;
+
+  const visibleLines = testCenterState.onlyFailures
+    ? lines.filter((line) => line.stream === "stderr" && /^\s*✖/.test(String(line.text ?? "")))
+    : lines;
+  const nearBottom = isTestLogNearBottom();
+
+  if (shouldRebuild) {
+    log.replaceChildren();
+    testCenterState.rendered = {
+      runId: detail.id,
+      count: lines.length,
+      filter: testCenterState.onlyFailures,
+      lineNumbers: testCenterState.lineNumbers,
+    };
+    const fragment = document.createDocumentFragment();
+    for (let index = 0; index < visibleLines.length; index += 1) {
+      const line = visibleLines[index];
+      const sourceIndex = lines.indexOf(line);
+      fragment.appendChild(testLogLineNode(line, sourceIndex >= 0 ? sourceIndex : index));
+    }
+    log.appendChild(fragment);
+    log.scrollTop = log.scrollHeight;
+    testCenterState.autoScroll = true;
+  } else {
+    const start = testCenterState.rendered.count;
+    if (start < lines.length) {
+      const shouldStick = testCenterState.autoScroll || nearBottom;
+      const fragment = document.createDocumentFragment();
+      for (let index = start; index < lines.length; index += 1) {
+        fragment.appendChild(testLogLineNode(lines[index], index));
+      }
+      log.appendChild(fragment);
+      testCenterState.rendered.count = lines.length;
+      if (shouldStick) {
+        log.scrollTop = log.scrollHeight;
+        testCenterState.autoScroll = true;
+      }
+    }
+  }
+  if (els.testLogHint) {
+    const filterText = testCenterState.onlyFailures ? ` · 仅失败行 ${visibleLines.length}` : "";
+    els.testLogHint.textContent = `${lines.length} 行${filterText} · ${testCenterState.autoScroll ? "自动滚动" : "已暂停滚动"} · 最多保留 2000 行`;
+  }
+  updateTestBackBottom();
+}
+
+function scrollTestLogToBottom() {
+  const log = els.testLog;
+  if (!log) return;
+  log.scrollTop = log.scrollHeight;
+  testCenterState.autoScroll = true;
+  updateTestBackBottom();
+  if (els.testLogHint) {
+    const lines = testCenterState.details.get(testCenterState.selectedId)?.lines?.length ?? 0;
+    els.testLogHint.textContent = `${lines} 行 · 自动滚动 · 最多保留 2000 行`;
+  }
+}
 
 // ── 任务 Git（分支 / diff / commit / 回滚） ────────────────────────────
 

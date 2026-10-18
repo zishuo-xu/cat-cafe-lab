@@ -27,6 +27,7 @@ import type { CatPatch, Studio } from "./studio.ts";
 import type { Sandbox } from "../tools/sandbox.ts";
 import type { McpManager, McpInput } from "../mcp/manager.ts";
 import type { WorkspaceManager } from "../workspaces/manager.ts";
+import { TestRunner } from "./test-runner.ts";
 import { listSkills } from "../skills/registry.ts";
 
 export interface HttpDeps {
@@ -47,6 +48,8 @@ export interface HttpDeps {
   mcp?: McpManager;
   /** 工作区管理器；不传则 workspaces 接口返回 503。 */
   workspaces?: WorkspaceManager;
+  /** 测试中心；不传则 tests 接口返回 503。 */
+  tests?: TestRunner;
   /** 前端用来判断「卡住」的阈值；不传按 driver.stallMs / 12s。 */
   stallMs?: number;
 }
@@ -200,6 +203,7 @@ function serveStatic(res: ServerResponse, publicDir: string, pathname: string): 
 
 export function createHttpServer(deps: HttpDeps): Server {
   const { studio, driver, scenarios, settingsApi, sandbox, approvals, tools, mcp, workspaces } = deps;
+  const tests = deps.tests;
   const publicDir = deps.publicDir;
 
   return createServer((req, res) => {
@@ -515,6 +519,82 @@ export function createHttpServer(deps: HttpDeps): Server {
           return;
         }
         json(res, 200, studio.setRoomWorkspace(roomId, workspaceId));
+        return;
+      }
+    }
+
+    if (pathname === "/api/tests/run" && method === "POST") {
+      if (!tests) {
+        fail(res, 503, "test runner not enabled");
+        return;
+      }
+      const body = (await readBody(req)) as {
+        kind?: unknown;
+        scenario?: unknown;
+      };
+      const kind = body.kind;
+      if (kind !== "unit" && kind !== "real" && kind !== "scenario") {
+        fail(res, 400, "kind 只能是 unit / real / scenario");
+        return;
+      }
+      const scenario = typeof body.scenario === "string" ? body.scenario : undefined;
+      try {
+        const run = tests.start(kind, scenario);
+        json(res, 202, {
+          runId: run.id,
+          kind: run.kind,
+          ...(run.scenario ? { scenario: run.scenario } : {}),
+          startedAt: run.startedAt,
+        });
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "cannot start test";
+        // 已经在跑 → 409；其它（没配 key / 未知场景）→ 400。
+        fail(res, message.includes("已经在跑") ? 409 : 400, message);
+      }
+      return;
+    }
+
+    if (pathname === "/api/tests/runs" && method === "GET") {
+      if (!tests) {
+        fail(res, 503, "test runner not enabled");
+        return;
+      }
+      json(res, 200, { runs: tests.list() });
+      return;
+    }
+
+    if (pathname === "/api/tests/stream" && method === "GET") {
+      if (!tests) {
+        fail(res, 503, "test runner not enabled");
+        return;
+      }
+      streamTestEvents(req, res);
+      return;
+    }
+
+    {
+      const testRunMatch = /^\/api\/tests\/runs\/([^/]+)$/.exec(pathname);
+      if (testRunMatch) {
+        if (!tests) {
+          fail(res, 503, "test runner not enabled");
+          return;
+        }
+        const runId = decodeURIComponent(testRunMatch[1] ?? "");
+        const run = tests.get(runId);
+        if (!run) {
+          fail(res, 404, "测试记录不存在");
+          return;
+        }
+        if (method === "GET") {
+          json(res, 200, run);
+          return;
+        }
+        if (method === "DELETE") {
+          const cancelled = tests.cancel(runId);
+          json(res, cancelled ? 200 : 409, cancelled ? { ok: true } : { error: "该测试不在运行中" });
+          return;
+        }
+        fail(res, 405, "method not allowed");
         return;
       }
     }
@@ -902,6 +982,27 @@ export function createHttpServer(deps: HttpDeps): Server {
     }
 
     fail(res, 404, "not found");
+  }
+
+  function streamTestEvents(req: IncomingMessage, res: ServerResponse): void {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+    res.write("retry: 3000\n\n");
+
+    const send = (event: unknown): void => {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    };
+    const unsubscribe = tests?.subscribe(send) ?? (() => undefined);
+    const heartbeat = setInterval(() => res.write(": ping\n\n"), 15000);
+    heartbeat.unref?.();
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
   }
 
   function streamEvents(req: IncomingMessage, res: ServerResponse): void {

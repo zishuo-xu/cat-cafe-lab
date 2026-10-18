@@ -47,6 +47,16 @@
             >
               🙋 <span data-needs-count>0</span> 待批准
             </button>
+            <button
+              type="button"
+              class="pill pill--tests"
+              data-action="open-test-center"
+              data-test-button
+              title="测试中心"
+            >
+              <span class="test-dot" data-test-dot data-state="idle" aria-hidden="true"></span>
+              测试
+            </button>
           </div>
           <button
             type="button"
@@ -116,6 +126,16 @@
             <p class="room-topic" data-room-topic>把需求丢进来，猫猫们会在同一张桌子上把它做出来。</p>
           </div>
           <div class="chat-head-status">
+            <button
+              type="button"
+              class="icon-btn chat-tests"
+              data-action="open-test-center"
+              data-test-button
+              title="测试中心"
+              aria-label="测试中心"
+            >
+              🧪<span class="test-dot chat-test-dot" data-test-dot data-state="idle" aria-hidden="true"></span>
+            </button>
             <button
               type="button"
               class="needs-me"
@@ -1394,6 +1414,121 @@
           <button type="button" class="btn btn--ghost" data-action="close-room-delete">取消</button>
           <button type="button" class="btn btn--danger" data-action="confirm-room-delete" id="room-delete-confirm">
             确认删除
+          </button>
+        </footer>
+      </div>
+    </dialog>
+
+    <!-- ── 测试中心 ───────────────────────────────────────────────── -->
+    <dialog id="test-center-modal" class="test-center-modal" aria-labelledby="test-center-title">
+      <div class="test-center">
+        <header class="test-center-head">
+          <div class="test-center-head-text">
+            <h2 id="test-center-title">测试中心</h2>
+            <p class="test-center-sub">页面内一键跑测试，实时看输出。</p>
+          </div>
+          <span class="test-status-badge" id="test-status-badge" data-state="idle">空闲</span>
+          <button
+            type="button"
+            class="icon-btn"
+            data-action="close-test-center"
+            aria-label="关闭测试中心"
+            id="test-center-close"
+          >
+            ✕
+          </button>
+        </header>
+
+        <div class="test-toolbar">
+          <button type="button" class="btn btn--primary btn--tiny" data-action="run-test-unit" id="test-run-unit">
+            ▶ 跑单元测试
+          </button>
+          <button type="button" class="btn btn--ghost btn--tiny" data-action="run-test-real" id="test-run-real">
+            🧠 跑真实模型矩阵
+          </button>
+          <div class="test-scenario">
+            <select id="test-scenario" aria-label="选择真实模型场景">
+              <option value="basic">basic · 基础流</option>
+              <option value="reject">reject · 审批拒绝</option>
+              <option value="nudge">nudge · 催一下</option>
+              <option value="rooms">rooms · 多房间</option>
+              <option value="concurrent">concurrent · 并发</option>
+              <option value="invalid">invalid · 非法输入</option>
+              <option value="permission">permission · 工具权限</option>
+              <option value="memory">memory · 共享记忆</option>
+              <option value="notools">notools · 关闭工具</option>
+            </select>
+            <button type="button" class="btn btn--ghost btn--tiny" data-action="run-test-scenario" id="test-run-scenario">
+              跑单个场景
+            </button>
+          </div>
+          <button type="button" class="btn btn--danger btn--tiny" data-action="stop-test" id="test-stop-btn" hidden>
+            ■ 停止
+          </button>
+        </div>
+
+        <div class="test-status-row">
+          <span class="test-status-text" id="test-status-text">空闲</span>
+          <span class="test-status-meta" id="test-duration"></span>
+          <span class="test-status-meta" id="test-exit"></span>
+          <span class="test-status-meta" id="test-summary"></span>
+          <button type="button" class="link-btn" data-action="test-return-live" id="test-return-live" hidden>
+            回到运行中
+          </button>
+        </div>
+
+        <p class="form-error" id="test-error" role="alert" hidden></p>
+
+        <div class="test-body">
+          <div class="test-log-wrap">
+            <div class="test-log-toolbar">
+              <label class="test-lines-toggle">
+                <input type="checkbox" id="test-line-numbers" checked />
+                行号
+              </label>
+              <button type="button" class="link-btn" data-action="test-fail-details" id="test-fail-btn" hidden>
+                查看失败详情
+              </button>
+              <span class="test-log-hint" id="test-log-hint"></span>
+            </div>
+            <div id="test-log" class="test-log" role="log" aria-live="polite" aria-relevant="additions"></div>
+            <button type="button" class="test-back-bottom" data-action="test-scroll-bottom" id="test-back-bottom" hidden>
+              ↓ 回到底部
+            </button>
+          </div>
+          <aside class="test-history" aria-label="历史测试运行">
+            <div class="test-history-head">
+              <h3>历史运行</h3>
+              <button type="button" class="icon-btn" data-action="refresh-test-runs" title="刷新历史" aria-label="刷新历史">
+                ↻
+              </button>
+            </div>
+            <div id="test-history-list" class="test-history-list"></div>
+          </aside>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- ── 真实模型测试确认 ─────────────────────────────────────── -->
+    <dialog id="test-real-confirm" class="modal" aria-labelledby="test-real-title">
+      <div class="modal-card">
+        <header class="modal-head">
+          <h2 id="test-real-title">确认真实模型测试</h2>
+          <button type="button" class="icon-btn" data-action="close-test-real-confirm" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub">
+          会用真实模型调用，耗时几分钟，并产生费用。确认服务端已配置真实模型（LLM_BASE_URL / LLM_MODEL / LLM_API_KEY）。
+        </p>
+        <p class="test-real-warning">
+          建议先跑单元测试；真实模型矩阵会跑完整场景，可能几分钟。
+        </p>
+        <p class="form-error" id="test-real-error" role="alert" hidden></p>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-test-real-confirm">取消</button>
+          <button type="button" class="btn btn--primary" data-action="confirm-test-real" id="test-real-confirm-btn">
+            确认，开始跑
           </button>
         </footer>
       </div>

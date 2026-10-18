@@ -6,12 +6,13 @@
 """
 import argparse
 import json
+import os
 import sys
 import time
 import urllib.error
 import urllib.request
 
-BASE = "http://127.0.0.1:4320"
+BASE = os.environ.get("CATCAFE_BASE", "http://127.0.0.1:4320").rstrip("/")
 
 
 def req(method, path, body=None, timeout=30):
@@ -84,8 +85,13 @@ def reject_all():
     return count
 
 
-def run_task(brief, room="room_cafe", scenario=None, timeout=180, auto_approve=True,
+def run_task(brief, room="room_cafe", scenario=None, timeout=420, auto_approve=True,
              auto_nudge=True, auto_reject=False):
+    """跑一个任务直到 done。
+
+    真实推理型模型单任务通常 80~300s（会读很多文件、多次审批），
+    超时默认给到 420s；超时返回 status="timeout" 时会附上当前 stage 方便判断是慢还是卡死。
+    """
     body = {"roomId": room, "brief": brief}
     if scenario:
         body["scenarioId"] = scenario
