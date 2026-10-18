@@ -198,3 +198,80 @@ describe("草稿状态（Studio）", () => {
     }
   });
 });
+
+
+describe("artifact 正文流式", () => {
+  let server: Server;
+  let baseUrl: string;
+  let chunks: string[] = [];
+
+  before(async () => {
+    server = createServer((req, res) => {
+      let raw = "";
+      req.on("data", (c) => (raw += c));
+      req.on("end", () => {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        for (const chunk of chunks) res.write(chunk);
+        res.write("data: [DONE]\n\n");
+        res.end();
+      });
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", () => done()));
+    const address = server.address();
+    if (!address || typeof address !== "object") throw new Error("no port");
+    baseUrl = `http://127.0.0.1:${address.port}/v1`;
+  });
+
+  after(async () => {
+    await new Promise<void>((done) => server.close(() => done()));
+  });
+
+  function sse(content: string, finish?: string): string {
+    return `data: ${JSON.stringify({ choices: [{ delta: { content }, finish_reason: finish ?? null }] })}\n\n`;
+  }
+
+  test("spec 的 body 会作为草稿逐段推送", async () => {
+    chunks = [
+      sse('[{"kind":"artifact","artifact":{"kind":"spec",'),
+      sse('"title":"记住我规格","body":"结论：这不是加个勾选框。\\n'),
+      sse('现状：remember.js 没有 expiresAt。\\n'),
+      sse('本次做：签发时写过期时间。"},'),
+      sse('"text":"规格给了我。"}]'),
+      sse("", "stop"),
+    ];
+    const deltas: string[] = [];
+    const brain = createLlmBrain({ ...SETTINGS, baseUrl }, makeFallback(), { streaming: true });
+    const turns = await brain.think(makeContext((update) => deltas.push(update.text)));
+
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0]?.kind, "artifact");
+    if (turns[0]?.kind === "artifact") {
+      assert.match(turns[0].artifact.body, /expiresAt/);
+    }
+    assert.ok(deltas.length >= 2, JSON.stringify(deltas));
+    assert.ok(
+      deltas.some((text) => text.includes("结论：这不是加个勾选框")),
+      "应推送 artifact body 的内容",
+    );
+    // body 阶段用开头；text 阶段出现在 body 之后，应切换到 text。
+    assert.ok(deltas.some((text) => text.includes("规格给了我")), JSON.stringify(deltas));
+  });
+
+  test("body 未闭合时去掉尾部不完整转义", async () => {
+    // 模拟真实 JSON 流在 " 中间被切断：末尾是一个孤立的反斜杠。
+    const raw =
+      '[{"kind":"artifact","artifact":{"kind":"design","title":"t","body":"第一行\\\\n第二行"}]'.replace(
+        '第二行"',
+        "第二行\\",
+      );
+    chunks = [sse(raw)];
+    const deltas: string[] = [];
+    const brain = createLlmBrain({ ...SETTINGS, baseUrl }, makeFallback(), { streaming: true });
+    await brain.think(makeContext((update) => deltas.push(update.text)));
+    assert.ok(deltas.length >= 1, JSON.stringify(deltas));
+    const last = deltas.at(-1) ?? "";
+    // 尾部不应残留孤立反斜杠
+    assert.ok(!last.endsWith("\\"), JSON.stringify(deltas));
+    assert.match(last, /第一行/);
+  });
+});

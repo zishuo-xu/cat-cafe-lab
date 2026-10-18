@@ -48,7 +48,7 @@ node src/main.ts
 点「＋ 新任务」→ 选「记住我」示例 → 「让猫猫开工」，然后看着就行。
 
 ```bash
-node --test tests/    # 234 个测试（也可以直接在页面上跑）
+node --test tests/    # 236 个测试（也可以直接在页面上跑）
 npx tsc --noEmit      # 类型检查
 ```
 
@@ -365,7 +365,7 @@ node src/main.ts
 | 工具执行 | 开关沙盒工具（写文件 / 跑命令）；关掉后猫只产出文字方案 |
 | 流式输出 | 真实模式下猫的话边生成边出现（默认开） |
 | 审批策略 | auto / commands / all；只对真实模式下模型主动发起的工具生效 |
-| MCP 工具 | 添加/启停/测试/删除 MCP server，工具动态进注册表 |
+| MCP 工具 | 添加/启停/测试/删除 MCP server，工具动态进注册表；仓库自带「猫咖记事本」示例 |
 | 工具与技能 | 每只猫的工具白名单与技能包（技能注入真实模式 prompt） |
 | MCP 鉴权 | stdio 用 env、http 用 headers 传鉴权；值只存本地、绝不回传前端或进日志 |
 | 工作区 | 添加真实目录（默认只读）、读写二次确认、任务分支开关、git 状态/diff/文件浏览 |
@@ -424,6 +424,7 @@ src/workspaces/manager.ts 工作区：目录绑定、只读策略、只读 git �
 src/tools/registry.ts 工具注册表：内置 + MCP
 src/tools/sandbox.ts  沙盒：路径锁根目录、命令白名单、10s 超时
 src/mcp/client.ts     MCP JSON-RPC 客户端（stdio / http）
+examples/mcp/         零依赖示例 server（猫咖记事本）
 src/skills/registry.ts 技能包（注入真实模式 prompt）
 src/engine/driver.ts  每房间串行队列：阶段机 / 路由 / 延迟 / 工具执行 / 故障恢复
 src/agents/           brain：mock（剧本）或 llm（真实模型）

@@ -212,3 +212,45 @@ node --test tests/mcp.test.ts
 | stdio 启动失败 | `command` 是否在 PATH / 是否是绝对路径；`args` 是否完整 |
 | 工具没出现 | server 是否 `enabled`；`tools/list` 是否返回工具；`GET /api/tools` 里看 `source=mcp` |
 | 改了配置没生效 | 确认是 PUT 且该 server 处于启用状态（禁用状态下不会重连，启用时生效） |
+
+
+---
+
+## 内置示例 server
+
+仓库里有几个零依赖的示例，复制到设置里就能用（路径写绝对路径）：
+
+### 1. 猫咖记事本（examples/mcp/notes-server.mjs）
+
+让猫能读写一个本地记事本：
+
+| 工具 | 作用 |
+|---|---|
+| `list_notes` | 列出记事本里的笔记标题 |
+| `read_note { title }` | 读一篇笔记 |
+| `write_note { title, content }` | 写/覆盖一篇笔记 |
+
+在设置 →「MCP 工具」→「添加 MCP Server」：
+
+```json
+{
+  "id": "notes",
+  "name": "猫咖记事本",
+  "transport": "stdio",
+  "command": "node",
+  "args": ["/绝对路径/cat-cafe-lab/examples/mcp/notes-server.mjs"],
+  "risk": "safe"
+}
+```
+
+> 建议显式给 `id`：不给的话服务端会按名字生成（中文名会退化成 `mcp`），
+> 工具名会变成 `mcp__list_notes` 这种看不出归属的形式。
+
+添加后名册里的猫就能在真实模式下使用 `list_notes` / `read_note` / `write_note`。
+数据存在 `examples/mcp/notes.json`（gitignore 之外的演示文件，自己注意别提交私密内容）。
+
+> `risk: "safe"` 表示不需要审批；如果让猫频繁写东西，建议保持默认的 `needs_approval`。
+
+### 2. 自测用 fake server（tests/fixtures/fake-mcp-stdio.mjs）
+
+只用于跑测试（echo / env_echo 等），不建议在日常使用中添加。

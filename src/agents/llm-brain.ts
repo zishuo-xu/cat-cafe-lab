@@ -312,25 +312,46 @@ async function consumeStream(
 /**
  * 从「还没写完的 JSON」里尽量抽出一段可读文本，用于流式预览。
  *
- * 模型输出是 CatTurn[] JSON，我们只想要其中 "text": "..." 的值。
- * 做法：找所有 `"text":"` 之后的内容，取最后一个（通常就是正在写的那句），
- * 处理常见转义，截断到 400 字，并在没有闭合引号时去掉尾巴。
+ * 模型输出是 CatTurn[] JSON。可能正在写两种东西：
+ * 1. 说的话：`"text":"..."`（短，一两句）
+ * 2. 产物正文：`"body":"..."`（长，spec / patch 的正文，往往几百字）
+ *
+ * 做法：找最后一个出现的 `"text":"` 或 `"body":"`，取其后到闭合引号（或流末尾）的内容，
+ * 按长度选择更「正在写」的那个——body 优先（长文本更有预览价值），
+ * 但如果 text 出现在 body 之后，说明模型已经写完 body 在补说明，就用 text。
  */
 function extractVisibleText(raw: string): string {
-  const marker = '"text":"';
-  const index = raw.lastIndexOf(marker);
+  const textIndex = raw.lastIndexOf('"text":"');
+  const bodyIndex = raw.lastIndexOf('"body":"');
+  let marker: string;
+  let index: number;
+  if (bodyIndex < 0) {
+    marker = '"text":"';
+    index = textIndex;
+  } else if (textIndex > bodyIndex) {
+    marker = '"text":"';
+    index = textIndex;
+  } else {
+    marker = '"body":"';
+    index = bodyIndex;
+  }
   if (index < 0) return "";
+
   let rest = raw.slice(index + marker.length);
-  // 还没闭合：去掉末尾可能不完整的转义序列。
   const closed = rest.indexOf('"');
   if (closed >= 0) rest = rest.slice(0, closed);
-  else rest = rest.replace(/\\[a-z]?$/, "");
-  const text = rest
+  let text = rest
     .replace(/\\n/g, "\n")
     .replace(/\\t/g, " ")
     .replace(/\\"/g, '"')
     .replace(/\\\\/g, "\\");
-  return text.slice(-400);
+  if (closed < 0) {
+    // 还没闭合：去转义之后再修剪末尾残留的反斜杠 / 未打完的 \u 序列。
+    // 顺序很重要：`\\\\` 会被还原成 `\\`，所以必须在去转义之后处理。
+    text = text.replace(/\\(?:u[0-9a-fA-F]{0,3})?$/, "");
+  }
+  // 说话用尾部 400 字（像打字）；正文用前 1500 字（正文开头最有用，且能滚动早期内容）。
+  return marker === '"body":"' ? text.slice(0, 1500) : text.slice(-400);
 }
 
 /** 取 finish_reason（用于区分"被截断"与"真的空响应"）。 */
