@@ -99,6 +99,17 @@ type TurnOf<K extends CatTurn["kind"]> = Extract<CatTurn, { kind: K }>;
 type HandoffTurn = TurnOf<"handoff">;
 type ToolTurn = TurnOf<"tool">;
 
+/**
+ * 能否与其他工具并行执行。
+ *
+ * 只读、不需要审批、走沙盒/ MCP 读接口的工具可以并行：
+ * 模型一轮发 4~6 个 read_file 是最常见的形态，串行执行要等 4~6 次 IO。
+ * write_file 会改变后续读的结果，run_command 可能有副作用，都必须串行。
+ */
+function isParallelizableTool(turn: ToolTurn): boolean {
+  return turn.tool === "read_file" || turn.tool === "list_files";
+}
+
 /** 工具没给 label 时的默认人话摘要（前端时间线展示用）。 */
 function defaultToolLabel(tool: ToolTurn["tool"], input: Record<string, unknown>): string {
   switch (tool) {
@@ -435,6 +446,68 @@ export function createDriver(deps: {
         return;
       }
 
+      case "task_action": {
+        const task = studio.getTask(event.taskId);
+        if (!task || task.status === "done") return;
+        const architect = architectOf(studio.state.cats);
+
+        if (event.action === "close") {
+          studio.closeTaskWithReason(task.id, event.note?.trim() || "铲屎官选择收尾");
+          clearStall(task.id);
+          return;
+        }
+
+        if (event.action === "pivot") {
+          // 换方案：解除卡住，把「换方案」作为一次明确的新指令交给主理猫，
+          // 由它重新拆活（必要时换一只猫 / 换一种工具策略）。
+          if (task.status === "stalled") studio.setTaskStatus(task.id, "active");
+          clearStall(task.id);
+          const note = event.note?.trim();
+          studio.appendMessage({
+            roomId: task.roomId,
+            author: "user",
+            kind: "chat",
+            text: note ? `换个方案：${note}` : "换个方案，别再走原来的路子。",
+            mentions: architect ? [architect.id] : [],
+            taskId: task.id,
+          });
+          if (architect) {
+            enqueueWake({
+              roomId: task.roomId,
+              catId: architect.id,
+              taskId: task.id,
+              purpose: "nudge",
+              trigger: {
+                kind: "nudge",
+                roomId: task.roomId,
+                taskId: task.id,
+                text: note ?? "换个方案，别再走原来的路子。",
+              },
+            });
+          }
+          return;
+        }
+
+        // continue：按「催一下」处理，恢复正常推进。
+        if (task.status === "stalled") studio.setTaskStatus(task.id, "active");
+        clearStall(task.id);
+        if (architect) {
+          enqueueWake({
+            roomId: task.roomId,
+            catId: architect.id,
+            taskId: task.id,
+            purpose: "nudge",
+            trigger: {
+              kind: "nudge",
+              roomId: task.roomId,
+              taskId: task.id,
+              text: task.brief,
+            },
+          });
+        }
+        return;
+      }
+
       case "nudge": {
         const task = studio.getTask(event.taskId);
         if (!task) return;
@@ -549,8 +622,32 @@ export function createDriver(deps: {
       toolResults: [],
     };
 
-    for (const turn of turns) {
+    for (let index = 0; index < turns.length; index += 1) {
+      const turn = turns[index]!;
       await wait(turn.delayMs ?? TURN_DELAY_MS);
+
+      // 提速：连续只读工具并行跑（模型常一轮发 4~6 个 read_file）。
+      // 写文件 / 跑命令 / 需要审批的仍然串行，保证因果顺序与审批不打架。
+      if (turn.kind === "tool" && isParallelizableTool(turn)) {
+        const batch: ToolTurn[] = [turn];
+        let next = index + 1;
+        while (next < turns.length) {
+          const candidate = turns[next];
+          if (!candidate || candidate.kind !== "tool" || !isParallelizableTool(candidate)) break;
+          batch.push(candidate);
+          next += 1;
+        }
+        if (batch.length > 1) {
+          const results = await Promise.all(
+            batch.map((item) => runToolTurn(room, cat, task, item)),
+          );
+          for (const result of results) {
+            if (result) applied.toolResults.push(result);
+          }
+          index = next - 1;
+          continue;
+        }
+      }
 
       switch (turn.kind) {
         case "message": {

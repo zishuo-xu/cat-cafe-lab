@@ -1981,3 +1981,119 @@ describe("评审拉锯保护", () => {
     }
   });
 });
+
+
+describe("工具并行执行", () => {
+  test("同一轮的多个 read_file 并行执行（总耗时接近单个）", async () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    const order: string[] = [];
+    const sandbox = {
+      async execute(tool: unknown, input: Record<string, unknown>) {
+        const path = String(input["path"] ?? "");
+        order.push(`start:${path}`);
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        order.push(`end:${path}`);
+        return { status: "ok" as const, output: `content:${path}` };
+      },
+    };
+    let calls = 0;
+    const brain = {
+      mode: "mock" as const,
+      async think() {
+        calls += 1;
+        if (calls > 1) return [{ kind: "message" as const, text: "（后续轮次略）" }];
+        return [
+          { kind: "tool" as const, tool: "read_file", input: { path: "a.js" } },
+          { kind: "tool" as const, tool: "read_file", input: { path: "b.js" } },
+          { kind: "tool" as const, tool: "read_file", input: { path: "c.js" } },
+          { kind: "message" as const, text: "读完了" },
+        ];
+      },
+    };
+    const driver = createDriver({
+      studio,
+      brain: brain as never,
+      wait: () => Promise.resolve(),
+      sandbox,
+      stallMs: 5000,
+    });
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "并行读三个文件",
+        scenarioId: "export_csv",
+      });
+      const started = Date.now();
+      driver.submit({ type: "task_created", roomId: "room_cafe", taskId: task.id });
+      await driver.whenIdle();
+      const elapsed = Date.now() - started;
+
+      // 三个串行要 360ms+；并行应该接近 120ms。
+      assert.ok(elapsed < 320, `并行执行应更快，实际 ${elapsed}ms`);
+      const calls = studio.snapshot().toolCalls;
+      assert.equal(calls.length, 3);
+      assert.ok(calls.every((call) => call.status === "ok"));
+      // 三个 start 都应在任何 end 之前发生（证明真的并发）。
+      const firstEnd = order.indexOf("end:a.js");
+      const startsBeforeEnd = order.slice(0, firstEnd).filter((item) => item.startsWith("start:")).length;
+      assert.equal(startsBeforeEnd, 3, JSON.stringify(order));
+    } finally {
+      studio.close();
+    }
+  });
+
+  test("write_file 与 read_file 不并行（保持因果顺序）", async () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    const order: string[] = [];
+    const sandbox = {
+      async execute(tool: unknown, input: Record<string, unknown>) {
+        order.push(`${String(tool)}:${String(input["path"] ?? "")}`);
+        return { status: "ok" as const, output: "ok" };
+      },
+    };
+    // 金渐层有 write_file 权限；宪宪没有，用金渐层验证顺序。
+    const implementer = CATS.find((cat) => cat.id === "jinjianceng")!;
+    let calls = 0;
+    const brain = {
+      mode: "mock" as const,
+      async think() {
+        calls += 1;
+        if (calls > 1) return [{ kind: "message" as const, text: "（后续轮次略）" }];
+        return [
+          { kind: "tool" as const, tool: "read_file", input: { path: "a.js" } },
+          { kind: "tool" as const, tool: "write_file", input: { path: "a.js", content: "new" } },
+          { kind: "tool" as const, tool: "read_file", input: { path: "a.js" } },
+          { kind: "message" as const, text: "完成" },
+        ];
+      },
+    };
+    const driver = createDriver({
+      studio,
+      brain: brain as never,
+      wait: () => Promise.resolve(),
+      sandbox,
+      stallMs: 5000,
+    });
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "读写交错",
+        scenarioId: "export_csv",
+      });
+      // 直接把 owner 换成金渐层，让第一轮由它执行。
+      studio.updateTaskStage(task.id, "working", implementer.id);
+      studio.setTyping("room_cafe", null);
+      // 直接驱动一次 worker wake：用 nudge 会走 architect，这里改成用 user_message @ 金渐层。
+      driver.submit({
+        type: "user_message",
+        roomId: "room_cafe",
+        text: "@金渐层 动手",
+        mentions: [implementer.id],
+      });
+      await driver.whenIdle();
+      assert.deepEqual(order.slice(0, 3), ["read_file:a.js", "write_file:a.js", "read_file:a.js"]);
+    } finally {
+      studio.close();
+    }
+  });
+});

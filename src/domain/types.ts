@@ -362,8 +362,12 @@ export interface ScenarioWithSource {
 
 // ───────────────────────── 引擎契约 ─────────────────────────
 
+/** 铲屎官对「卡住 / 强制收尾」任务的处理方式。 */
+export type TaskAction = "continue" | "pivot" | "close";
+
 export type EngineEvent =
   | { type: "user_message"; roomId: RoomId; text: string; mentions: CatId[] }
+  | { type: "task_action"; taskId: TaskId; action: TaskAction; note?: string }
   | { type: "task_created"; roomId: RoomId; taskId: TaskId }
   | { type: "nudge"; taskId: TaskId };
 

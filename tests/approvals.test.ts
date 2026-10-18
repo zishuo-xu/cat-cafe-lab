@@ -137,10 +137,100 @@ describe("HTTP /api/tool-calls", () => {
     queue.resolve("call_list", "rejected");
   });
 
+  test("approve 带 remember=true 会记住选择", async () => {
+    const first = queue.request({
+      callId: "call_remember",
+      mode: "commands",
+      tool: "run_command",
+      label: "跑测试",
+      catId: "jinjianceng",
+    });
+    const res = await fetch(`${base}/api/tool-calls/call_remember/approve`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ remember: true }),
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { remembered: boolean };
+    assert.equal(body.remembered, true);
+    assert.equal(await first, "approved");
+
+    // 下一次同猫同工具直接放行，不会出现在 pending 列表。
+    const next = queue.request({
+      callId: "call_remember_2",
+      mode: "commands",
+      tool: "run_command",
+      label: "再跑",
+      catId: "jinjianceng",
+    });
+    assert.equal(await next, "approved");
+    const list = await fetch(`${base}/api/approvals`);
+    const pending = (await list.json()) as { pending: Array<{ callId: string }> };
+    assert.ok(!pending.pending.some((item) => item.callId === "call_remember_2"));
+    queue.clearRemembered();
+  });
+
   test("没有审批队列时 503", async () => {
     const res = await fetch(`${bareBase}/api/tool-calls/x/approve`, { method: "POST" });
     assert.equal(res.status, 503);
     const list = await fetch(`${bareBase}/api/approvals`);
     assert.equal(list.status, 503);
+  });
+});
+
+
+describe("审批记忆与超时", () => {
+  test("remember 后同类审批直接返回，不再挂起", async () => {
+    const queue = new ApprovalQueue();
+    const first = queue.request({
+      callId: "c1",
+      mode: "commands",
+      tool: "run_command",
+      label: "跑测试",
+      catId: "jinjianceng",
+    });
+    assert.equal(queue.remember("c1", "approved"), true);
+    assert.equal(await first, "approved");
+    assert.equal(queue.rememberedCount(), 1);
+
+    // 同猫同工具的第二次请求：立刻返回，不进入等待列表。
+    const second = await queue.request({
+      callId: "c2",
+      mode: "commands",
+      tool: "run_command",
+      label: "再跑一次",
+      catId: "jinjianceng",
+    });
+    assert.equal(second, "approved");
+    assert.equal(queue.list().length, 0);
+
+    // 换一只猫还是要问。
+    const pendingOther = queue.request({
+      callId: "c3",
+      mode: "commands",
+      tool: "run_command",
+      label: "砚砚跑",
+      catId: "yanyan",
+    });
+    assert.equal(queue.list().length, 1);
+    queue.resolve("c3", "rejected");
+    assert.equal(await pendingOther, "rejected");
+  });
+
+  test("clearRemembered 后重新询问", async () => {
+    const queue = new ApprovalQueue();
+    const first = queue.request({ callId: "a", mode: "commands", tool: "run_command", label: "x", catId: "xianxian" });
+    queue.remember("a", "rejected");
+    assert.equal(await first, "rejected");
+    queue.clearRemembered();
+    const pending = queue.request({ callId: "b", mode: "commands", tool: "run_command", label: "y", catId: "xianxian" });
+    assert.equal(queue.list().length, 1);
+    queue.resolve("b", "approved");
+    assert.equal(await pending, "approved");
+  });
+
+  test("remember 未知 callId 返回 false", () => {
+    const queue = new ApprovalQueue();
+    assert.equal(queue.remember("nope", "approved"), false);
   });
 });

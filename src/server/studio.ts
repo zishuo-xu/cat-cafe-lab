@@ -259,6 +259,30 @@ export class Studio {
     return task;
   }
 
+  /** 强制收尾：记录原因，任务置 done。 */
+  closeTaskWithReason(taskId: Task["id"], reason: string): Task {
+    const task = this.requireTask(taskId);
+    if (task.status === "done") return task;
+    this.appendMessage({
+      roomId: task.roomId,
+      author: "system",
+      kind: "system",
+      text: `铲屎官选择收尾：${reason}`,
+      taskId: task.id,
+    });
+    this.finishStep(task.id, task.stage);
+    this.updateTaskStage(task.id, "done", task.owner);
+    this.setTaskStatus(task.id, "done");
+    this.addMemory({
+      kind: "lesson",
+      title: `任务「${task.title}」由铲屎官提前收尾`,
+      body: reason,
+      tags: ["manual-close", "process"],
+      sourceTaskId: task.id,
+    });
+    return task;
+  }
+
   setTaskStatus(taskId: Task["id"], status: Task["status"]): Task {
     const task = this.requireTask(taskId);
     task.status = status;

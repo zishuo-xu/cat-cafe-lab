@@ -696,12 +696,21 @@ export function createHttpServer(deps: HttpDeps): Server {
           return;
         }
         const callId = decodeURIComponent(approvalMatch[1] ?? "");
+        const body = (await readBody(req)) as { remember?: unknown };
         const decision = approvalMatch[2] === "approve" ? "approved" : "rejected";
-        if (!approvals.resolve(callId, decision)) {
+        const queue = approvals as ApprovalGate & {
+          remember?: (id: string, value: typeof decision) => boolean;
+        };
+        // remember=true：同一只猫 + 同一工具后续不再询问。
+        const handled =
+          body.remember === true && queue.remember
+            ? queue.remember(callId, decision)
+            : approvals.resolve(callId, decision);
+        if (!handled) {
           fail(res, 404, "没有等待中的审批（可能已经处理过）");
           return;
         }
-        json(res, 200, { ok: true, decision });
+        json(res, 200, { ok: true, decision, remembered: body.remember === true });
         return;
       }
     }
@@ -959,6 +968,28 @@ export function createHttpServer(deps: HttpDeps): Server {
         }
 
         fail(res, 405, "method not allowed");
+        return;
+      }
+    }
+
+    {
+      const actionMatch = /^\/api\/tasks\/([^/]+)\/action$/.exec(pathname);
+      if (actionMatch && method === "POST") {
+        const taskId = decodeURIComponent(actionMatch[1] ?? "") as TaskId;
+        const task = studio.getTask(taskId);
+        if (!task) {
+          fail(res, 404, "任务不存在");
+          return;
+        }
+        const body = (await readBody(req)) as { action?: unknown; note?: unknown };
+        const action = body.action;
+        if (action !== "continue" && action !== "pivot" && action !== "close") {
+          fail(res, 400, "action 只能是 continue / pivot / close");
+          return;
+        }
+        const note = typeof body.note === "string" ? body.note.slice(0, 500) : undefined;
+        driver.submit({ type: "task_action", taskId, action, ...(note ? { note } : {}) });
+        json(res, 202, { ok: true, action });
         return;
       }
     }
