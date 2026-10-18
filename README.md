@@ -48,7 +48,7 @@ node src/main.ts
 点「＋ 新任务」→ 选「记住我」示例 → 「让猫猫开工」，然后看着就行。
 
 ```bash
-node --test tests/    # 195 个测试
+node --test tests/    # 201 个测试
 npx tsc --noEmit      # 类型检查
 ```
 
@@ -137,8 +137,10 @@ run_command node --test ...      ✓ exit 0（砚砚放行）
 
 ![待审批的工具调用](docs/images/approval.png)
 
-> 真实模型效果取决于 provider 是否能稳定输出 JSON 数组；当前用本地假端点端到端验证过完整链路，
-> 失败会自动降级回演出模式。真机接真实 provider 时，建议先用低风险任务试。
+> **已用真实 provider 验证**：DeepSeek `deepseek-flash` 下 A/B/C 机制全部跑通，
+> 并修复了 6 个只有真实模型才会暴露的问题（推理 token 截断、JSON 尾随文字、
+> intake 阶段工具循环、沙盒参数限制未告知、工具失败无上限、排队误判卡住）。
+> 详见 [真实模型测试报告](docs/real-model-test-report.md)。
 
 ---
 
@@ -405,8 +407,10 @@ cat-cafe-lab/
 │   ├── agents/        personas.ts、scenarios.ts、mock-brain.ts、llm-brain.ts
 │   └── main.ts
 ├── public/            index.html、app.js、styles.css、avatars.js
-├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / workspaces / task-git / rooms / mcp / smoke（195 个）
-├── docs/              architecture.md、llm.md、mcp.md、real-model.md、images/
+├── tools/             probe.py、matrix.py（真实模型测试驱动）
+├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / workspaces / task-git / rooms / mcp / smoke（201 个）
+├── docs/              architecture.md、llm.md、mcp.md、real-model.md、
+│                      real-model-test-report.md、images/
 ├── data/              studio.json、settings.json、workspaces.json、mcp.json、workspace/（gitignore）
 └── PLAN.md            设计与分工记录
 ```

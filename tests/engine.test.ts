@@ -4,7 +4,7 @@
  */
 
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { describe } from "node:test";
 
 import { CATS, SCENARIOS } from "../src/agents/personas.ts";
 import type {
@@ -27,6 +27,7 @@ import type {
   ToolRunResult,
   TurnContext,
 } from "../src/domain/types.ts";
+import { createMockBrain } from "../src/agents/mock-brain.ts";
 import { createDriver } from "../src/engine/driver.ts";
 import {
   handoffMentions,
@@ -1841,4 +1842,43 @@ test("resolveSkill：cat.skills 里的自定义技能会被解析进 TurnContext
     ["custom-deploy"],
   );
   assert.equal(call.skills[0]?.prompt, customSkill.prompt);
+});
+
+
+describe("同房间并发任务的 stall 判定", () => {
+  test("后一个任务排队等待时不该被误标 stalled", async () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    const brain = createMockBrain(SCENARIOS);
+    const driver = createDriver({
+      studio,
+      brain,
+      wait: (ms) => new Promise((resolve) => setTimeout(resolve, Math.min(ms, 20))),
+      stallMs: 120,
+    });
+    try {
+      const first = studio.createTask({
+        roomId: "room_cafe",
+        brief: "第一个任务：写 add 函数",
+        // export_csv 没有埋 missed_mention 故障，适合验证「排队不应被判卡住」。
+        scenarioId: "export_csv",
+      });
+      const second = studio.createTask({
+        roomId: "room_cafe",
+        brief: "第二个任务：写 sub 函数",
+        scenarioId: "export_csv",
+      });
+      driver.submit({ type: "task_created", roomId: "room_cafe", taskId: first.id });
+      driver.submit({ type: "task_created", roomId: "room_cafe", taskId: second.id });
+
+      // 等到超过 stallMs 若干倍，两个任务都应该在推进，而不是被判 stalled。
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      const tasks = studio.snapshot().tasks;
+      const stalled = tasks.filter((task) => task.status === "stalled");
+      assert.equal(stalled.length, 0, `不该有任务被误标 stalled，实际 ${JSON.stringify(tasks.map((t) => [t.stage, t.status]))}`);
+      // 至少有一个任务已经推进出 intake。
+      assert.ok(tasks.some((task) => task.stage !== "intake"), JSON.stringify(tasks.map((t) => t.stage)));
+    } finally {
+      studio.close();
+    }
+  });
 });

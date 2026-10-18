@@ -994,9 +994,15 @@ describe("llm-brain · 动态工具目录与技能注入", () => {
     assert.match(system, /source=mcp/);
     assert.match(system, /server=github/);
     assert.match(system, /列出指定仓库的 issue/);
-    // 目录里没有内置工具，就不要出现它们。
-    assert.ok(!system.includes("read_file"));
-    assert.ok(!system.includes("write_file"));
+    // 目录里没有内置工具：不要出现在【工具目录】列表里。
+    // 注意：阶段纪律段会提到 read_file/write_file 这些工具名（"working/revising 才允许"），
+    // 那不是目录，所以只断言目录行（以 "- " 开头、含 "｜"）里不出现内置工具。
+    const toolLines = system
+      .split("\n")
+      .filter((line) => line.startsWith("- ") && line.includes("｜"));
+    assert.ok(toolLines.length >= 2);
+    assert.ok(!toolLines.some((line) => line.includes("read_file")));
+    assert.ok(!toolLines.some((line) => line.includes("write_file")));
   });
 
   test("目录外的工具 turn 被丢弃，MCP 工具 turn 保留且 input 原样透传", async () => {
@@ -1104,5 +1110,128 @@ describe("llm-brain · 动态工具目录与技能注入", () => {
   test("ctx.skills 为空时不出现技能段", async () => {
     const { system } = await runOnce(makeContext({ skills: [] }));
     assert.ok(!system.includes("【你挂载的技能】"));
+  });
+});
+
+
+describe("reasoning 型模型的 token 预算", () => {
+  function makeThinkingCtx(): TurnContext {
+    const cat = CATS.find((c) => c.id === "xianxian")!;
+    return {
+      cat,
+      room: { id: "room_cafe", name: "猫咖", topic: "", catIds: CATS.map((c) => c.id), createdAt: 0 },
+      task: null,
+      trigger: { kind: "task_created", roomId: "room_cafe" },
+      recentMessages: [],
+      memory: [],
+      handoffs: [],
+      artifacts: [],
+      recentToolResults: [],
+      availableTools: BUILTIN_TOOLS,
+      skills: [],
+      scenario: null,
+    };
+  }
+
+  test("被 max_tokens 截断时用更大预算重试，成功后不降级", async () => {
+    const requests: Array<{ max_tokens: number }> = [];
+    let call = 0;
+    const fake = (async (_url: string, init: { body?: string }) => {
+      requests.push(JSON.parse(String(init.body)) as { max_tokens: number });
+      call += 1;
+      const payload =
+        call === 1
+          ? {
+              choices: [{ message: { role: "assistant", content: "" }, finish_reason: "length" }],
+              usage: { completion_tokens_details: { reasoning_tokens: 4000 } },
+            }
+          : {
+              choices: [
+                {
+                  message: {
+                    role: "assistant",
+                    content: JSON.stringify([{ kind: "message", text: "重试成功" }]),
+                  },
+                  finish_reason: "stop",
+                },
+              ],
+            };
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+
+    const brain = createLlmBrain(
+      { baseUrl: "https://example.test/v1", model: "reasoning-model", apiKey: "k", temperature: 0.7 },
+      makeFallback().brain,
+      { fetchImpl: fake },
+    );
+    const turns = await brain.think(makeThinkingCtx());
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0]?.kind, "message");
+    assert.equal(requests.length, 2);
+    assert.ok((requests[1]?.max_tokens ?? 0) > (requests[0]?.max_tokens ?? 0));
+  });
+
+  test("连续两次截断后降级 fallback，并说明原因", async () => {
+    const warns: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warns.push(args.join(" "));
+    try {
+      const fake = (async () =>
+        new Response(
+          JSON.stringify({
+            choices: [{ message: { role: "assistant", content: "" }, finish_reason: "length" }],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        )) as unknown as typeof fetch;
+
+      const brain = createLlmBrain(
+        { baseUrl: "https://example.test/v1", model: "m", apiKey: "k", temperature: 0.7 },
+        makeFallback().brain,
+        { fetchImpl: fake },
+      );
+      const turns = await brain.think(makeThinkingCtx());
+      assert.ok(turns.length >= 1, "应降级到 fallback");
+      assert.ok(warns.some((line) => line.includes("截断")), warns.join("\n"));
+    } finally {
+      console.warn = originalWarn;
+    }
+  });
+});
+
+
+describe("真实模型的输出噪声容错", () => {
+  test("JSON 数组后面跟一句人话仍能解析", async () => {
+    const content =
+      '[{"kind":"tool","tool":"read_file","input":{"path":"package.json"}}] 能跑，但我知道有个坑：先红再绿。';
+    const { system } = { system: "" };
+    void system;
+    const ctx = makeContext({ trigger: { kind: "user_message", roomId: "room_cafe", text: "hi" } });
+    const turns = parseTurns(content, ctx);
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0]?.kind, "tool");
+  });
+
+  test("数组前面有解说、fenced 里也有尾巴：都能救回来", () => {
+    const ctx = makeContext();
+    const samples = [
+      '我先说结论，再拆：[{"kind":"message","text":"好"}]',
+      '```json\n[{"kind":"message","text":"好"}]\n```',
+      '```json\n[{"kind":"message","text":"好"}]\n```\n以上是我的判断。',
+    ];
+    for (const sample of samples) {
+      const turns = parseTurns(sample, ctx);
+      assert.equal(turns.length, 1, sample.slice(0, 40));
+      assert.equal(turns[0]?.kind, "message");
+    }
+  });
+
+  test("数组内部含 ] 字符的字符串不会被截断", () => {
+    const ctx = makeContext();
+    const turns = parseTurns('[{"kind":"message","text":"数组 arr[0] 要小心 ]"}]', ctx);
+    assert.equal(turns.length, 1);
+    assert.match((turns[0] as { text: string }).text, /arr\[0\]/);
   });
 });

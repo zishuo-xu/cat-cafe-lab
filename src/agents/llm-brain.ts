@@ -35,8 +35,16 @@ import type {
 
 /** 默认请求超时：20s。真实模型偶尔慢，再久就不如先让猫猫动起来。 */
 export const DEFAULT_TIMEOUT_MS = 20_000;
-/** 默认 max_tokens：一轮最多 3~4 个 turn（含工具调用），1600 足够。 */
-export const DEFAULT_MAX_TOKENS = 1600;
+/**
+ * 默认 max_tokens。
+ *
+ * 推理型模型（如 deepseek-flash）会先产生 reasoning_content，思考 token 也计入
+ * completion budget：实测一轮 spec 已消耗 1268 个 reasoning token，1600 会直接截断。
+ * 这里给足余量；若仍被截断，会在响应处理里自动用更大的预算重试一次。
+ */
+export const DEFAULT_MAX_TOKENS = 4096;
+/** 被 max_tokens 截断时的重试上限。 */
+const ESCALATED_MAX_TOKENS = 8192;
 /** 一次最多接受的 turn 数，防止模型刷屏。 */
 export const MAX_TURNS = 6;
 /** delayMs 上限，防止模型给出离谱的停顿把演出拖死。 */
@@ -86,7 +94,7 @@ export function createLlmBrain(
 ): CatBrain {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const timeoutMs = positiveInt(options.timeoutMs, DEFAULT_TIMEOUT_MS);
-  const maxTokens = positiveInt(options.maxTokens, DEFAULT_MAX_TOKENS);
+  let maxTokens = positiveInt(options.maxTokens, DEFAULT_MAX_TOKENS);
   const endpoint = `${settings.baseUrl.trim().replace(/\/+$/, "")}/chat/completions`;
   const globalModel = settings.model.trim();
   const globalTemperature = clamp(
@@ -123,65 +131,106 @@ export function createLlmBrain(
       if (!endpoint.startsWith("http")) return downgrade("LLM_BASE_URL 缺失或非法");
       if (!model) return downgrade("LLM_MODEL 缺失");
 
-      const body = JSON.stringify({
-        model,
-        temperature,
-        max_tokens: maxTokens,
-        stream: false,
-        messages: [
-          { role: "system", content: buildSystemPrompt(ctx, model) },
-          { role: "user", content: buildUserPrompt(ctx) },
-        ],
-      });
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-      timer.unref?.();
-
-      try {
-        const response = await fetchImpl(endpoint, {
-          method: "POST",
-          headers,
-          body,
-          signal: controller.signal,
+      // 推理型模型的思考链也消耗 completion budget：被截断时用更大预算重试一次，
+      // 仍失败才降级到 mock。retried 是每只猫每次 think 的状态。
+      let retried = false;
+      let attemptTokens = maxTokens;
+      for (;;) {
+        const body = JSON.stringify({
+          model,
+          temperature,
+          max_tokens: attemptTokens,
+          stream: false,
+          messages: [
+            { role: "system", content: buildSystemPrompt(ctx, model) },
+            { role: "user", content: buildUserPrompt(ctx) },
+          ],
         });
 
-        if (!response.ok) {
-          // 不读 body（可能很大，也可能回显敏感内容），直接释放连接。
-          void response.body?.cancel().catch(() => {});
-          return await downgrade(`HTTP ${response.status}`);
-        }
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        timer.unref?.();
 
-        let payload: unknown;
         try {
-          payload = await response.json();
-        } catch {
-          return await downgrade("响应不是合法 JSON envelope");
-        }
+          const response = await fetchImpl(endpoint, {
+            method: "POST",
+            headers,
+            body,
+            signal: controller.signal,
+          });
 
-        const content = extractContent(payload);
-        if (content === null) {
-          return await downgrade("响应缺少 choices[0].message.content");
-        }
+          if (!response.ok) {
+            // 不读 body（可能很大，也可能回显敏感内容），直接释放连接。
+            void response.body?.cancel().catch(() => {});
+            return await downgrade(`HTTP ${response.status}`);
+          }
 
-        const turns = parseTurns(content, ctx);
-        if (turns.length === 0) {
-          return await downgrade("模型输出不是可用的 CatTurn[]");
+          let payload: unknown;
+          try {
+            payload = await response.json();
+          } catch {
+            return await downgrade("响应不是合法 JSON envelope");
+          }
+
+          const content = extractContent(payload);
+          const finish = finishReasonOf(payload);
+          if (finish === "length" && !retried) {
+            retried = true;
+            attemptTokens = Math.max(attemptTokens, ESCALATED_MAX_TOKENS);
+            warn(
+              `输出被 max_tokens=${maxTokens} 截断（reasoning 型模型会先消耗思考链），用 ${attemptTokens} 重试一次`,
+            );
+            continue;
+          }
+          if (content === null) {
+            if (finish === "length") {
+              return await downgrade(
+                `模型输出连续两次被 max_tokens 截断（reasoning 型模型会先消耗思考链），当前 max_tokens=${attemptTokens}`,
+              );
+            }
+            return await downgrade("响应缺少 choices[0].message.content");
+          }
+          if (finish === "length") {
+            // 重试后仍被截断：截断的 JSON 解析不出完整 turn，直接给出明确原因。
+            return await downgrade(
+              `模型输出被 max_tokens=${attemptTokens} 截断（reasoning 型模型），JSON 不完整`,
+            );
+          }
+
+          const turns = parseTurns(content, ctx);
+          if (turns.length === 0) {
+            // 排查用：把模型原文的前 300 字打出来（已 scrub），否则只知道"解析失败"。
+            const preview = content.replace(/\s+/g, " ").slice(0, 300);
+            return await downgrade(
+              `模型输出不是可用的 CatTurn[]（原文前 300 字：${preview}）`,
+            );
+          }
+          return turns;
+        } catch (err) {
+          const reason = controller.signal.aborted
+            ? `请求超时 ${timeoutMs}ms`
+            : `网络错误：${errorMessage(err)}`;
+          return await downgrade(reason);
+        } finally {
+          clearTimeout(timer);
         }
-        return turns;
-      } catch (err) {
-        const reason = controller.signal.aborted
-          ? `请求超时 ${timeoutMs}ms`
-          : `网络错误：${errorMessage(err)}`;
-        return await downgrade(reason);
-      } finally {
-        clearTimeout(timer);
       }
     },
   };
 }
 
 // ───────────────────────── 响应解析 ─────────────────────────
+
+/** 取 finish_reason（用于区分"被截断"与"真的空响应"）。 */
+function finishReasonOf(payload: unknown): string | null {
+  if (!isRecord(payload)) return null;
+  const choices = payload.choices;
+  if (!Array.isArray(choices) || choices.length === 0) return null;
+  const first = choices[0];
+  if (!isRecord(first)) return null;
+  const reason = first.finish_reason;
+  return typeof reason === "string" ? reason : null;
+}
 
 /** 从 OpenAI 兼容响应里取出模型文本；无法取出时返回 null。 */
 function extractContent(payload: unknown): string | null {
@@ -214,13 +263,14 @@ function extractJsonArray(content: string): string | null {
   if (!text) return null;
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text);
   if (fenced?.[1]) text = fenced[1].trim();
-  if (!text.startsWith("[")) {
-    const start = text.indexOf("[");
-    const end = text.lastIndexOf("]");
-    if (start < 0 || end <= start) return null;
-    text = text.slice(start, end + 1);
-  }
-  return text;
+
+  // 真实模型经常在 JSON 数组前后加一句人话（"我先说结论…" / "能跑，但我知道有个坑…"），
+  // 甚至 fenced 里也带尾巴。统一按「第一个 [ 到最后一个 ]」切片，前后解说都丢掉。
+  // 只在整个响应本身就是数组时才直接返回，避免把数组内部的括号当边界。
+  const start = text.indexOf("[");
+  const end = text.lastIndexOf("]");
+  if (start < 0 || end <= start) return null;
+  return text.slice(start, end + 1);
 }
 
 /**
@@ -659,11 +709,20 @@ function buildSystemPrompt(ctx: TurnContext, model: string): string {
   if (availableTools.length > 0) {
     sections.push(
       "",
+      "阶段纪律（很重要）：",
+      "- intake（接需求）/ planning（拆解规划）：不要读代码、不要跑命令；项目结构不清时最多 list_files 一次，" +
+        "然后立刻交付「复述需求 + 风险 + 拆活 + 交接卡」。",
+      "- working / revising：才允许 read_file / write_file / run_command，并且先跑测试拿证据。",
+      "- reviewing：先跑测试或读 diff 作为证据，再给 verdict。",
+      "",
       "工具使用纪律：",
       '- 一轮可以同时请求多个工具，会按数组顺序执行；执行完会用 trigger.kind="tool_result" 把回执再发给你一次。',
       "- 工具调用最多连续 3 轮，之后必须给出结论或交接，不要无限试探。",
       "- 收到 status=rejected 时不要重复申请同一个命令 / 同一个写入；换方案，或直接向铲屎官说明被拒原因与替代做法。",
       "- 读文件、看目录这类低风险操作尽量一轮批量做完，不要一轮一个。",
+      "- run_command 的参数限制：每个 ≤80 字、不含空格/../绝对路径、最多 10 个、不支持 shell 管道与重定向。" +
+        "读文件一律用 read_file；不要用 `node -e \"...\"` 之类长内联脚本去读或改文件。",
+      "- 同一类操作连续失败两次就停下：说明限制或方案有问题，改用别的工具或直接向铲屎官说明，不要无限重试。",
     );
   }
 

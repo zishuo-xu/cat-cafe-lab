@@ -67,8 +67,25 @@ const THINK_DELAY_MS = 600;
 const TURN_DELAY_MS = 220;
 /** 真实模式下工具回执 → 再推理的最大回喂轮数（不含首轮）。 */
 const MAX_TOOL_ROUNDS = 3;
+/**
+ * intake / planning 阶段的工具回喂上限。
+ *
+ * 这两个阶段的职责是「复述需求 + 拆活 + 发交接卡」，不是读代码。真实模型（推理型）
+ * 容易在 intake 里连续 list_files / read_file 探索，把 3 轮回喂全部用光，最后因
+ * max_tokens 截断降级，任务卡在 intake。这里给这两个阶段留 1 轮回喂：够它确认
+ * 项目结构，不够它把任务变成「读代码」。
+ */
+const MAX_EXPLORE_ROUNDS = 1;
 /** TurnContext.recentToolResults 保留的最近条数。 */
 const RECENT_TOOL_RESULTS = 8;
+/**
+ * 同一轮 wake 里连续工具失败（error / rejected）的容忍次数。
+ *
+ * 真实模型遇到沙盒限制（参数过长、路径非法）会反复换写法重试：实测一个任务里
+ * 出现 40 次工具调用、10 次 pending 审批。连续失败到阈值就停止回喂，让模型
+ * 基于已有信息收尾，而不是继续消耗预算。
+ */
+const MAX_CONSECUTIVE_TOOL_FAILURES = 3;
 
 type TurnOf<K extends CatTurn["kind"]> = Extract<CatTurn, { kind: K }>;
 type HandoffTurn = TurnOf<"handoff">;
@@ -195,6 +212,17 @@ function toRunResult(callId: string, tool: ToolName, result: ToolResult): ToolRu
   return runResult;
 }
 
+/** 更新连续失败计数：本轮有成功就归零，否则累加失败数。 */
+function updateFailureStreak(
+  current: number,
+  results: Array<{ status: string }>,
+): number {
+  if (results.length === 0) return current;
+  const succeeded = results.some((result) => result.status === "ok");
+  if (succeeded) return 0;
+  return current + results.length;
+}
+
 /** 执行工具；SandboxRunner / ToolRegistry 约定不抛，注入实现万一抛了也记成 error。 */
 async function executeSafely(runner: ToolExecutor, turn: ToolTurn): Promise<ToolResult> {
   try {
@@ -313,11 +341,19 @@ export function createDriver(deps: {
   const idleWaiters: Array<() => void> = [];
   /** 未完成的队列任务数（含正在跑的和已排队但还没跑的）。 */
   let pending = 0;
+  /**
+   * roomId → 该房间还有多少个 wake 在跑或排队。
+   *
+   * stall watchdog 需要它：同房间两个任务排队时，后一个任务只是在等前一个跑完，
+   * 不是真的卡住。没有这个判断会把「排队等待」误标成 stalled（实测并发任务全被误伤）。
+   */
+  const roomPending = new Map<RoomId, number>();
 
   // ── 串行队列 ──────────────────────────────────────────
 
   function enqueue(roomId: RoomId, job: () => Promise<void>): void {
     pending += 1;
+    roomPending.set(roomId, (roomPending.get(roomId) ?? 0) + 1);
     const previous = queues.get(roomId) ?? Promise.resolve();
     const next = previous
       .then(job)
@@ -326,6 +362,9 @@ export function createDriver(deps: {
       })
       .finally(() => {
         pending -= 1;
+        const left = (roomPending.get(roomId) ?? 1) - 1;
+        if (left <= 0) roomPending.delete(roomId);
+        else roomPending.set(roomId, left);
         if (pending > 0) return;
         pending = 0;
         const waiters = idleWaiters.splice(0, idleWaiters.length);
@@ -431,6 +470,7 @@ export function createDriver(deps: {
       };
       let trigger = wake.trigger;
       let rounds = 0;
+      let consecutiveFailures = 0;
 
       // 首轮 + 最多 MAX_TOOL_ROUNDS 次「工具回执 → 再推理」的 ReAct 循环。
       // 工具轮本身不推进 stage；回喂轮里的 handoff/review/decision 会在循环结束后
@@ -447,10 +487,25 @@ export function createDriver(deps: {
         const applied = await applyTurns(room, cat, task, turns);
         mergeApplied(merged, applied);
 
+        const roundCap =
+          task && (task.stage === "intake" || task.stage === "planning")
+            ? MAX_EXPLORE_ROUNDS
+            : MAX_TOOL_ROUNDS;
+        consecutiveFailures = updateFailureStreak(consecutiveFailures, applied.toolResults);
         const canReact =
           brain.mode === "llm" &&
           applied.toolResults.length > 0 &&
-          rounds < MAX_TOOL_ROUNDS;
+          rounds < roundCap &&
+          consecutiveFailures < MAX_CONSECUTIVE_TOOL_FAILURES;
+        if (
+          brain.mode === "llm" &&
+          applied.toolResults.length > 0 &&
+          consecutiveFailures >= MAX_CONSECUTIVE_TOOL_FAILURES
+        ) {
+          console.warn(
+            `[engine] 工具连续失败 ${consecutiveFailures} 次（猫=${cat.id}），停止回喂，让模型基于已有信息收尾`,
+          );
+        }
         if (!canReact) break;
 
         rounds += 1;
@@ -1147,7 +1202,13 @@ export function createDriver(deps: {
     runtime.stallTimer = setTimeout(() => {
       runtime.stallTimer = null;
       const current = studio.getTask(taskId);
-      if (current?.status === "active") studio.setTaskStatus(taskId, "stalled");
+      if (!current || current.status !== "active") return;
+      // 房间队列里还有活（别的任务在跑 / 自己的 wake 在排队）就不算卡住，重新计时。
+      if ((roomPending.get(current.roomId) ?? 0) > 0) {
+        scheduleStall(taskId);
+        return;
+      }
+      studio.setTaskStatus(taskId, "stalled");
     }, stallMs);
     runtime.stallTimer.unref?.();
   }

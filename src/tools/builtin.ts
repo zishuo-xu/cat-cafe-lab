@@ -11,7 +11,8 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   {
     name: "read_file",
     title: "读取文件",
-    description: "读取沙盒内某个文件的内容（相对路径）。",
+    description:
+      "读取沙盒内某个文件的内容（相对路径，≤200 字）。读文件用这个，不要用 run_command 拼 node -e。",
     inputSchema: {
       type: "object",
       properties: { path: { type: "string", description: "相对沙盒根目录的路径" } },
@@ -46,12 +47,21 @@ export const BUILTIN_TOOLS: ToolDefinition[] = [
   {
     name: "run_command",
     title: "运行命令",
-    description: "在沙盒根目录运行 node / npm 命令（不经过 shell，10 秒超时）。",
+    description:
+      "在沙盒根目录运行 node / npm 命令（不经过 shell，10 秒超时，输出截断到 4000 字）。" +
+      "限制：每个参数 ≤80 字、不含空格与 ..、不能是绝对路径、最多 10 个参数；不支持 shell 语法（管道/重定向/引号）。" +
+      "读文件请用 read_file，不要用 node -e 拼一段读取代码。",
     inputSchema: {
       type: "object",
       properties: {
         cmd: { type: "string", enum: ["node", "npm"] },
-        args: { type: "array", items: { type: "string" } },
+        args: {
+          type: "array",
+          items: {
+            type: "string",
+            description: "单个参数，≤80 字，不含空格 / .. / 绝对路径",
+          },
+        },
       },
       required: ["cmd"],
     },
