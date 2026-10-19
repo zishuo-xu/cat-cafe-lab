@@ -934,6 +934,34 @@ function resolveTemperature(ctx: TurnContext, globalTemperature: number): number
   return globalTemperature;
 }
 
+export /**
+ * 「你的近期经历」：把这只猫跨任务的连续性写进 prompt。
+ *
+ * 对应 Cat Café 的成功标准之一——「任何一只猫新开窗口，5 分钟内能进入状态」。
+ * 内容克制：最近 5 个任务 + 3 条自己的教训，避免 prompt 膨胀。
+ */
+function renderSession(session: TurnContext["session"]): string | null {
+  if (!session) return null;
+  const episodes = session.episodes.slice(0, 5);
+  const lessons = session.lessons.slice(0, 3);
+  if (episodes.length === 0 && lessons.length === 0) return null;
+
+  const lines: string[] = ["【你的近期经历】"];
+  if (episodes.length > 0) {
+    lines.push("你最近参与过的任务（新的在前）：");
+    for (const episode of episodes) {
+      const mark = episode.outcome === "done" ? "完成" : episode.outcome === "abandoned" ? "中止" : "未完成";
+      lines.push(`- [${mark}] ${episode.title}：${episode.summary}`);
+    }
+  }
+  if (lessons.length > 0) {
+    lines.push("你自己总结过的教训：");
+    for (const lesson of lessons) lines.push(`- ${lesson.title}：${lesson.body.slice(0, 120)}`);
+  }
+  lines.push("如果这次需求跟上面某个任务相关，主动提一句你再做；不相关就忽略。");
+  return lines.join("\n");
+}
+
 export function buildSystemPrompt(ctx: TurnContext, model: string): string {
   const { cat, room, task, availableTools, skills } = ctx;
   const selfId = cat.id;
@@ -951,6 +979,8 @@ export function buildSystemPrompt(ctx: TurnContext, model: string): string {
       ].join("\n")
     : "【当前任务】没有进行中的任务，你只是在房间里聊天。";
 
+  const sessionBlock = renderSession(ctx.session);
+
   const sections: string[] = [
     `你是「${cat.name}」（${cat.species}），猫咖里的${ROLE_LABEL[cat.role] ?? cat.title}。`,
     `性格：${cat.persona}`,
@@ -960,6 +990,7 @@ export function buildSystemPrompt(ctx: TurnContext, model: string): string {
     `你自己的 catId 是 ${selfId}。房间里其他猫的 catId：${others.join("、") || "（无）"}。`,
     "",
     taskBlock,
+    ...(sessionBlock ? ["", sessionBlock] : []),
     "",
     "【输出格式 · 必须严格遵守】",
     "只输出一个 JSON 数组，不要 markdown 代码围栏，不要任何解释文字。",

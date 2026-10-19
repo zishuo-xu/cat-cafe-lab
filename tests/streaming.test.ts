@@ -55,6 +55,7 @@ function makeContext(onDelta?: (update: DeltaUpdate) => void): TurnContext {
     recentToolResults: [],
     availableTools: BUILTIN_TOOLS,
     skills: [],
+    session: null,
     scenario: null,
     ...(onDelta ? { onDelta } : {}),
   };

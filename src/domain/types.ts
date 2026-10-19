@@ -207,6 +207,35 @@ export interface MemoryEntry {
 
 export type BrainMode = "mock" | "llm";
 
+/**
+ * 每只猫的「近期经历」：跨任务的连续记忆。
+ *
+ * 为什么需要：现在每只猫每次任务都是失忆的——它看不到"我上次参与过什么、做过哪些决定、
+ * 踩过什么坑"。Cat Café 的经验是「任何一只猫新开窗口，5 分钟内能进入状态」，
+ * 靠的就是这种跨会话的连续性。
+ */
+export interface CatEpisode {
+  /** 任务 id。 */
+  taskId: TaskId;
+  /** 任务标题（便于人类和模型快速识别）。 */
+  title: string;
+  /** 这只猫在该任务里做了什么（从它自己的消息/产物里摘要）。 */
+  summary: string;
+  /** 最终结果。 */
+  outcome: "done" | "abandoned" | "open";
+  /** 结束时的时间戳。 */
+  at: number;
+}
+
+export interface CatSession {
+  catId: CatId;
+  /** 最近参与的 N 个任务（新的在前）。 */
+  episodes: CatEpisode[];
+  /** 这只猫自己的长期记忆（从共享记忆里分流出来的一部分）。 */
+  lessons: MemoryEntry[];
+  updatedAt: number;
+}
+
 export interface StudioState {
   rooms: Room[];
   cats: Cat[];
@@ -215,6 +244,8 @@ export interface StudioState {
   handoffs: Handoff[];
   artifacts: Artifact[];
   memory: MemoryEntry[];
+  /** 每只猫的跨任务会话记忆。 */
+  catSessions: Record<CatId, CatSession>;
   /** 沙盒工具调用记录（写文件 / 跑命令）。 */
   toolCalls: ToolCall[];
   /** roomId -> 正在打字的猫（同一房间同时只有一只猫打字）。 */
@@ -274,6 +305,8 @@ export interface TurnContext {
   availableTools: ToolDefinition[];
   /** 这只猫挂载的技能包。 */
   skills: Skill[];
+  /** 这只猫的跨任务经历（最近几个任务 + 自己的教训）。 */
+  session: CatSession | null;
   /**
    * 流式增量回调（可选）。brain 在生成过程中可以把"正在说的话"陆续推过来，
    * 前端渲染成半透明草稿气泡；最终 turn 落库后草稿会被正式消息替换。

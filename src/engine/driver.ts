@@ -1031,6 +1031,48 @@ export function createDriver(deps: {
 
   // ── 一轮结束后的路由 / 状态推进 ───────────────────────
 
+  /**
+   * 任务收尾时，给「参与过的每只猫」各记一条经历。
+   *
+   * 参与判定：在该任务里发过消息 / 产物 / 交接 / 评审的猫。
+   * 摘要是从这只猫自己的产出里提取，不编造。
+   */
+  function recordTaskEpisodes(task: Task, outcome: "done" | "abandoned"): void {
+    const involved = new Set<CatId>();
+    for (const message of studio.state.messages) {
+      if (message.taskId === task.id && message.author !== "user" && message.author !== "system") {
+        involved.add(message.author);
+      }
+    }
+    for (const artifact of studio.state.artifacts) {
+      if (artifact.taskId === task.id) involved.add(artifact.author);
+    }
+    for (const handoff of studio.state.handoffs) {
+      if (handoff.taskId === task.id) {
+        involved.add(handoff.from);
+        involved.add(handoff.to);
+      }
+    }
+
+    for (const catId of involved) {
+      const mine = studio.state.messages
+        .filter((m) => m.taskId === task.id && m.author === catId && m.kind !== "tool")
+        .slice(-2)
+        .map((m) => m.text.replace(/\s+/g, " ").slice(0, 90));
+      const produced = studio.state.artifacts
+        .filter((a) => a.taskId === task.id && a.author === catId)
+        .map((a) => `${a.kind}「${a.title}」`);
+      const pieces = [...produced.slice(0, 2), ...mine].filter(Boolean);
+      studio.recordEpisode({
+        catId,
+        taskId: task.id,
+        title: task.title,
+        summary: pieces.join("；") || "（参与了该任务）",
+        outcome,
+      });
+    }
+  }
+
   function afterTurns(
     wake: Wake,
     room: Room,
@@ -1152,6 +1194,7 @@ export function createDriver(deps: {
         studio.finishStep(task.id, "done");
         studio.setTaskStatus(task.id, "done");
         clearStall(task.id);
+        recordTaskEpisodes(task, "done");
         return;
       }
 
@@ -1409,6 +1452,7 @@ export function createDriver(deps: {
       recentToolResults: recentToolResults(task),
       availableTools: availableToolsFor(cat),
       skills: resolveSkillsForCat(cat),
+      session: studio.sessionFor(cat.id),
       ...(onDelta ? { onDelta } : {}),
       scenario: task
         ? SCENARIOS.find((scenario) => scenario.id === task.scenarioId) ?? null

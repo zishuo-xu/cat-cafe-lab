@@ -53,6 +53,7 @@ function makeContext(): TurnContext {
     recentToolResults: [],
     availableTools: BUILTIN_TOOLS,
     skills: [],
+    session: null,
     scenario: null,
   };
 }

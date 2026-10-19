@@ -28,6 +28,8 @@ import type {
   Room,
   RoomId,
   StudioState,
+  CatEpisode,
+  CatSession,
   Task,
   TaskStage,
   TaskStep,
@@ -102,6 +104,7 @@ function freshState(cats: Cat[], mode: BrainMode): StudioState {
     handoffs: [],
     artifacts: [],
     memory: [],
+    catSessions: {},
     toolCalls: [],
     typing: { [room.id]: null },
     drafts: {},
@@ -440,6 +443,52 @@ export class Studio {
     return call;
   }
 
+  // ── 写：每猫会话 ──────────────────────────────────────
+
+  /** 取某只猫的会话（没有则创建一个空的）。 */
+  sessionFor(catId: CatId): CatSession {
+    const existing = this.state.catSessions[catId];
+    if (existing) return existing;
+    const created: CatSession = { catId, episodes: [], lessons: [], updatedAt: now() };
+    this.state.catSessions[catId] = created;
+    return created;
+  }
+
+  /**
+   * 记录一只猫在某任务里的经历（任务结束时调用）。
+   * 只保留最近 8 条，避免 prompt 无限膨胀。
+   */
+  recordEpisode(input: {
+    catId: CatId;
+    taskId: Task["id"];
+    title: string;
+    summary: string;
+    outcome: "done" | "abandoned" | "open";
+  }): CatEpisode {
+    const session = this.sessionFor(input.catId);
+    const episode = {
+      taskId: input.taskId,
+      title: input.title.slice(0, 80),
+      summary: input.summary.slice(0, 300),
+      outcome: input.outcome,
+      at: now(),
+    };
+    // 同一任务只保留一条（重跑时覆盖）。
+    session.episodes = [episode, ...session.episodes.filter((e) => e.taskId !== input.taskId)]
+      .slice(0, 8);
+    session.updatedAt = now();
+    this.notify();
+    return episode;
+  }
+
+  /** 把一条教训挂到具体某只猫名下。 */
+  attachLesson(catId: CatId, entry: MemoryEntry): void {
+    const session = this.sessionFor(catId);
+    session.lessons = [entry, ...session.lessons.filter((e) => e.id !== entry.id)].slice(0, 12);
+    session.updatedAt = now();
+    this.notify();
+  }
+
   // ── 写：易变状态 ──────────────────────────────────────
 
   /** 流式草稿：猫正在说的话。传 null 清空。 */
@@ -662,6 +711,7 @@ export class Studio {
     this.state.handoffs.length = 0;
     this.state.artifacts.length = 0;
     this.state.memory.length = 0;
+    this.state.catSessions = {};
     this.state.toolCalls.length = 0;
     for (const roomId of Object.keys(this.state.typing)) this.state.typing[roomId] = null;
     this.state.drafts = {};
@@ -735,6 +785,7 @@ export class Studio {
       this.state.handoffs = (parsed.handoffs ?? []) as Handoff[];
       this.state.artifacts = (parsed.artifacts ?? []) as Artifact[];
       this.state.memory = (parsed.memory ?? []) as MemoryEntry[];
+      this.state.catSessions = (parsed.catSessions ?? {}) as Record<string, CatSession>;
       this.state.toolCalls = (parsed.toolCalls ?? []) as ToolCall[];
       this.state.typing = (parsed.typing ?? {}) as Record<RoomId, CatId | null>;
       // 草稿是瞬态：重启后不恢复（否则会留下永远不消失的半截气泡）。

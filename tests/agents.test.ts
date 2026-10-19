@@ -100,6 +100,7 @@ function makeCtx(input: {
     recentToolResults: [],
     availableTools: [],
     skills: [],
+    session: null,
     artifacts: input.artifacts ?? [],
     scenario: input.scenario ?? null,
   };

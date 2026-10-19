@@ -116,6 +116,7 @@ function makeContext(overrides: Partial<TurnContext> = {}): TurnContext {
     // 默认给内置沙盒工具，覆盖“目录里有的工具”这一常见路径。
     availableTools: [...BUILTIN_TOOLS],
     skills: [],
+    session: null,
     scenario: null,
     ...overrides,
   };
@@ -1153,6 +1154,7 @@ describe("reasoning 型模型的 token 预算", () => {
       recentToolResults: [],
       availableTools: BUILTIN_TOOLS,
       skills: [],
+      session: null,
       scenario: null,
     };
   }
