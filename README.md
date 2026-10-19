@@ -334,7 +334,17 @@ run_command node --test ...      ✓ exit 0（砚砚放行）
 点左上角 ⚙️ → 填 Base URL / 模型名 / API Key → 点「测试连接」确认通 → 选「真实模式」→ 保存。
 四只猫的下一条回复就会走模型。任何调用失败都会自动降级回演出模式，界面不会空。
 
-**方式 B：环境变量（启动默认值）**
+****opencode zen 用户注意**：这个端点要求 `x-opencode-session` 请求头，需要额外配置：
+
+```bash
+LLM_BASE_URL=https://opencode.ai/zen/go/v1 \
+LLM_MODEL=deepseek-v4.1-flash \
+LLM_API_KEY=oc_sk_... \
+LLM_HEADERS='{"x-opencode-session":"catcafe-任意标识"}' \
+node src/main.ts
+```
+
+方式 B：环境变量（启动默认值）**
 
 ```bash
 LLM_BASE_URL=https://api.deepseek.com/v1 \

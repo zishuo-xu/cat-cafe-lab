@@ -407,6 +407,11 @@ export interface LlmSettings {
   apiKey: string;
   model: string;
   temperature: number;
+  /**
+   * 额外请求头（如 opencode zen 要求 x-opencode-session）。
+   * 值绝不回传前端、不进日志（与 apiKey 同等对待）。
+   */
+  headers?: Record<string, string>;
 }
 
 export interface StudioSettings {

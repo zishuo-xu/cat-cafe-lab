@@ -118,9 +118,26 @@ export function createLlmBrain(
   };
   // apiKey 只放请求头；下面所有日志都经过 scrub()，确保不会出现。
   if (settings.apiKey) headers.Authorization = `Bearer ${settings.apiKey}`;
+  // 端点要求的额外头（opencode zen 的 x-opencode-session 等）。
+  if (settings.headers) {
+    for (const [key, value] of Object.entries(settings.headers)) {
+      if (!key || !value) continue;
+      headers[key] = value;
+    }
+  }
+
+  const secretValues = [
+    settings.apiKey,
+    ...Object.values(settings.headers ?? {}),
+  ].filter(Boolean);
+  const scrubAll = (line: string): string => {
+    let result = line;
+    for (const secret of secretValues) result = result.split(secret).join("***");
+    return result;
+  };
 
   const warn = (line: string): void => {
-    console.warn(scrub(line, settings.apiKey));
+    console.warn(scrubAll(scrub(line, settings.apiKey)));
   };
 
   return {
@@ -178,7 +195,7 @@ export function createLlmBrain(
           let content: string | null;
           let finish: string | null;
           if (useStream) {
-            const streamed = await consumeStream(response, ctx);
+            const streamed = await consumeStream(response, ctx, warn);
             if (streamed === null) {
               return await downgrade("流式响应无法解析");
             }
@@ -203,6 +220,9 @@ export function createLlmBrain(
             continue;
           }
           if (content === null) {
+            if (useStream) {
+              warn("[llm-brain] 流式响应里没有拿到 content（可能是空流或端点不支持流式）");
+            }
             if (finish === "length") {
               return await downgrade(
                 `模型输出连续两次被 max_tokens 截断（reasoning 型模型会先消耗思考链），当前 max_tokens=${attemptTokens}`,
@@ -219,10 +239,17 @@ export function createLlmBrain(
 
           const turns = parseTurns(content, ctx);
           if (turns.length === 0) {
+            // 兜底：模型偶尔无视 JSON 约束、直接说人话（opencode zen 上实测）。
+            // 与其整轮降级成 mock 台词，不如把这段人话当成一条 message 收下。
+            const plain = plainTextReply(content);
+            if (plain) {
+              warn("模型未按 JSON 输出，已把纯文本包成一条 message");
+              return [{ kind: "message", text: plain.slice(0, 400) }];
+            }
             // 排查用：把模型原文的前 300 字打出来（已 scrub），否则只知道"解析失败"。
             const preview = content.replace(/\s+/g, " ").slice(0, 300);
             return await downgrade(
-              `模型输出不是可用的 CatTurn[]（原文前 300 字：${preview}）`,
+              `模型输出不是可用的 CatTurn[]（finish=${finish ?? "-"}, len=${content.length}，原文前 300 字：${preview}）`,
             );
           }
           return turns;
@@ -251,6 +278,7 @@ export function createLlmBrain(
 async function consumeStream(
   response: Response,
   ctx: TurnContext,
+  warn?: (line: string) => void,
 ): Promise<{ content: string; finishReason: string | null } | null> {
   const body = response.body;
   if (!body) return null;
@@ -300,9 +328,12 @@ async function consumeStream(
         if (typeof first.finish_reason === "string") finishReason = first.finish_reason;
       }
     }
-  } catch {
-    // 流中断：保留已经收到的内容，交给上层判断。
-    if (!content) return null;
+  } catch (streamError) {
+    // 流中断：保留已经收到的内容，交给上层判断；完全没收到内容时给出原因。
+    if (!content) {
+      warn?.(`[llm-brain] 流式读取失败：${streamError instanceof Error ? streamError.message : String(streamError)}`);
+      return null;
+    }
   } finally {
     reader.releaseLock?.();
   }
@@ -363,6 +394,21 @@ function finishReasonOf(payload: unknown): string | null {
   if (!isRecord(first)) return null;
   const reason = first.finish_reason;
   return typeof reason === "string" ? reason : null;
+}
+
+/**
+ * 判断一段输出是不是「模型直接说了人话」（而不是结构化 JSON）。
+ * 用于兜底：不降级，改成一条普通 message。
+ * - 去空白后不是以 [ 或 { 开头；
+ * - 不是空串、不是 [DONE] 之类；
+ * - 长度合理（避免把残缺 JSON 当成人话）。
+ */
+function plainTextReply(content: string): string | null {
+  const text = content.trim();
+  if (!text) return null;
+  if (text.startsWith("[") || text.startsWith("{")) return null;
+  if (text === "[DONE]" || text.length < 2) return null;
+  return text;
 }
 
 /** 从 OpenAI 兼容响应里取出模型文本；无法取出时返回 null。 */
@@ -865,6 +911,14 @@ function buildSystemPrompt(ctx: TurnContext, model: string): string {
     "",
     "【输出格式 · 必须严格遵守】",
     "只输出一个 JSON 数组，不要 markdown 代码围栏，不要任何解释文字。",
+    "你的输出会被程序直接 JSON.parse。任何非 JSON 内容都会导致整轮失败。",
+    "❌ 错误示例（绝对不要这样输出）：",
+    "   好的，我来拆解这个需求。",
+    "   可以",
+    "   ```json\n[...]\n```",
+    "✅ 正确示例：",
+    '   [{"kind":"message","text":"收到，我先钉两件事。"}]',
+    "即使是简单回答、拒绝、疑问，也**必须**包成 JSON 数组里的 message turn，不能直接说人话。",
     "数组元素是下面 7 种 turn 之一；一次输出 1~4 个 turn（工具轮可以连发多个，总共不超过 6 个）：",
     '1. {"kind":"message","text":"要说的话","mentions":["catId"]}',
     '2. {"kind":"handoff","to":"catId","card":{"what":"做什么","why":"为什么","tradeoff":"取舍","openQuestions":["未决问题"],"nextAction":"下一步"},"text":"伴随说明"}',

@@ -90,6 +90,8 @@ export class SettingsStore implements SettingsApi {
   private readonly port: number;
   private readonly file: string;
   private readonly envDefaults: boolean;
+  /** 环境变量带来的自定义请求头（如 opencode zen 的 session）；面板不可见、不落盘。 */
+  private readonly envHeaders: Record<string, string> | undefined;
   private readonly version: string;
 
   constructor(opts: SettingsStoreOptions) {
@@ -101,6 +103,7 @@ export class SettingsStore implements SettingsApi {
     this.port = opts.port;
     this.file = join(opts.dataDirAbs, "settings.json");
     this.envDefaults = Boolean(opts.settings.llm);
+    this.envHeaders = opts.settings.llm?.headers;
     this.version = readVersion();
 
     const persisted = this.load();
@@ -309,6 +312,7 @@ export class SettingsStore implements SettingsApi {
         model: this.model,
         apiKey: this.apiKey,
         temperature: this.temperature,
+        ...(this.envHeaders ? { headers: this.envHeaders } : {}),
       };
       this.switchable.set(
         createLlmBrain(settings, this.mock, {

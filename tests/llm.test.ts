@@ -384,16 +384,33 @@ describe("llm-brain · 失败降级", () => {
     );
   });
 
-  test("模型输出不是 JSON 数组（纯文本）→ 降级", async () => {
+  test("模型直接说人话（纯文本）→ 包成一条 message，不降级", async () => {
+    // opencode zen 上实测：模型偶尔无视 JSON 约束直接回答。
+    // 与其降级成 mock 台词，不如把它说的话当成一条 message 收下。
     await withFake(
       (_req, res) => sendOpenAi(res, "喵喵喵，我觉得这个需求可以。"),
       async (fake) => {
         const fallback = makeFallback();
         const brain = createLlmBrain({ ...SETTINGS, baseUrl: fake.baseUrl }, fallback.brain);
         const turns = await brain.think(makeContext());
+        assert.equal(fallback.calls(), 0, "纯文本应被兜底成 message，而不是降级");
+        assert.equal(turns[0]?.kind, "message");
+        if (turns[0]?.kind === "message") {
+          assert.match(turns[0].text, /这个需求可以/);
+        }
+      },
+    );
+  });
+
+  test("空输出 / [DONE] 之类仍会降级", async () => {
+    await withFake(
+      (_req, res) => sendOpenAi(res, "   "),
+      async (fake) => {
+        const fallback = makeFallback();
+        const brain = createLlmBrain({ ...SETTINGS, baseUrl: fake.baseUrl }, fallback.brain);
+        const turns = await brain.think(makeContext());
         assert.equal(fallback.calls(), 1);
         assert.equal(turns[0]?.kind, "message");
-        if (turns[0]?.kind === "message") assert.match(turns[0].text, /fallback/);
       },
     );
   });
@@ -1284,6 +1301,69 @@ describe("真实模型的输出格式兜底", () => {
     const turn = turns[0];
     if (turn?.kind === "tool") {
       assert.match(String(turn.input["content"]), /\{a:1\}/);
+    }
+  });
+});
+
+describe("自定义请求头（opencode zen 等）", () => {
+  test("headers 进入请求，且日志不泄露", async () => {
+    let seenHeaders: Record<string, string> = {};
+    const fake = (async (_url: string, init: { headers?: Record<string, string> }) => {
+      seenHeaders = (init.headers ?? {}) as Record<string, string>;
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: { role: "assistant", content: JSON.stringify([{ kind: "message", text: "ok" }]) },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const brain = createLlmBrain(
+      {
+        baseUrl: "https://example.test/v1",
+        model: "m",
+        apiKey: "sk-secret",
+        temperature: 0.7,
+        headers: { "x-opencode-session": "sess-123" },
+      },
+      makeFallback().brain,
+      { fetchImpl: fake },
+    );
+    const turns = await brain.think(makeContext());
+    assert.equal(turns.length, 1);
+    assert.equal(seenHeaders["x-opencode-session"], "sess-123");
+    assert.equal(seenHeaders.Authorization, "Bearer sk-secret");
+  });
+
+  test("失败日志里不会出现请求头的值", async () => {
+    const warns: string[] = [];
+    const originalWarn = console.warn;
+    console.warn = (...args: unknown[]) => warns.push(args.join(" "));
+    try {
+      const fake = (async () =>
+        new Response("nope", { status: 500 })) as unknown as typeof fetch;
+      const brain = createLlmBrain(
+        {
+          baseUrl: "https://example.test/v1",
+          model: "m",
+          apiKey: "sk-secret-value",
+          temperature: 0.7,
+          headers: { "x-opencode-session": "sess-secret-value" },
+        },
+        makeFallback().brain,
+        { fetchImpl: fake },
+      );
+      await brain.think(makeContext());
+      const text = warns.join("\n");
+      assert.ok(!text.includes("sess-secret-value"), text);
+      assert.ok(!text.includes("sk-secret-value"), text);
+    } finally {
+      console.warn = originalWarn;
     }
   });
 });

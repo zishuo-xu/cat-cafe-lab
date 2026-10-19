@@ -1,4 +1,10 @@
-/** 从环境变量解析运行配置。API key 只存在内存里，绝不落盘。 */
+/**
+ * 从环境变量解析运行配置。API key 只存在内存里，绝不落盘。
+ *
+ * 额外支持 LLM_HEADERS：JSON 字符串，例如
+ *   LLM_HEADERS='{"x-opencode-session":"catcafe-abc"}'
+ * 用于 opencode zen 这类需要自定义请求头的端点。值同样不进日志、不回传前端。
+ */
 
 import type { LlmSettings, StudioSettings, ToolApprovalMode } from "../domain/types.ts";
 
@@ -10,6 +16,7 @@ export function readSettings(env: NodeJS.ProcessEnv = process.env): StudioSettin
   const baseUrl = env.LLM_BASE_URL?.trim() ?? "";
   const apiKey = env.LLM_API_KEY?.trim() ?? "";
   const model = env.LLM_MODEL?.trim() ?? "";
+  const headers = parseHeaders(env.LLM_HEADERS);
   const llm: LlmSettings | null =
     baseUrl && model
       ? {
@@ -17,6 +24,7 @@ export function readSettings(env: NodeJS.ProcessEnv = process.env): StudioSettin
           apiKey,
           model,
           temperature: Number.parseFloat(env.LLM_TEMPERATURE ?? "0.8"),
+          ...(headers ? { headers } : {}),
         }
       : null;
 
@@ -32,4 +40,25 @@ export function readSettings(env: NodeJS.ProcessEnv = process.env): StudioSettin
         ? env.CATCAFE_APPROVAL
         : "commands",
   };
+}
+
+
+/** 解析 LLM_HEADERS（JSON 对象字符串）；非法时忽略并告警（不打印内容）。 */
+function parseHeaders(raw: string | undefined): Record<string, string> | undefined {
+  const text = raw?.trim();
+  if (!text) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof value === "string" && value && /^[A-Za-z0-9-]+$/.test(key)) {
+        headers[key] = value;
+      }
+    }
+    return Object.keys(headers).length > 0 ? headers : undefined;
+  } catch {
+    console.warn("[settings] LLM_HEADERS 不是合法 JSON，已忽略（内容不打印）");
+    return undefined;
+  }
 }
