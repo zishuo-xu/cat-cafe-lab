@@ -218,3 +218,40 @@ describe("主动巡查", () => {
     }
   });
 });
+
+describe("stall 误报防护", () => {
+  test("有模型调用在飞行时不标记卡住", async () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    const driver = createDriver({
+      studio,
+      brain: createMockBrain(SCENARIOS),
+      wait: () => Promise.resolve(),
+      stallMs: 100,
+    });
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "慢调用不算卡住",
+        scenarioId: "export_csv",
+      });
+      // 造一条"仍在进行"的模型调用
+      const inflight = studio.startLlmCall({
+        catId: "jinjianceng",
+        model: "slow-model",
+        engine: "api",
+        taskId: task.id,
+        stage: "working",
+      });
+      assert.ok(inflight.id);
+      studio.setTaskStatus(task.id, "active");
+      // 等超过 stallMs，任务不应被判 stalled
+      await new Promise((resolve) => setTimeout(resolve, 260));
+      assert.notEqual(studio.getTask(task.id)?.status, "stalled", "模型在跑时不应误报卡住");
+
+      // 调用结束后，正常逻辑才能判卡住
+      studio.finishLlmCall(inflight.id, {});
+    } finally {
+      studio.close();
+    }
+  });
+});

@@ -1540,6 +1540,15 @@ export function createDriver(deps: {
         scheduleStall(taskId);
         return;
       }
+      // 有一次模型调用还在进行 → 这是"慢"，不是"卡住"。
+      // 真实场景里推理模型单轮可能跑 20~60 秒，远超 stallMs，误报会让用户去干预正常流程。
+      const inFlight = studio.state.llmCalls.some(
+        (call) => call.taskId === taskId && !call.finishedAt,
+      );
+      if (inFlight) {
+        scheduleStall(taskId);
+        return;
+      }
       studio.setTaskStatus(taskId, "stalled");
     }, stallMs);
     runtime.stallTimer.unref?.();

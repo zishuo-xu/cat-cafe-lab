@@ -1374,7 +1374,7 @@ function renderTasks() {
         "div",
         { class: "empty" },
         h("strong", { text: "还没有任务" }),
-        h("span", { text: "点上面的「＋ 新任务」，或在下面直接跟猫猫说需求。" }),
+        h("span", { text: "点上面的「＋ 新任务」开工；下面的输入框是用来跟猫猫聊天的。" }),
       ),
     );
     return;
@@ -3478,6 +3478,14 @@ async function sendMessage() {
   const text = els.input.value.trim();
   if (!text) return;
 
+  // 真实用户最常见的错误：把一整段需求粘进聊天框，以为猫会开工。
+  // 聊天不会创建任务，所以这里先问一次；只有用户明确选"就聊两句"才放行。
+  if (looksLikeTaskBrief(text) && !app.briefHintAllowed) {
+    showBriefHint(text);
+    return;
+  }
+  app.briefHintAllowed = false;
+
   closeMentionPopup();
   app.sending = true;
   const raw = els.input.value;
@@ -3502,6 +3510,58 @@ async function sendMessage() {
     updateComposerState();
     els.input.focus();
   }
+}
+
+/**
+ * 粗略判断一段话是不是"需求"而不是"聊天"。
+ *
+ * 判据（命中两条以上才算）：够长、有列表/编号、有明确的功能动词。
+ * 宁可不提示也不要烦人——只在第一次命中时提示一次。
+ */
+function looksLikeTaskBrief(text) {
+  if (text.length < 60) return false;
+  let score = 0;
+  if (/\n\s*(\d+[.、)]|[-*•])/.test(text)) score += 2; // 有列表
+  if (/(要求|需要|必须|希望|实现|做一个|开发|支持|导出|接入)/.test(text)) score += 1;
+  if (/[,，。；;]/.test(text) && text.split(/[,，。；;]/).length >= 3) score += 1;
+  return score >= 2;
+}
+
+/** 提示用户：这看起来是需求，要开任务吗？ */
+function showBriefHint(text) {
+  const dialog = document.createElement("div");
+  dialog.className = "confirm-dialog";
+  dialog.setAttribute("role", "dialog");
+  dialog.innerHTML = `
+    <div class="confirm-card">
+      <h2>这看起来是一个需求</h2>
+      <p>聊天框里的内容只会让猫"聊两句"，<strong>不会开工做任务</strong>。</p>
+      <p>要把它交给四只猫正式做吗？会创建任务并进入接单 → 规划 → 实现 → 评审的流程。</p>
+      <footer>
+        <button type="button" data-choice="chat">就聊两句</button>
+        <button type="button" class="primary" data-choice="task">开任务 🐾</button>
+      </footer>
+    </div>`;
+  document.body.append(dialog);
+  const close = () => dialog.remove();
+  dialog.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+    const choice = target.dataset.choice;
+    if (choice === "task") {
+      close();
+      if (els.input) els.input.value = "";
+      openNewTaskModal(text);
+      return;
+    }
+    if (choice === "chat") {
+      close();
+      // 用户明确表示只是聊天：放行一次，之后照常发送。
+      app.briefHintAllowed = true;
+      if (els.input) els.input.value = text;
+      void sendMessage();
+    }
+  });
 }
 
 async function nudgeTask(taskId) {
@@ -3733,7 +3793,7 @@ function insertMention(catId) {
 
 // ── 新任务弹窗 ──────────────────────────────────────────────────────────
 
-function openNewTaskModal() {
+function openNewTaskModal(prefill = "") {
   if (!els.modal) return;
   hideFormError();
   if (els.newTaskRoomHint) {
@@ -3743,7 +3803,7 @@ function openNewTaskModal() {
       : "将在当前房间创建。";
   }
   if (els.brief) {
-    els.brief.value = "";
+    els.brief.value = prefill;
     for (const chip of els.modalChips ?? []) chip.classList.remove("is-active");
   }
   resetTaskScenarioSelect();
