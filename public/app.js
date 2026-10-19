@@ -2498,7 +2498,7 @@ function resizeInput() {
 function updateUnreadUi() {
   // 待审批是"必须处理"，优先于"有新消息"：即使 unread=0 也要露出跳转条，
   // 否则审批卡被折叠进时间线后用户就找不到它了。
-  const pending = pendingApprovalCount();
+  const pending = roomPendingApprovalCount();
   const showPending = pending > 0 && app.tab === "chat";
   const showJump = (app.unread > 0 || showPending) && app.tab === "chat";
   if (els.jump) {
@@ -2538,7 +2538,8 @@ function updateRoomBusyNotice() {
   }
 }
 
-function pendingApprovalCount() {
+/** 当前房间有几个工具在等审批（与各渲染函数里的同名局部变量区分开）。 */
+function roomPendingApprovalCount() {
   const calls = app.state?.toolCalls ?? [];
   const roomId = app.roomId;
   const taskIds = new Set(

@@ -673,7 +673,7 @@ http 传输则用 `"transport":"http"` + `"url":"https://…"`。
       "kind": "sandbox",
       "isGit": false,
       "branchPerTask": false,
-      "createdAt": 1792420785923,
+      "createdAt": 0,
       "roomCount": 1,
       "bound": true
     }
