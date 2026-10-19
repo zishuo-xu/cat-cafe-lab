@@ -255,3 +255,113 @@ describe("stall 误报防护", () => {
     }
   });
 });
+
+describe("房间忙时的新需求（方案 A）", () => {
+  test("有活跃任务时发消息会插入系统提醒，并绑定到该任务", async () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    const driver = createDriver({
+      studio,
+      brain: stallingBrain(),
+      wait: () => Promise.resolve(),
+      stallMs: 60_000,
+    });
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "正在做的任务",
+        scenarioId: "export_csv",
+      });
+      driver.submit({ type: "task_created", roomId: "room_cafe", taskId: task.id });
+      await driver.whenIdle();
+      assert.equal(studio.getTask(task.id)?.status, "active");
+
+      const before = studio.snapshot().messages.length;
+      driver.submit({
+        type: "user_message",
+        roomId: "room_cafe",
+        text: "再给我加个新功能",
+        mentions: [],
+      });
+      await driver.whenIdle();
+
+      const messages = studio.snapshot().messages.slice(before);
+      const warn = messages.find(
+        (m) => m.kind === "system" && m.text.includes("还在进行中"),
+      );
+      assert.ok(warn, "应插入一条系统提醒");
+      assert.match(warn.text, /同一个房间一次只做一件事/);
+      assert.match(warn.text, /＋ 新任务/);
+    } finally {
+      studio.close();
+    }
+  });
+
+  test("force=true 时不插提醒", async () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    const driver = createDriver({
+      studio,
+      brain: stallingBrain(),
+      wait: () => Promise.resolve(),
+      stallMs: 60_000,
+    });
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "正在做的任务",
+        scenarioId: "export_csv",
+      });
+      driver.submit({ type: "task_created", roomId: "room_cafe", taskId: task.id });
+      await driver.whenIdle();
+
+      const before = studio.snapshot().messages.length;
+      driver.submit({
+        type: "user_message",
+        roomId: "room_cafe",
+        text: "补充一句：注意兼容老接口",
+        mentions: [],
+        force: true,
+      });
+      await driver.whenIdle();
+      const messages = studio.snapshot().messages.slice(before);
+      assert.ok(
+        !messages.some((m) => m.kind === "system" && m.text.includes("还在进行中")),
+        "force 时不应插提醒",
+      );
+    } finally {
+      studio.close();
+    }
+  });
+
+  test("没有活跃任务时不插提醒", async () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    const driver = createDriver({
+      studio,
+      brain: stallingBrain(),
+      wait: () => Promise.resolve(),
+      stallMs: 60_000,
+    });
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "已完成任务",
+        scenarioId: "export_csv",
+      });
+      studio.setTaskStatus(task.id, "done");
+      const before = studio.snapshot().messages.length;
+      driver.submit({
+        type: "user_message",
+        roomId: "room_cafe",
+        text: "随便聊聊",
+        mentions: [],
+      });
+      await driver.whenIdle();
+      const messages = studio.snapshot().messages.slice(before);
+      assert.ok(
+        !messages.some((m) => m.kind === "system" && m.text.includes("还在进行中")),
+        "任务都结束了不该提醒",
+      );
+    } finally {
+      studio.close();
+    }
+  });
+});

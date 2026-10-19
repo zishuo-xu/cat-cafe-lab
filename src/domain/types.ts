@@ -92,6 +92,15 @@ export interface Message {
 
 // ───────────────────────── 任务与阶段 ─────────────────────────
 
+export const STAGE_TEXT: Record<TaskStage, string> = {
+  intake: "接单",
+  planning: "规划",
+  working: "实现",
+  reviewing: "评审",
+  revising: "修订",
+  done: "完成",
+};
+
 export type TaskStage =
   | "intake"
   | "planning"
@@ -453,7 +462,14 @@ export interface ScenarioWithSource {
 export type TaskAction = "continue" | "pivot" | "close";
 
 export type EngineEvent =
-  | { type: "user_message"; roomId: RoomId; text: string; mentions: CatId[] }
+  | {
+      type: "user_message";
+      roomId: RoomId;
+      text: string;
+      mentions: CatId[];
+      /** 房间有活跃任务时，用户明确表示"我就是要说话"，跳过提醒。 */
+      force?: boolean;
+    }
   | { type: "task_action"; taskId: TaskId; action: TaskAction; note?: string }
   | { type: "task_created"; roomId: RoomId; taskId: TaskId }
   | { type: "nudge"; taskId: TaskId };

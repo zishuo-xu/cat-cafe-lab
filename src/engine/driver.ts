@@ -20,6 +20,7 @@
  */
 
 import { SCENARIOS } from "../agents/personas.ts";
+import { STAGE_TEXT } from "../domain/types.ts";
 import type {
   ApprovalGate,
   Artifact,
@@ -428,7 +429,25 @@ export function createDriver(deps: {
       case "user_message": {
         const room = studio.getRoom(event.roomId);
         if (!room) return;
-        const task = latestTask(event.roomId);
+
+        // 房间里有活跃任务时，用户直接说话会被当成"对当前任务的补充"，
+        // 但实测这会让两条需求的内容混在一起，猫分不清在做什么。
+        // 所以：先明确告知，再决定是否照常放行（用户坚持要说话时不拦）。
+        const activeTask = activeTaskIn(event.roomId);
+        if (activeTask && !event.force) {
+          studio.appendMessage({
+            roomId: event.roomId,
+            author: "system",
+            kind: "system",
+            text:
+              `「${activeTask.title}」还在进行中（${STAGE_TEXT[activeTask.stage] ?? activeTask.stage} 阶段）。` +
+              `同一个房间一次只做一件事，新需求会被当成对这个任务的补充。` +
+              `如果是一件新的事，请点「＋ 新任务」并新建一个房间，或等这个任务结束。`,
+            mentions: [],
+          });
+        }
+
+        const task = activeTask ?? latestTask(event.roomId);
         const targets = routeUserMessage(roomCats(room), task, event.mentions);
         for (const catId of targets) {
           enqueueWake({
@@ -1654,6 +1673,16 @@ export function createDriver(deps: {
 
   function taskArtifacts(taskId: TaskId): Artifact[] {
     return studio.state.artifacts.filter((artifact) => artifact.taskId === taskId);
+  }
+
+  /** 房间里正在跑的任务（active 或 stalled 都算"占着房间"）。 */
+  function activeTaskIn(roomId: RoomId): Task | null {
+    const tasks = studio.state.tasks;
+    for (let i = tasks.length - 1; i >= 0; i -= 1) {
+      const task = tasks[i];
+      if (task && task.roomId === roomId && task.status !== "done") return task;
+    }
+    return null;
   }
 
   function latestTask(roomId: RoomId): Task | null {

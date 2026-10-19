@@ -1020,8 +1020,9 @@ export function createHttpServer(deps: HttpDeps): Server {
     const msgMatch = /^\/api\/rooms\/([^/]+)\/messages$/.exec(pathname);
     if (method === "POST" && msgMatch) {
       const roomId = decodeURIComponent(msgMatch[1] ?? "");
-      const body = (await readBody(req)) as { text?: unknown };
+      const body = (await readBody(req)) as { text?: unknown; force?: unknown };
       const text = typeof body.text === "string" ? body.text.trim() : "";
+      const force = body.force === true;
       if (text.length < 1 || text.length > MAX_TEXT) {
         fail(res, 400, `text must be 1..${MAX_TEXT} chars`);
         return;
@@ -1034,7 +1035,7 @@ export function createHttpServer(deps: HttpDeps): Server {
         text,
         mentions,
       });
-      driver.submit({ type: "user_message", roomId, text, mentions });
+      driver.submit({ type: "user_message", roomId, text, mentions, ...(force ? { force } : {}) });
       json(res, 201, message);
       return;
     }

@@ -2214,7 +2214,10 @@ function renderDraftBubble() {
 function renderTimeline() {
   // 渲染完成后同步一次"待审批"提示：审批卡可能在折叠区里，
   // 这条浮条是用户找到它的唯一持续线索。
-  requestAnimationFrame(() => updateUnreadUi());
+  requestAnimationFrame(() => {
+    updateUnreadUi();
+    updateRoomBusyNotice();
+  });
   const host = els.timeline;
   if (!host) return;
   const messages = roomMessages();
@@ -2517,6 +2520,24 @@ function updateUnreadUi() {
 }
 
 /** 当前房间有几个工具在等审批。 */
+/** 房间里有未完成任务时，在输入框上方提示：新消息会被当成那个任务的补充。 */
+function updateRoomBusyNotice() {
+  const box = $("#room-busy");
+  if (!box) return;
+  const task = (app.state?.tasks ?? [])
+    .filter((item) => item.roomId === app.roomId && item.status !== "done")
+    .at(-1);
+  if (!task) {
+    box.hidden = true;
+    return;
+  }
+  box.hidden = false;
+  const label = $("[data-room-busy-text]", box);
+  if (label) {
+    label.textContent = `「${task.title.slice(0, 20)}」还在进行中，你说的话会当成它的补充。`;
+  }
+}
+
 function pendingApprovalCount() {
   const calls = app.state?.toolCalls ?? [];
   const roomId = app.roomId;
@@ -3154,6 +3175,12 @@ function onGlobalClick(event) {
     case "close-task-close":
       closeTaskCloseModal();
       break;
+    case "room-busy-ack":
+      // 用户确认"这是补充给当前任务的"：之后发送带上 force，不再提醒。
+      app.forceNextMessage = true;
+      toast("好，这条会当作当前任务的补充 🐾");
+      els.input?.focus();
+      break;
     case "focus-needs-me":
       focusNeedsMe();
       break;
@@ -3515,6 +3542,10 @@ async function sendMessage() {
   }
   app.briefHintAllowed = false;
 
+  // 房间有活跃任务时，"就是补充给它"按钮会把这条消息标记成 force。
+  const forceFlag = app.forceNextMessage === true;
+  app.forceNextMessage = false;
+
   closeMentionPopup();
   app.sending = true;
   const raw = els.input.value;
@@ -3526,7 +3557,7 @@ async function sendMessage() {
     const response = await fetch(`/api/rooms/${encodeURIComponent(app.roomId)}/messages`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text }),
+      body: JSON.stringify({ text, ...(forceFlag ? { force: true } : {}) }),
     });
     if (!response.ok) throw new Error(await readApiError(response));
     scrollToBottom(true);
