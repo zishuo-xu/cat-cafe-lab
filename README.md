@@ -8,6 +8,22 @@
 
 ![猫咖工作台](docs/images/hero.png)
 
+**第一次来？** → [快速上手](docs/getting-started.md)（5 分钟跑起来，10 分钟看懂它在干什么）
+
+| 我想… | 看这份 |
+|---|---|
+| 5 分钟跑起来、看懂界面 | [docs/getting-started.md](docs/getting-started.md) |
+| 了解整体设计 | [docs/architecture.md](docs/architecture.md) |
+| 理解四只猫是怎么协作的 | [docs/engine.md](docs/engine.md) |
+| 调 API / 写集成 | [docs/api.md](docs/api.md) · [docs/data-model.md](docs/data-model.md) |
+| 接真实模型 | [docs/llm.md](docs/llm.md) · [docs/deployment.md](docs/deployment.md) |
+| 改前端 | [docs/frontend.md](docs/frontend.md) |
+| 改代码 / 加功能 | [docs/development.md](docs/development.md) |
+| 接 MCP server | [docs/mcp.md](docs/mcp.md) |
+| 看真实模型跑出来的问题 | [docs/real-model-test-report.md](docs/real-model-test-report.md) |
+| 看真实用户怎么用它 | [docs/user-scenario-test.md](docs/user-scenario-test.md) |
+| **知道哪里会踩坑** | **[docs/known-issues.md](docs/known-issues.md)** |
+
 ---
 
 ## 为什么做这个
@@ -587,12 +603,59 @@ cat-cafe-lab/
 │   └── main.ts
 ├── public/            index.html、app.js、styles.css、avatars.js
 ├── tools/             probe.py、matrix.py（真实模型测试驱动）
-├── tests/             engine / agents / llm / integration / settings / tools / cats-scenarios / workspaces / task-git / rooms / mcp / test-runner / smoke（218 个）
-├── docs/              architecture.md、llm.md、mcp.md、real-model.md、
-│                      real-model-test-report.md、images/
+├── examples/mcp/      零依赖示例 MCP server（猫咖记事本）
+├── tests/             21 个测试文件、63 个套件、282 个测试
+├── docs/              见下方「文档地图」
 ├── data/              studio.json、settings.json、workspaces.json、mcp.json、workspace/（gitignore）
 └── PLAN.md            设计与分工记录
 ```
+
+---
+
+## 文档地图
+
+| 文档 | 解决什么问题 | 读它的时机 |
+|---|---|---|
+| [getting-started](docs/getting-started.md) | 怎么跑、怎么用、界面怎么看 | 第一次接触 |
+| [architecture](docs/architecture.md) | 整体分层、模块职责、关键取舍 | 想理解设计 |
+| [engine](docs/engine.md) | 协作引擎：事件驱动、阶段机、ReAct、审批、巡查、stall | 想改协作逻辑 |
+| [data-model](docs/data-model.md) | 核心类型、状态结构、持久化边界 | 想知道数据长什么样 |
+| [api](docs/api.md) | 所有 HTTP 端点、SSE 流、错误格式 | 写脚本或集成 |
+| [frontend](docs/frontend.md) | 前端结构、状态管理、各类 UI 机制 | 改界面 |
+| [development](docs/development.md) | 加工具/场景/端点/测试，调试技巧，坑 | 参与开发 |
+| [deployment](docs/deployment.md) | 环境变量全表、持久化、安全边界、排障 | 部署或运维 |
+| [llm](docs/llm.md) | 真实模式配置、prompt 构造、失败降级 | 接模型 |
+| [mcp](docs/mcp.md) | MCP 接入、鉴权、示例 server | 扩展工具 |
+| [real-model](docs/real-model.md) | 真实模型联调流程 | 换 provider |
+| [real-model-test-report](docs/real-model-test-report.md) | 11 个真实缺陷的现象/根因/修法 | 想知道踩过什么坑 |
+| [user-scenario-test](docs/user-scenario-test.md) | 真实用户模拟测试与发现的问题 | 想知道用户会踩什么坑 |
+| [known-issues](docs/known-issues.md) | 已知问题、能力边界、修复史 | **用之前建议先看一眼** |
+
+---
+
+## 只输入需求会被提示
+
+真实用户最常见的错误，是把一整段需求粘进聊天框然后以为猫会开工——聊天不会创建任务。
+现在粘贴长需求时会给一次引导：
+
+![提需求的引导](docs/images/uat-09-brief-hint.png)
+
+选「开任务」会把内容直接带进任务弹窗，不用重新粘贴。
+
+## 房间忙的时候
+
+同一个房间一次只做一件事。有任务在跑时，你说话会被当成对它的补充，输入框上方会一直提示：
+
+![房间忙提示](docs/images/uat-11-room-busy.png)
+
+如果确实是补充（比如"注意兼容老接口"），点「就是补充给它」显式放行；如果是新的事，就开新任务或新房间。
+
+## 需要你处理的时刻
+
+有待批准的工具调用时，底部浮条会一直露出来（红色脉动），点它直接跳到审批卡——
+即使审批卡被折叠进了历史消息里：
+
+![待审批浮条](docs/images/uat-10-pending-bar.png)
 
 ---
 
