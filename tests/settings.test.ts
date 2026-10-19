@@ -41,7 +41,13 @@ function makeStore(dir: string, overrides: Partial<StudioSettings> = {}) {
 }
 
 function fakeDriver(): Driver {
-  return { submit() {}, async whenIdle() {}, stallMs: 12000 };
+  return {
+    submit() {},
+    setProactive() {},
+    async patrol() {},
+    async whenIdle() {},
+    stallMs: 12000,
+  };
 }
 
 async function listen(server: Server): Promise<number> {

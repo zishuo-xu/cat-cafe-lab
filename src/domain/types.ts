@@ -272,7 +272,9 @@ export type TriggerKind =
   | "artifact"
   | "review_result"
   | "tool_result"
-  | "nudge";
+  | "nudge"
+  /** 猫自己巡查时决定要说话（主动协作）。 */
+  | "proactive";
 
 export interface Trigger {
   kind: TriggerKind;
@@ -327,6 +329,13 @@ export interface TurnContext {
 
 export type CatTurn =
   | { kind: "message"; text: string; mentions?: CatId[]; delayMs?: number }
+  /**
+   * 主动巡查时的「我不说话」。
+   *
+   * 巡查唤醒不是任务推进，猫有权判断"这里不需要我"。
+   * 返回 silence 不会产生任何消息，只记一条审计（避免"它为什么不说话"无从查证）。
+   */
+  | { kind: "silence"; reason?: string }
   | {
       kind: "tool";
       tool: ToolName;
@@ -454,6 +463,14 @@ export interface Driver {
   whenIdle(): Promise<void>;
   /** 卡住判定阈值（毫秒）。 */
   readonly stallMs: number;
+  /** 启动 / 停止主动巡查（watch 模式）。 */
+  setProactive(enabled: boolean, intervalMs?: number): void;
+  /**
+   * 手动触发一次巡查：把巡查任务排进队列后立即返回，不等执行完
+   * （任务在跑时巡查本就该排队，等它跑完会让调用方以为卡死）。
+   * 需要等待执行完成时用 whenIdle()。
+   */
+  patrol(): Promise<void>;
 }
 
 // ───────────────────────── 配置 ─────────────────────────
@@ -680,6 +697,14 @@ export interface PublicSettings {
   /** 真实模式是否用流式输出（真机首字/首句更快出现）。 */
   streaming: boolean;
   /**
+   * 主动协作：猫在任务推进时会不会自己决定插话。
+   * - "off"：完全被动（只有 @ 和交接才动）
+   * - "watch"：巡查模式——在关键节点让其他猫判断"我要不要说话"
+   */
+  proactive: "off" | "watch";
+  /** 巡查间隔（毫秒），只在 watch 模式生效。 */
+  proactiveIntervalMs: number;
+  /**
    * 真实模式的大脑实现：
    * - "api"：直接打 OpenAI 兼容 HTTP 接口（默认，轻量）
    * - "cli"：起 `claude -p` 子进程（自带工具与 agent 能力，但更重）
@@ -701,6 +726,8 @@ export interface SettingsPatch {
   toolApproval?: ToolApprovalMode;
   streaming?: boolean;
   engine?: "api" | "cli";
+  proactive?: "off" | "watch";
+  proactiveIntervalMs?: number;
   llm?: {
     baseUrl?: string;
     model?: string;

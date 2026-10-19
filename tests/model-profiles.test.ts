@@ -13,7 +13,13 @@ import { MODEL_PROFILES, suggestedProfile } from "../src/server/model-profiles.t
 import { Studio } from "../src/server/studio.ts";
 
 function fakeDriver(): Driver {
-  return { submit() {}, async whenIdle() {}, stallMs: 12000 };
+  return {
+    submit() {},
+    setProactive() {},
+    async patrol() {},
+    async whenIdle() {},
+    stallMs: 12000,
+  };
 }
 
 async function listen(server: ReturnType<typeof createHttpServer>): Promise<string> {

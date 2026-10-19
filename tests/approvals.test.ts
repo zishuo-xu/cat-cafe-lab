@@ -13,7 +13,13 @@ import { Studio } from "../src/server/studio.ts";
 import { ApprovalQueue } from "../src/tools/approval.ts";
 
 function fakeDriver(): Driver {
-  return { submit() {}, async whenIdle() {}, stallMs: 12000 };
+  return {
+    submit() {},
+    setProactive() {},
+    async patrol() {},
+    async whenIdle() {},
+    stallMs: 12000,
+  };
 }
 
 describe("ApprovalQueue", () => {

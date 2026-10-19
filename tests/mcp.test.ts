@@ -378,7 +378,13 @@ describe("HTTP /api/mcp /api/tools /api/skills", () => {
     manager = new McpManager(registry, dir);
     await manager.init();
     studio = new Studio({ cats: CATS, mode: "mock" });
-    const driver = { submit() {}, async whenIdle() {}, stallMs: 12000 };
+    const driver = {
+      submit() {},
+      setProactive() {},
+      async patrol() {},
+      async whenIdle() {},
+      stallMs: 12000,
+    };
     server = createHttpServer({
       studio,
       driver,
@@ -551,7 +557,13 @@ describe("MCP 鉴权 · stdio env", () => {
     manager = new McpManager(registry, dir);
     await manager.init();
     studio = new Studio({ cats: CATS, mode: "mock" });
-    const driver = { submit() {}, async whenIdle() {}, stallMs: 12000 };
+    const driver = {
+      submit() {},
+      setProactive() {},
+      async patrol() {},
+      async whenIdle() {},
+      stallMs: 12000,
+    };
     server = createHttpServer({
       studio,
       driver,
@@ -845,7 +857,13 @@ describe("MCP 鉴权 · http headers", () => {
     manager = new McpManager(registry, dir);
     await manager.init();
     studio = new Studio({ cats: CATS, mode: "mock" });
-    const driver = { submit() {}, async whenIdle() {}, stallMs: 12000 };
+    const driver = {
+      submit() {},
+      setProactive() {},
+      async patrol() {},
+      async whenIdle() {},
+      stallMs: 12000,
+    };
     server = createHttpServer({
       studio,
       driver,

@@ -56,6 +56,8 @@ interface PersistedSettings {
   toolApproval?: ToolApprovalMode;
   streaming?: boolean;
   engine?: "api" | "cli";
+  proactive?: "off" | "watch";
+  proactiveIntervalMs?: number;
   llm?: {
     baseUrl?: string;
     model?: string;
@@ -81,6 +83,8 @@ export class SettingsStore implements SettingsApi {
   private toolApproval: ToolApprovalMode;
   private streaming: boolean;
   private engine: "api" | "cli";
+  private proactive: "off" | "watch";
+  private proactiveIntervalMs: number;
   private baseUrl: string;
   private model: string;
   private temperature: number;
@@ -122,6 +126,8 @@ export class SettingsStore implements SettingsApi {
     this.toolApproval = persisted.toolApproval ?? opts.settings.toolApproval ?? "commands";
     this.streaming = persisted.streaming ?? true;
     this.engine = persisted.engine === "cli" ? "cli" : "api";
+    this.proactive = persisted.proactive === "watch" ? "watch" : "off";
+    this.proactiveIntervalMs = persisted.proactiveIntervalMs ?? 60_000;
     this.baseUrl = persisted.llm?.baseUrl ?? env?.baseUrl ?? "";
     this.model = persisted.llm?.model ?? env?.model ?? "";
     this.temperature = clampTemperature(
@@ -157,6 +163,10 @@ export class SettingsStore implements SettingsApi {
     return this.engine;
   }
 
+  proactiveMode(): { mode: "off" | "watch"; intervalMs: number } {
+    return { mode: this.proactive, intervalMs: this.proactiveIntervalMs };
+  }
+
   getPublic(): PublicSettings {
     return {
       mode: this.mode,
@@ -173,6 +183,8 @@ export class SettingsStore implements SettingsApi {
       toolApproval: this.toolApproval,
       streaming: this.streaming,
       engine: this.engine,
+      proactive: this.proactive,
+      proactiveIntervalMs: this.proactiveIntervalMs,
       port: this.port,
       dataDir: this.dataDirAbs,
       version: this.version,
@@ -191,6 +203,15 @@ export class SettingsStore implements SettingsApi {
     }
     if (patch.engine !== undefined && patch.engine !== "api" && patch.engine !== "cli") {
       throw new Error("engine 只能是 api 或 cli");
+    }
+    if (patch.proactive !== undefined && patch.proactive !== "off" && patch.proactive !== "watch") {
+      throw new Error("proactive 只能是 off 或 watch");
+    }
+    if (
+      patch.proactiveIntervalMs !== undefined &&
+      (!Number.isFinite(patch.proactiveIntervalMs) || patch.proactiveIntervalMs < 5000)
+    ) {
+      throw new Error("proactiveIntervalMs 至少 5000 毫秒");
     }
     if (patch.speed !== undefined && !(patch.speed in SPEED_FACTOR)) {
       throw new Error("speed 只能是 slow / normal / fast");
@@ -212,6 +233,8 @@ export class SettingsStore implements SettingsApi {
     const nextToolsEnabled = patch.toolsEnabled ?? this.toolsEnabled;
     const nextStreaming = patch.streaming ?? this.streaming;
     const nextEngine = patch.engine ?? this.engine;
+    const nextProactive = patch.proactive ?? this.proactive;
+    const nextProactiveIntervalMs = patch.proactiveIntervalMs ?? this.proactiveIntervalMs;
     const nextToolApproval = patch.toolApproval ?? this.toolApproval;
 
     let baseUrl = this.baseUrl;
@@ -260,6 +283,8 @@ export class SettingsStore implements SettingsApi {
     this.toolsEnabled = nextToolsEnabled;
     this.streaming = nextStreaming;
     this.engine = nextEngine;
+    this.proactive = nextProactive;
+    this.proactiveIntervalMs = nextProactiveIntervalMs;
     this.toolApproval = nextToolApproval;
     this.baseUrl = baseUrl;
     this.model = model;
@@ -378,6 +403,8 @@ export class SettingsStore implements SettingsApi {
         toolApproval: this.toolApproval,
         streaming: this.streaming,
         engine: this.engine,
+        proactive: this.proactive,
+        proactiveIntervalMs: this.proactiveIntervalMs,
         llm: {
           baseUrl: this.baseUrl,
           model: this.model,

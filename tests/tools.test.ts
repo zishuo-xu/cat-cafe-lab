@@ -14,7 +14,13 @@ import { Sandbox } from "../src/tools/sandbox.ts";
 import { SEED_FILES } from "../src/tools/seed.ts";
 
 function fakeDriver(): Driver {
-  return { submit() {}, async whenIdle() {}, stallMs: 12000 };
+  return {
+    submit() {},
+    setProactive() {},
+    async patrol() {},
+    async whenIdle() {},
+    stallMs: 12000,
+  };
 }
 
 function sandboxAt(dir: string): Sandbox {

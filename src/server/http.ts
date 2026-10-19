@@ -247,7 +247,15 @@ export function createHttpServer(deps: HttpDeps): Server {
           return;
         }
         try {
-          json(res, 200, await settingsApi.update(body));
+          const updated = await settingsApi.update(body);
+          // 主动协作设置变了 → 同步巡查启停。
+          if (body.proactive !== undefined || body.proactiveIntervalMs !== undefined) {
+            driver.setProactive(
+              updated.proactive === "watch",
+              updated.proactiveIntervalMs,
+            );
+          }
+          json(res, 200, updated);
         } catch (err) {
           fail(res, 400, err instanceof Error ? err.message : "invalid settings");
         }
@@ -736,6 +744,13 @@ export function createHttpServer(deps: HttpDeps): Server {
 
     if (pathname === "/api/tools" && method === "GET") {
       json(res, 200, { tools: tools?.list() ?? [] });
+      return;
+    }
+
+    if (pathname === "/api/patrol" && method === "POST") {
+      // 手动让猫们看一眼现在有什么事（主动协作的"现在就看"按钮）。
+      await driver.patrol();
+      json(res, 200, { ok: true });
       return;
     }
 

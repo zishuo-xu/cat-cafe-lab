@@ -88,6 +88,10 @@ const server = createHttpServer({
   tests: testRunner,
 });
 
+// 主动协作：按设置启停巡查。
+const proactiveConfig = settingsStore.proactiveMode();
+driver.setProactive(proactiveConfig.mode === "watch", proactiveConfig.intervalMs);
+
 server.listen(settings.port, "127.0.0.1", () => {
   const publicSettings = settingsStore.getPublic();
   const modeText =

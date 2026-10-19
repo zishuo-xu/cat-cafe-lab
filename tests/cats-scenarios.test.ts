@@ -34,6 +34,8 @@ function fakeDriver(): Driver & { events: unknown[] } {
     submit(event) {
       events.push(event);
     },
+    setProactive() {},
+    async patrol() {},
     async whenIdle() {},
     stallMs: 12000,
   };

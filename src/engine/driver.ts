@@ -258,6 +258,7 @@ async function executeSafely(runner: ToolExecutor, turn: ToolTurn): Promise<Tool
 type WakePurpose =
   | "kickoff"
   | "planning"
+  | "patrol"
   | "worker"
   | "reviewer"
   | "decision"
@@ -611,7 +612,16 @@ export function createDriver(deps: {
           studio.setDraft(room.id, null);
         }
 
-        const applied = await applyTurns(room, cat, task, turns);
+        // 巡查轮：只允许「说话」和「沉默」，交接/评审/决策/产物都属于 owner 的职责，
+        // 这里在执行前就过滤掉，否则它们会真的落库并影响后续阶段。
+        const effectiveTurns =
+          wake.purpose === "patrol"
+            ? turns.filter(
+                (turn) =>
+                  turn.kind === "message" || turn.kind === "silence" || turn.kind === "tool",
+              )
+            : turns;
+        const applied = await applyTurns(room, cat, task, effectiveTurns);
         mergeApplied(merged, applied);
 
         const roundCap =
@@ -668,6 +678,8 @@ export function createDriver(deps: {
 
     for (let index = 0; index < turns.length; index += 1) {
       const turn = turns[index]!;
+      // silence 是"我不说话"的显式信号：不落消息、不加延迟。
+      if (turn.kind === "silence") continue;
       await wait(turn.delayMs ?? TURN_DELAY_MS);
 
       // 提速：连续只读工具并行跑（模型常一轮发 4~6 个 read_file）。
@@ -1133,6 +1145,12 @@ export function createDriver(deps: {
         return;
       }
 
+      case "patrol": {
+        // 巡查只允许「说话」，不允许推进阶段或发交接卡（那是 owner 的职责）。
+        // 如果模型在巡查轮里给了 handoff/review/decision，忽略掉，只保留消息。
+        return;
+      }
+
       case "worker": {
         runtime.workers = Math.max(0, runtime.workers - 1);
         if (runtime.workers === 0 && task.status === "active") {
@@ -1416,6 +1434,96 @@ export function createDriver(deps: {
     if (!hasActive) studio.addStep(task.id, { stage: task.stage, owner: task.owner });
   }
 
+  // ── 主动巡查 ──────────────────────────────────────────
+
+  /**
+   * 主动协作：让「没被 @ 的猫」也有机会说话。
+   *
+   * 设计要点（为什么不是简单的定时器）：
+   * 1. 只在有活跃任务的房间里巡查——房间里没活时让猫说话等于噪音；
+   * 2. 每轮只挑一只猫，且**不是当前 owner**（owner 本来就在动）；
+   * 3. 给猫一个明确的「你可以不说话」的出口（silence turn），
+   *    这样"沉默"也是可审计的决策，而不是模型随口附和；
+   * 4. 巡查产生的消息必须带 trigger.kind = "proactive"，便于前端和 trace 区分。
+   */
+  let patrolTimer: ReturnType<typeof setInterval> | null = null;
+  let patrolIntervalMs = 60_000;
+  let patrolling = false;
+  /** 每只猫上次巡查的时间，避免同一只猫连续被点名。 */
+  const lastPatrolAt = new Map<CatId, number>();
+
+  function setProactive(enabled: boolean, intervalMs?: number): void {
+    if (intervalMs && intervalMs > 0) patrolIntervalMs = intervalMs;
+    if (patrolTimer) {
+      clearInterval(patrolTimer);
+      patrolTimer = null;
+    }
+    if (!enabled) return;
+    patrolTimer = setInterval(() => {
+      void patrolOnce();
+    }, patrolIntervalMs);
+    patrolTimer.unref?.();
+  }
+
+  /** 手动触发一次巡查（测试 / 调试 / 「让猫们看看现在有什么事」按钮）。 */
+  async function patrol(): Promise<void> {
+    // 只负责把巡查任务排进队列，不等待执行完成：
+    // 任务还在跑时，巡查本来就该排在它后面，等它跑完 API 才返回会让前端以为卡死。
+    await patrolOnce();
+  }
+
+  /** 挑一个「有活跃任务的房间 + 一只最该说话的猫」，让它判断要不要插话。 */
+  async function patrolOnce(): Promise<void> {
+    if (patrolling) return;
+    patrolling = true;
+    try {
+      const activeTasks = studio.state.tasks.filter((task) => task.status === "active");
+      if (activeTasks.length === 0) return;
+
+      for (const task of activeTasks) {
+        const room = studio.getRoom(task.roomId);
+        if (!room) continue;
+        const candidate = pickPatrolCat(task, room);
+        if (!candidate) continue;
+
+        lastPatrolAt.set(candidate.id, Date.now());
+        // 排进房间队列即可，不阻塞调用方。
+        void enqueue(task.roomId, async () => {
+          const watcher = candidate;
+          await processWake({
+            roomId: task.roomId,
+            catId: watcher.id,
+            taskId: task.id,
+            purpose: "patrol",
+            trigger: {
+              kind: "proactive",
+              roomId: task.roomId,
+              taskId: task.id,
+              text: `当前任务进行到「${task.stage}」阶段，你在旁边观察。如果你有要补充的、要质疑的，或者发现别人漏了东西，现在说；不需要就保持安静。`,
+            },
+          });
+        });
+      }
+    } finally {
+      patrolling = false;
+    }
+  }
+
+  /** 挑巡查猫：非 owner、最近没巡查过、优先 reviewer（它有质疑职责）。 */
+  function pickPatrolCat(task: Task, room: Room): Cat | null {
+    const now = Date.now();
+    const candidates = studio.state.cats
+      .filter((cat) => room.catIds.includes(cat.id))
+      .filter((cat) => cat.id !== task.owner)
+      .filter((cat) => now - (lastPatrolAt.get(cat.id) ?? 0) >= patrolIntervalMs)
+      // reviewer 优先：它的职责就是挑问题
+      .sort((a, b) => {
+        const rank = (cat: Cat): number => (cat.role === "reviewer" ? 0 : cat.role === "architect" ? 1 : 2);
+        return rank(a) - rank(b);
+      });
+    return candidates[0] ?? null;
+  }
+
   // ── stall watchdog ────────────────────────────────────
 
   function scheduleStall(taskId: TaskId): void {
@@ -1598,6 +1706,8 @@ export function createDriver(deps: {
   }
 
   return {
+    setProactive,
+    patrol,
     submit,
     whenIdle(): Promise<void> {
       if (pending === 0) return Promise.resolve();

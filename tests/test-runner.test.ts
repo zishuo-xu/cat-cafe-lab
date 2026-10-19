@@ -35,7 +35,13 @@ function makeFixtureProject(): string {
 }
 
 function fakeDriver(): Driver {
-  return { submit() {}, async whenIdle() {}, stallMs: 12000 };
+  return {
+    submit() {},
+    setProactive() {},
+    async patrol() {},
+    async whenIdle() {},
+    stallMs: 12000,
+  };
 }
 
 async function waitFor(

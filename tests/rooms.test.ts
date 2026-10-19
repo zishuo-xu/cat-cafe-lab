@@ -20,7 +20,13 @@ import { WorkspaceManager } from "../src/workspaces/manager.ts";
 const ROOM_ID = "room_cafe";
 
 function fakeDriver(): Driver {
-  return { submit() {}, async whenIdle() {}, stallMs: 12_000 };
+  return {
+    submit() {},
+    setProactive() {},
+    async patrol() {},
+    async whenIdle() {},
+    stallMs: 12_000,
+  };
 }
 
 interface Harness {

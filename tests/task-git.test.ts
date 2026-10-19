@@ -44,7 +44,13 @@ function resetRepo(dir: string): void {
 }
 
 function fakeDriver(): Driver {
-  return { submit() {}, async whenIdle() {}, stallMs: 12000 };
+  return {
+    submit() {},
+    setProactive() {},
+    async patrol() {},
+    async whenIdle() {},
+    stallMs: 12000,
+  };
 }
 
 describe("C-2 任务 git 工作流", () => {

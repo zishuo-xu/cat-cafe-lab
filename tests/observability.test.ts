@@ -17,7 +17,13 @@ import { Studio } from "../src/server/studio.ts";
 import { BUILTIN_TOOLS } from "../src/tools/builtin.ts";
 
 function fakeDriver(): Driver {
-  return { submit() {}, async whenIdle() {}, stallMs: 12000 };
+  return {
+    submit() {},
+    setProactive() {},
+    async patrol() {},
+    async whenIdle() {},
+    stallMs: 12000,
+  };
 }
 
 function makeContext(
