@@ -266,6 +266,45 @@ export class Studio {
     return task;
   }
 
+  /**
+   * 任务交付摘要：当前有什么、还差什么。
+   *
+   * 收尾（尤其是被强制收尾）时最该告诉用户的两件事：
+   * 1. 我现在拿到的产物有哪些；
+   * 2. 评审还剩几条 blocker 没清。
+   */
+  deliverySummary(taskId: Task["id"]): {
+    artifacts: Array<{ kind: string; title: string; version: number }>;
+    blockers: string[];
+    verdict: string | null;
+  } {
+    const artifacts = this.state.artifacts
+      .filter((artifact) => artifact.taskId === taskId)
+      .map((artifact) => ({ kind: artifact.kind, title: artifact.title, version: artifact.version }));
+
+    // 找最后一次评审，抽出 blocker。
+    const reviews = this.state.artifacts.filter(
+      (artifact) => artifact.taskId === taskId && artifact.kind === "review",
+    );
+    const latest = reviews.at(-1);
+    const blockers: string[] = [];
+    let verdict: string | null = null;
+    if (latest) {
+      const body = latest.body;
+      if (/verdict:\s*request_changes/i.test(body)) verdict = "request_changes";
+      else if (/verdict:\s*approve/i.test(body)) verdict = "approve";
+      for (const line of body.split("\n")) {
+        if (!/blocker/i.test(line)) continue;
+        const cleaned = line
+          .replace(/^\s*[-*]\s*/, "")
+          .replace(/\[blocker\]\s*/i, "")
+          .trim();
+        if (cleaned) blockers.push(cleaned.slice(0, 140));
+      }
+    }
+    return { artifacts, blockers: blockers.slice(0, 6), verdict };
+  }
+
   /** 强制收尾：记录原因，任务置 done。 */
   closeTaskWithReason(taskId: Task["id"], reason: string): Task {
     const task = this.requireTask(taskId);

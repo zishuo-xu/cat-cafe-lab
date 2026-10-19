@@ -962,6 +962,24 @@ export /**
  * 对应 Cat Café 的成功标准之一——「任何一只猫新开窗口，5 分钟内能进入状态」。
  * 内容克制：最近 5 个任务 + 3 条自己的教训，避免 prompt 膨胀。
  */
+/**
+ * 房间里的猫（名字 ↔ catId 对照）。
+ *
+ * 为什么要显式给对照表：实测模型会把「砚砚」写成「燕燕」、「烁烁」写成「说说」，
+ * 因为它只看到了一串 catId，不知道怎么念。给它名字就别猜了。
+ */
+function renderRoomCats(ctx: TurnContext): string {
+  const lines = [
+    "【房间里的猫】称呼必须严格用下面的名字和 catId，不要自创、不要音译：",
+  ];
+  for (const peer of ctx.roomCats) {
+    const self = peer.id === ctx.cat.id;
+    const roleText = ROLE_LABEL[peer.role] ?? peer.role;
+    lines.push(`- ${peer.name}（${roleText}）= ${peer.id}${self ? " ← 你自己" : ""}`);
+  }
+  return lines.join("\n");
+}
+
 function renderSession(session: TurnContext["session"]): string | null {
   if (!session) return null;
   const episodes = session.episodes.slice(0, 5);
@@ -1009,10 +1027,12 @@ export function buildSystemPrompt(ctx: TurnContext, model: string): string {
     `口头禅：${cat.catchphrase}`,
     `房间：${room.name} —— ${room.topic}`,
     `本次使用模型：${model}。`,
-    `你自己的 catId 是 ${selfId}。房间里其他猫的 catId：${others.join("、") || "（无）"}。`,
+    `你的 catId 是 ${selfId}，你的名字是「${cat.name}」。`,
     "",
     taskBlock,
     ...(sessionBlock ? ["", sessionBlock] : []),
+    "",
+    renderRoomCats(ctx),
     "",
     "【输出格式 · 必须严格遵守】",
     "只输出一个 JSON 数组，不要 markdown 代码围栏，不要任何解释文字。",

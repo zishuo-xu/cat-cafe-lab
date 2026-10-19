@@ -2212,6 +2212,9 @@ function renderDraftBubble() {
 // ── 中栏：timeline 增量渲染 ─────────────────────────────────────────────// ── 中栏：timeline 增量渲染 ─────────────────────────────────────────────
 
 function renderTimeline() {
+  // 渲染完成后同步一次"待审批"提示：审批卡可能在折叠区里，
+  // 这条浮条是用户找到它的唯一持续线索。
+  requestAnimationFrame(() => updateUnreadUi());
   const host = els.timeline;
   if (!host) return;
   const messages = roomMessages();
@@ -2490,13 +2493,39 @@ function resizeInput() {
 }
 
 function updateUnreadUi() {
-  const showJump = app.unread > 0 && app.tab === "chat";
+  // 待审批是"必须处理"，优先于"有新消息"：即使 unread=0 也要露出跳转条，
+  // 否则审批卡被折叠进时间线后用户就找不到它了。
+  const pending = pendingApprovalCount();
+  const showPending = pending > 0 && app.tab === "chat";
+  const showJump = (app.unread > 0 || showPending) && app.tab === "chat";
   if (els.jump) {
     const shouldHide = !showJump;
     if (els.jump.hidden !== shouldHide) els.jump.hidden = shouldHide;
+    els.jump.classList.toggle("is-pending", showPending);
   }
-  if (els.jumpCount) els.jumpCount.textContent = String(app.unread);
+  if (els.jumpCount) {
+    els.jumpCount.textContent = String(showPending ? pending : app.unread);
+  }
+  const label = els.jump?.querySelector("[data-jump-label]");
+  if (label) {
+    label.innerHTML = showPending
+      ? `🙋 <span data-jump-count>${pending}</span> 项待审批`
+      : `↓ <span data-jump-count>${app.unread}</span> 条新消息`;
+    els.jumpCount = label.querySelector("[data-jump-count]");
+  }
   if (els.chatTabDot) els.chatTabDot.hidden = !(app.unread > 0 && app.tab !== "chat");
+}
+
+/** 当前房间有几个工具在等审批。 */
+function pendingApprovalCount() {
+  const calls = app.state?.toolCalls ?? [];
+  const roomId = app.roomId;
+  const taskIds = new Set(
+    (app.state?.tasks ?? []).filter((task) => task.roomId === roomId).map((task) => task.id),
+  );
+  return calls.filter(
+    (call) => call.status === "pending" && (!call.taskId || taskIds.has(call.taskId)),
+  ).length;
 }
 
 function resetUnread() {

@@ -101,6 +101,7 @@ function makeCtx(input: {
     availableTools: [],
     skills: [],
     session: null,
+    roomCats: [],
     artifacts: input.artifacts ?? [],
     scenario: input.scenario ?? null,
   };

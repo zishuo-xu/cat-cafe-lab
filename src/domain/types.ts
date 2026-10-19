@@ -311,6 +311,8 @@ export interface TurnContext {
   skills: Skill[];
   /** 这只猫的跨任务经历（最近几个任务 + 自己的教训）。 */
   session: CatSession | null;
+  /** 房间里所有猫的 id 与名字（prompt 里用来对齐称呼，避免模型自创名字）。 */
+  roomCats: Array<{ id: CatId; name: string; role: Role }>;
   /**
    * 流式增量回调（可选）。brain 在生成过程中可以把"正在说的话"陆续推过来，
    * 前端渲染成半透明草稿气泡；最终 turn 落库后草稿会被正式消息替换。

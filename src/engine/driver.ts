@@ -1195,11 +1195,28 @@ export function createDriver(deps: {
               tags: ["review-loop", "process"],
               sourceTaskId: task.id,
             });
+            // 收尾不是"结束"，是"交货"。告诉铲屎官：拿到了什么、还差什么。
+            const delivery = studio.deliverySummary(task.id);
+            const artifactLine =
+              delivery.artifacts.length > 0
+                ? `已交付 ${delivery.artifacts.length} 个产物：${delivery.artifacts
+                    .slice(-4)
+                    .map((item) => `${item.kind}「${item.title}」`)
+                    .join("、")}`
+                : "这次没有产出可用产物。";
+            const blockerLine =
+              delivery.blockers.length > 0
+                ? `仍有 ${delivery.blockers.length} 条 blocker 未清：\n` +
+                  delivery.blockers.map((item, index) => `  ${index + 1}. ${item}`).join("\n")
+                : "评审没有留下 blocker。";
             studio.appendMessage({
               roomId: room.id,
               author: cat.id,
               kind: "system",
-              text: `已经修订 ${MAX_REVISION_ROUNDS} 轮仍未通过，我先收口并记一条教训；剩余问题请铲屎官决定是否继续。`,
+              text:
+                `已经修订 ${MAX_REVISION_ROUNDS} 轮仍未通过，我先收口。\n\n` +
+                `${artifactLine}\n\n${blockerLine}\n\n` +
+                `要继续的话，点「继续试试」；想换方向，点「换个方案」。`,
               mentions: [],
               taskId: task.id,
             });
@@ -1592,6 +1609,9 @@ export function createDriver(deps: {
       availableTools: availableToolsFor(cat),
       skills: resolveSkillsForCat(cat),
       session: studio.sessionFor(cat.id),
+      roomCats: studio.state.cats
+        .filter((peer) => room.catIds.includes(peer.id))
+        .map((peer) => ({ id: peer.id, name: peer.name, role: peer.role })),
       ...(onDelta ? { onDelta } : {}),
       scenario: task
         ? SCENARIOS.find((scenario) => scenario.id === task.scenarioId) ?? null

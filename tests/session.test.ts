@@ -34,7 +34,8 @@ function makeContext(session: CatSession | null): TurnContext {
     skills: [],
     session,
     scenario: null,
-  };
+    roomCats: [],
+    };
 }
 
 describe("每猫持久会话", () => {
@@ -208,5 +209,85 @@ describe("每猫持久会话", () => {
     } finally {
       studio.close();
     }
+  });
+});
+
+describe("交付摘要（收尾时告诉用户拿到了什么）", () => {
+  test("抽出产物列表与最新评审的 blocker", () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "交付摘要测试",
+        scenarioId: "export_csv",
+      });
+      studio.addArtifact({
+        taskId: task.id,
+        kind: "spec",
+        title: "导出规格",
+        body: "…",
+        author: "xianxian",
+      });
+      studio.addArtifact({
+        taskId: task.id,
+        kind: "patch",
+        title: "导出实现",
+        body: "…",
+        author: "jinjianceng",
+      });
+      studio.addArtifact({
+        taskId: task.id,
+        kind: "review",
+        title: "评审 v2",
+        body: [
+          "verdict: request_changes",
+          "",
+          "- [blocker] 第 1 条：公式注入防护没进唯一入口",
+          "- [blocker] 第 2 条：旧断言仍按 \\n 行尾",
+          "- [minor] 文案可以更清楚",
+        ].join("\n"),
+        author: "yanyan",
+      });
+      const summary = studio.deliverySummary(task.id);
+      assert.equal(summary.artifacts.length, 3);
+      assert.equal(summary.verdict, "request_changes");
+      assert.equal(summary.blockers.length, 2, "只抽 blocker，不含 minor");
+      assert.match(summary.blockers[0] ?? "", /公式注入/);
+    } finally {
+      studio.close();
+    }
+  });
+
+  test("没有评审时 blockers 为空", () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "无评审",
+        scenarioId: "export_csv",
+      });
+      const summary = studio.deliverySummary(task.id);
+      assert.deepEqual(summary.blockers, []);
+      assert.equal(summary.verdict, null);
+    } finally {
+      studio.close();
+    }
+  });
+});
+
+describe("prompt 里的猫名对照表", () => {
+  test("显示名字与 catId 对应关系，避免模型自创称呼", () => {
+    const ctx = makeContext(null);
+    ctx.roomCats = [
+      { id: "xianxian", name: "宪宪", role: "architect" },
+      { id: "yanyan", name: "砚砚", role: "reviewer" },
+      { id: "jinjianceng", name: "金渐层", role: "implementer" },
+    ];
+    const prompt = buildSystemPrompt(ctx, "m");
+    assert.match(prompt, /房间里的猫/);
+    assert.match(prompt, /宪宪（[^）]*）= xianxian ← 你自己/);
+    assert.match(prompt, /砚砚（[^）]*）= yanyan/);
+    assert.match(prompt, /金渐层（[^）]*）= jinjianceng/);
+    assert.match(prompt, /不要自创、不要音译/);
   });
 });

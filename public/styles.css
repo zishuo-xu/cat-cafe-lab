@@ -1872,6 +1872,19 @@ button {
   background: #fbedd6;
 }
 
+/* 待审批时用暖红强调：这是"必须处理"，不是"有新消息"。 */
+.jump-latest.is-pending button {
+  border-color: #e8a58c;
+  background: #fff0ea;
+  color: #a8452a;
+  animation: jump-pending-pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes jump-pending-pulse {
+  0%, 100% { box-shadow: 0 10px 24px -16px rgba(168, 69, 42, 0.6); }
+  50% { box-shadow: 0 10px 24px -12px rgba(168, 69, 42, 0.85); }
+}
+
 /* ── 右栏 · 工作台 ────────────────────────────────────────────────────── */
 
 .work-head {

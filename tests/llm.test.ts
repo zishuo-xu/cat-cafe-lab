@@ -117,6 +117,7 @@ function makeContext(overrides: Partial<TurnContext> = {}): TurnContext {
     availableTools: [...BUILTIN_TOOLS],
     skills: [],
     session: null,
+    roomCats: [],
     scenario: null,
     ...overrides,
   };
@@ -1156,6 +1157,7 @@ describe("reasoning 型模型的 token 预算", () => {
       skills: [],
       session: null,
       scenario: null,
+    roomCats: [],
     };
   }
 

@@ -54,6 +54,7 @@ function makeContext(): TurnContext {
     availableTools: BUILTIN_TOOLS,
     skills: [],
     session: null,
+    roomCats: [],
     scenario: null,
   };
 }

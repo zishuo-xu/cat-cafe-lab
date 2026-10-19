@@ -56,6 +56,7 @@ function makeContext(onDelta?: (update: DeltaUpdate) => void): TurnContext {
     availableTools: BUILTIN_TOOLS,
     skills: [],
     session: null,
+    roomCats: [],
     scenario: null,
     ...(onDelta ? { onDelta } : {}),
   };

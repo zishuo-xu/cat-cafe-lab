@@ -45,6 +45,7 @@ function makeContext(
     availableTools: BUILTIN_TOOLS,
     skills: [],
     session: null,
+    roomCats: [],
     scenario: null,
     ...(onReport ? { onReport } : {}),
     ...(onDelta ? { onDelta } : {}),
