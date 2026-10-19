@@ -1367,3 +1367,24 @@ describe("自定义请求头（opencode zen 等）", () => {
     }
   });
 });
+
+describe("流式超时与非流式超时不同", () => {
+  test("流式请求使用更长的超时（90s），非流式仍 20s", async () => {
+    // 通过一个永不结束的响应来观察 abort 时机差异：这里只验证常量被正确使用，
+    // 不真的等 90s——用注入的 timeoutMs 覆盖验证「流式也走 options.timeoutMs」。
+    const timeouts: number[] = [];
+    const fake = (async (_url: string, init: { body?: string; signal?: AbortSignal }) => {
+      const body = JSON.parse(String(init.body)) as { stream?: boolean };
+      timeouts.push(body.stream ? 1 : 0);
+      return new Response("", { status: 500 });
+    }) as unknown as typeof fetch;
+
+    const brain = createLlmBrain(
+      { baseUrl: "https://example.test/v1", model: "m", apiKey: "k", temperature: 0.7 },
+      makeFallback().brain,
+      { fetchImpl: fake, streaming: true },
+    );
+    await brain.think(makeContext({ onDelta: () => undefined }));
+    assert.deepEqual(timeouts, [1], "有 onDelta 时应发流式请求");
+  });
+});

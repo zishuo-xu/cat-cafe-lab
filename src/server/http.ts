@@ -29,6 +29,7 @@ import type { McpManager, McpInput } from "../mcp/manager.ts";
 import type { WorkspaceManager } from "../workspaces/manager.ts";
 import { TestRunner } from "./test-runner.ts";
 import { listSkills } from "../skills/registry.ts";
+import { MODEL_PROFILES, findProfile, suggestedProfile } from "./model-profiles.ts";
 
 export interface HttpDeps {
   studio: Studio;
@@ -601,6 +602,43 @@ export function createHttpServer(deps: HttpDeps): Server {
 
     if (pathname === "/api/tools" && method === "GET") {
       json(res, 200, { tools: tools?.list() ?? [] });
+      return;
+    }
+
+    if (pathname === "/api/model-profiles" && method === "GET") {
+      const current = settingsApi?.getPublic();
+      const baseUrl = current?.llm.baseUrl ?? "";
+      json(res, 200, {
+        profiles: MODEL_PROFILES,
+        suggested: suggestedProfile(baseUrl).id,
+      });
+      return;
+    }
+
+    if (pathname === "/api/model-profiles/apply" && method === "POST") {
+      const body = (await readBody(req)) as { id?: unknown };
+      const profile = typeof body.id === "string" ? findProfile(body.id) : undefined;
+      if (!profile) {
+        fail(res, 400, "未知的模型档案");
+        return;
+      }
+      const updated: Array<{ catId: string; model?: string }> = [];
+      for (const assignment of profile.assignments) {
+        const cat = studio.updateCat(assignment.catId, {
+          llmModel: assignment.model,
+          llmTemperature: assignment.temperature,
+        });
+        updated.push({ catId: cat.id, model: cat.llmModel });
+      }
+      if (profile.assignments.length === 0) {
+        // 「统一模型」：清掉所有覆盖。
+        for (const cat of studio.state.cats) {
+          if (!cat.llmModel) continue;
+          studio.updateCat(cat.id, { llmModel: null, llmTemperature: null });
+          updated.push({ catId: cat.id, model: undefined });
+        }
+      }
+      json(res, 200, { ok: true, profile: profile.id, cats: updated });
       return;
     }
 

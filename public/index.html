@@ -839,6 +839,29 @@
             <p class="settings-desc">
               真实模式下可以给每只猫单独指定模型和温度；留空则跟随全局。改完点行内「保存模型」。
             </p>
+
+            <div class="model-profiles" id="model-profiles-section">
+              <div class="model-profiles-head">
+                <strong class="model-profiles-title">模型分工</strong>
+                <span class="model-profile-mode" id="model-profile-mode" data-mode="mixed">—</span>
+                <span class="model-profiles-status" id="model-profiles-status" role="status" aria-live="polite"></span>
+                <button
+                  type="button"
+                  class="btn btn--ghost btn--tiny"
+                  data-action="reload-model-profiles"
+                  id="model-profiles-reload"
+                >
+                  ↻ 刷新
+                </button>
+              </div>
+              <p class="field-hint">
+                一键把四只猫配置成不同模型。应用会覆盖每只猫当前的模型/温度覆盖；「统一模型」会清空所有覆盖、跟随全局。
+              </p>
+              <div id="model-profile-list" class="model-profile-list">
+                <div class="empty"><span>读取模型档案…</span></div>
+              </div>
+            </div>
+
             <div id="cat-model-list" class="cat-model-list">
               <div class="empty"><span>正在读取猫猫…</span></div>
             </div>
@@ -1597,6 +1620,30 @@
           <button type="submit" class="btn btn--danger" id="task-close-submit">确认收尾</button>
         </footer>
       </form>
+    </dialog>
+
+    <!-- ── 应用模型档案确认 ─────────────────────────────────────── -->
+    <dialog id="model-profile-confirm" class="modal" aria-labelledby="model-profile-confirm-title">
+      <div class="modal-card">
+        <header class="modal-head">
+          <h2 id="model-profile-confirm-title">应用模型档案</h2>
+          <button type="button" class="icon-btn" data-action="close-model-profile-confirm" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub" id="model-profile-confirm-sub">确认应用这套模型分工？</p>
+        <p class="model-profile-warning">
+          会覆盖四只猫当前的模型与温度设置，可能影响真实模式下的调用成本与速度。
+          「统一模型」会清空所有每猫覆盖，全部跟随全局模型。
+        </p>
+        <p class="form-error" id="model-profile-confirm-error" role="alert" hidden></p>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-model-profile-confirm">取消</button>
+          <button type="button" class="btn btn--primary" data-action="confirm-model-profile" id="model-profile-apply-btn">
+            确认应用
+          </button>
+        </footer>
+      </div>
     </dialog>
 
     <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>

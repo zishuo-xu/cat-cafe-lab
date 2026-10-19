@@ -43,6 +43,14 @@ const BUILTIN_TOOL_NAMES = new Set(["read_file", "write_file", "list_files", "ru
 /** 默认请求超时：20s。真实模型偶尔慢，再久就不如先让猫猫动起来。 */
 export const DEFAULT_TIMEOUT_MS = 20_000;
 /**
+ * 流式请求的超时。
+ *
+ * 非流式时 20s 足够（等整段返回）；流式要读完整条 SSE 流，慢模型 + 长上下文
+ * 很容易超过 20s——实测 mimo-v2.6-flash 在 working 阶段就因此被 abort，
+ * 整轮降级到 mock。给流式单独放宽到 90s。
+ */
+export const STREAM_TIMEOUT_MS = 90_000;
+/**
  * 默认 max_tokens。
  *
  * 推理型模型（如 deepseek-flash）会先产生 reasoning_content，思考 token 也计入
@@ -103,6 +111,7 @@ export function createLlmBrain(
 ): CatBrain {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const timeoutMs = positiveInt(options.timeoutMs, DEFAULT_TIMEOUT_MS);
+  const streamTimeoutMs = positiveInt(options.timeoutMs, STREAM_TIMEOUT_MS);
   let maxTokens = positiveInt(options.maxTokens, DEFAULT_MAX_TOKENS);
   const endpoint = `${settings.baseUrl.trim().replace(/\/+$/, "")}/chat/completions`;
   const globalModel = settings.model.trim();
@@ -175,7 +184,8 @@ export function createLlmBrain(
         });
 
         const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        const effectiveTimeout = useStream ? streamTimeoutMs : timeoutMs;
+        const timer = setTimeout(() => controller.abort(), effectiveTimeout);
         timer.unref?.();
 
         try {
@@ -255,7 +265,7 @@ export function createLlmBrain(
           return turns;
         } catch (err) {
           const reason = controller.signal.aborted
-            ? `请求超时 ${timeoutMs}ms`
+            ? `请求超时 ${useStream ? streamTimeoutMs : timeoutMs}ms${useStream ? "（流式）" : ""}`
             : `网络错误：${errorMessage(err)}`;
           return await downgrade(reason);
         } finally {
@@ -440,6 +450,14 @@ function extractContent(payload: unknown): string | null {
 function extractJsonArray(content: string): string | null {
   let text = content.trim();
   if (!text) return null;
+  // 有些模型（实测 mimo-v2.6-flash）会在 JSON 前后夹带思考标记与代码围栏：
+  //   </think>{"kind":...}```json [ {"kind":...} ]
+  // 这些标记会让「第一个 [ 到最后一个 ]」的切片把噪声一起切进去，先洗掉。
+  text = text
+    .replace(/<\/?(?:think|thinking|reasoning)>/gi, "")
+    .replace(/```(?:json)?/gi, "")
+    .trim();
+  if (!text) return null;
   const fenced = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(text);
   if (fenced?.[1]) text = fenced[1].trim();
 
@@ -576,13 +594,36 @@ function parseToolTurn(
     // 完全编造的工具名：丢弃。
     return null;
   }
-  const input = definition
-    ? parseToolInput(definition, item.input)
-    : isRecord(item.input)
-      ? { ...item.input }
-      : {};
-  if (!input) return null;
+  // 兼容两种写法：规范写法把参数放在 input 里；
+  // 有些模型（实测 mimo-v2.6-flash）把参数平铺在顶层：
+  //   {"kind":"tool","tool":"write_file","path":"..." ,"content":"..."}
+  // 有 input 字段就以它为准（类型不对 → 非法，交给下面判断）；
+  // 完全没有 input 字段时才尝试把顶层参数扁平化。
+  const hasInputField = Object.prototype.hasOwnProperty.call(item, "input");
+  // list_files 不接受参数，扁平化对它没有意义；有 input 字段但类型不对时直接判非法。
+  // 三种来源：
+  // - 有 input 字段且是对象：直接用它；
+  // - 有 input 字段但类型不对：null，表示非法（交给下面 ×）；
+  // - 没有 input 字段：尝试从顶层扁平字段里取；取不到就是 undefined（= 没给参数）。
+  let rawInput: Record<string, unknown> | null | undefined;
+  if (hasInputField) {
+    rawInput = isRecord(item.input) ? item.input : null;
+  } else if (tool === "list_files") {
+    rawInput = undefined;
+  } else {
+    rawInput = flattenToolInput(item) ?? undefined;
+  }
 
+  let input: Record<string, unknown> | null;
+  if (rawInput === null) {
+    input = null; // 明确给了 input 但不是对象 → 非法
+  } else if (definition) {
+    input = parseToolInput(definition, rawInput);
+  } else {
+    // 目录里没有但名字合法的内置工具：保留，交给 driver 回「没有权限」。
+    input = rawInput ?? {};
+  }
+  if (!input) return null;
   const turn: CatTurn = { kind: "tool", tool, input };
   const label = requiredText(item.label);
   if (label) turn.label = label;
@@ -708,6 +749,17 @@ function parseMemoryTurn(item: Record<string, unknown>): CatTurn | null {
  * - MCP 工具的 schema 由对应 server 负责，这里只要求 input 是对象（原样透传）。
  * 只做结构校验；路径越界 / 命令白名单留给执行层，让它把错误回执喂回来。
  */
+/** tool turn 的顶层字段（去掉 turn 自身的元字段）当作 input，兼容扁平写法。 */
+function flattenToolInput(item: Record<string, unknown>): Record<string, unknown> | null {
+  const skip = new Set(["kind", "tool", "label", "text", "mentions", "delayMs", "input"]);
+  const flattened: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(item)) {
+    if (skip.has(key)) continue;
+    flattened[key] = value;
+  }
+  return Object.keys(flattened).length > 0 ? flattened : null;
+}
+
 function parseToolInput(
   definition: ToolDefinition,
   value: unknown,

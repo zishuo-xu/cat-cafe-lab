@@ -171,6 +171,19 @@ const taskRecoveryState = {
   error: "",
 };
 
+/** 模型分工档案状态。 */
+const modelProfileState = {
+  loading: false,
+  loaded: false,
+  available: null,
+  profiles: [],
+  suggested: "",
+  selectedId: null,
+  applyingId: null,
+  pendingId: null,
+  error: "",
+};
+
 /** 流式草稿气泡 DOM 缓存。 */
 const draftBubbleState = {
   node: null,
@@ -948,6 +961,14 @@ function cacheDom() {
   els.settingsConfirmReset = $("#settings-confirm-reset");
   els.settingsSaveBtn = $("#settings-save-btn");
 
+  els.modelProfilesList = $("#model-profile-list");
+  els.modelProfilesStatus = $("#model-profiles-status");
+  els.modelProfileMode = $("#model-profile-mode");
+  els.modelProfileReload = $("#model-profiles-reload");
+  els.modelProfileConfirm = $("#model-profile-confirm");
+  els.modelProfileConfirmSub = $("#model-profile-confirm-sub");
+  els.modelProfileConfirmError = $("#model-profile-confirm-error");
+  els.modelProfileApplyBtn = $("#model-profile-apply-btn");
   els.catModelList = $("#cat-model-list");
   els.catEditModal = $("#cat-edit-modal");
   els.catEditForm = $("#cat-edit-form");
@@ -2748,6 +2769,12 @@ function bindUi() {
     });
   }
 
+  if (els.modelProfileConfirm) {
+    els.modelProfileConfirm.addEventListener("click", (event) => {
+      if (event.target === els.modelProfileConfirm) closeModelProfileConfirm();
+    });
+  }
+
   if (els.testCenterModal) {
     els.testCenterModal.addEventListener("click", (event) => {
       if (event.target === els.testCenterModal) closeTestCenter();
@@ -2986,6 +3013,18 @@ function onGlobalClick(event) {
       break;
     case "save-cat-model":
       if (actionEl.dataset.catId) void saveCatModel(actionEl.dataset.catId, actionEl);
+      break;
+    case "reload-model-profiles":
+      void loadModelProfiles();
+      break;
+    case "apply-model-profile":
+      if (actionEl.dataset.profileId) openModelProfileConfirm(actionEl.dataset.profileId);
+      break;
+    case "close-model-profile-confirm":
+      closeModelProfileConfirm();
+      break;
+    case "confirm-model-profile":
+      void confirmModelProfileApply();
       break;
     case "close-cat-edit":
       closeCatEdit();
@@ -3777,6 +3816,7 @@ async function openSettings() {
   void loadMcp();
   void loadToolCatalog();
   void loadWorkspaces();
+  void loadModelProfiles();
   await loadSettings();
 }
 
@@ -3927,6 +3967,7 @@ function fillSettingsForm(data) {
   }
   updateToolsHint();
   hideModeWarn();
+  renderModelProfiles();
 }
 
 function setModeRadios(mode) {
@@ -4318,6 +4359,338 @@ async function resetStudio() {
 
 // ── 设置 · 猫猫与模型 / 猫猫档案 ────────────────────────────────────────
 
+// ── 模型分工档案 ───────────────────────────────────────────────────────
+
+const MODEL_PROFILE_STORAGE_KEY = "catcafe.modelProfileId";
+
+function modelProfileGlobalModel() {
+  return String(settingsState.data?.llm?.model ?? app.globalModel ?? "").trim();
+}
+
+function catEffectiveModel(cat) {
+  const override = String(cat?.llmModel ?? "").trim();
+  if (override) return override;
+  return modelProfileGlobalModel() || "跟随全局";
+}
+
+function catEffectiveModelBadge(cat) {
+  const override = String(cat?.llmModel ?? "").trim();
+  if (override) return override;
+  const global = modelProfileGlobalModel();
+  return global ? `跟随全局：${global}` : "跟随全局";
+}
+
+function currentModelMode() {
+  const cats = app.state?.cats ?? [];
+  if (!cats.length) return "uniform";
+  const effective = cats.map((cat) => catEffectiveModel(cat));
+  return new Set(effective).size > 1 ? "mixed" : "uniform";
+}
+
+function profileMatchesCurrent(profile) {
+  const cats = app.state?.cats ?? [];
+  if (!profile || !cats.length) return false;
+  if (!profile.assignments?.length) {
+    return cats.every(
+      (cat) =>
+        !String(cat?.llmModel ?? "").trim() &&
+        cat?.llmTemperature === undefined,
+    );
+  }
+  const byCat = new Map(profile.assignments.map((item) => [item.catId, item]));
+  return cats.every((cat) => {
+    const assignment = byCat.get(cat.id);
+    if (!assignment) return false;
+    const model = String(cat.llmModel ?? "").trim();
+    const temp = typeof cat.llmTemperature === "number" ? cat.llmTemperature : undefined;
+    return model === assignment.model && temp === assignment.temperature;
+  });
+}
+
+function storedModelProfileId() {
+  try {
+    return window.localStorage.getItem(MODEL_PROFILE_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function rememberModelProfileId(id) {
+  try {
+    if (id) window.localStorage.setItem(MODEL_PROFILE_STORAGE_KEY, id);
+    else window.localStorage.removeItem(MODEL_PROFILE_STORAGE_KEY);
+  } catch {
+    /* localStorage 不可用就只保留内存状态 */
+  }
+}
+
+function pickModelProfileSelection() {
+  const ids = new Set((modelProfileState.profiles ?? []).map((profile) => profile.id));
+  if (modelProfileState.selectedId && ids.has(modelProfileState.selectedId)) return;
+  const stored = storedModelProfileId();
+  if (stored && ids.has(stored)) {
+    modelProfileState.selectedId = stored;
+    return;
+  }
+  const matched = (modelProfileState.profiles ?? []).find((profile) =>
+    profileMatchesCurrent(profile),
+  );
+  modelProfileState.selectedId =
+    matched?.id ?? modelProfileState.suggested ?? modelProfileState.profiles?.[0]?.id ?? null;
+}
+
+async function loadModelProfiles() {
+  if (modelProfileState.loading) return;
+  modelProfileState.loading = true;
+  renderModelProfiles();
+  try {
+    const response = await fetch("/api/model-profiles", {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (response.status === 404 || response.status === 503) {
+      modelProfileState.available = false;
+      modelProfileState.error = "模型档案服务未就绪（GET /api/model-profiles 404/503）";
+      modelProfileState.loaded = true;
+      renderModelProfiles();
+      return;
+    }
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET /api/model-profiles"));
+    const payload = await response.json();
+    modelProfileState.profiles = Array.isArray(payload?.profiles) ? payload.profiles : [];
+    modelProfileState.suggested = String(payload?.suggested ?? "");
+    modelProfileState.available = true;
+    modelProfileState.error = "";
+    modelProfileState.loaded = true;
+    pickModelProfileSelection();
+  } catch (error) {
+    modelProfileState.available = false;
+    modelProfileState.error = `模型档案读取失败：${error.message}`;
+    modelProfileState.loaded = true;
+  } finally {
+    modelProfileState.loading = false;
+    renderModelProfiles();
+  }
+}
+
+function renderModelProfiles() {
+  const host = els.modelProfilesList;
+  if (!host) return;
+  if (els.modelProfileMode) {
+    const mode = currentModelMode();
+    els.modelProfileMode.dataset.mode = mode;
+    els.modelProfileMode.textContent = mode === "mixed" ? "混搭" : "统一";
+  }
+  if (els.modelProfilesStatus) {
+    els.modelProfilesStatus.textContent =
+      modelProfileState.loading
+        ? "读取模型档案…"
+        : modelProfileState.available === false
+          ? "模型档案服务未就绪"
+          : modelProfileState.profiles.length
+            ? `${modelProfileState.profiles.length} 套档案`
+            : "";
+  }
+  if (modelProfileState.loading && !modelProfileState.loaded) {
+    host.replaceChildren(emptyNote("读取模型档案…"));
+    return;
+  }
+  if (modelProfileState.available === false) {
+    host.replaceChildren(
+      h(
+        "div",
+        { class: "empty" },
+        h("strong", { text: "模型档案服务未就绪" }),
+        h("span", { text: modelProfileState.error || "接口 404/503；每猫手动模型配置仍可用。" }),
+        h("button", {
+          type: "button",
+          class: "btn btn--ghost btn--tiny",
+          "data-action": "reload-model-profiles",
+          text: "↻ 重试",
+        }),
+      ),
+    );
+    return;
+  }
+  if (!modelProfileState.profiles.length) {
+    host.replaceChildren(emptyNote("没有可用的模型档案。"));
+    return;
+  }
+
+  host.replaceChildren(
+    ...modelProfileState.profiles.map((profile) => modelProfileCard(profile)),
+  );
+}
+
+function modelProfileCard(profile) {
+  const recommended = profile.id === modelProfileState.suggested;
+  const selected = profile.id === modelProfileState.selectedId;
+  const matches = profileMatchesCurrent(profile);
+  const drift = selected && !matches;
+  const applying = modelProfileState.applyingId === profile.id;
+  const cats = app.state?.cats ?? [];
+
+  const map = [];
+  if (!profile.assignments?.length) {
+    map.push(
+      h(
+        "span",
+        { class: "model-profile-map-item" },
+        h("strong", { text: "四只猫" }),
+        document.createTextNode(" → "),
+        h("code", { text: "跟随全局模型", title: "清空所有每猫覆盖" }),
+      ),
+    );
+  } else {
+    for (const assignment of profile.assignments) {
+      const cat = catById(assignment.catId);
+      map.push(
+        h(
+          "span",
+          {
+            class: "model-profile-map-item",
+            title: assignment.reason || "",
+          },
+          h("strong", { text: cat?.name ?? assignment.catId }),
+          document.createTextNode(" → "),
+          h("code", { text: assignment.model }),
+          h("span", { class: "model-profile-badge", text: `T ${assignment.temperature}` }),
+        ),
+      );
+    }
+  }
+
+  return h(
+    "div",
+    {
+      class: "model-profile-card",
+      "data-profile-id": profile.id,
+      "data-recommended": recommended ? "true" : "false",
+      "data-selected": selected ? "true" : "false",
+    },
+    h(
+      "div",
+      { class: "model-profile-top" },
+      h("span", { class: "model-profile-name", text: profile.name }),
+      recommended ? h("span", { class: "model-profile-badge", "data-kind": "recommended", text: "推荐" }) : null,
+      matches ? h("span", { class: "model-profile-badge", "data-kind": "active", text: "当前生效" }) : null,
+      drift ? h("span", { class: "model-profile-badge", "data-kind": "drift", text: "当前配置已偏离" }) : null,
+    ),
+    h("p", { class: "model-profile-desc", text: profile.description }),
+    profile.endpoint
+      ? h("span", { class: "model-profile-endpoint", text: `适用于 ${profile.endpoint}` })
+      : h("span", { class: "model-profile-endpoint", text: "适用于任意 OpenAI 兼容端点" }),
+    h("div", { class: "model-profile-map" }, ...map),
+    h(
+      "div",
+      { class: "model-profile-actions" },
+      h("span", {
+        class: "model-profile-badge",
+        text: `${cats.length} 只猫`,
+      }),
+      h("button", {
+        type: "button",
+        class: "btn btn--tiny btn--primary",
+        "data-action": "apply-model-profile",
+        "data-profile-id": profile.id,
+        disabled: Boolean(modelProfileState.applyingId),
+        text: applying ? "应用中…" : "应用",
+      }),
+    ),
+  );
+}
+
+function openModelProfileConfirm(profileId) {
+  const profile = modelProfileState.profiles.find((item) => item.id === profileId);
+  if (!profile || !els.modelProfileConfirm) return;
+  if (modelProfileState.available === false) {
+    toast("模型档案服务未就绪", "warn");
+    return;
+  }
+  modelProfileState.pendingId = profileId;
+  if (els.modelProfileConfirmSub) {
+    els.modelProfileConfirmSub.textContent = `确认应用「${profile.name}」？`;
+  }
+  if (els.modelProfileConfirmError) {
+    els.modelProfileConfirmError.hidden = true;
+    els.modelProfileConfirmError.textContent = "";
+  }
+  if (els.modelProfileApplyBtn) {
+    els.modelProfileApplyBtn.disabled = false;
+    els.modelProfileApplyBtn.textContent = "确认应用";
+  }
+  if (!els.modelProfileConfirm.open) els.modelProfileConfirm.showModal();
+}
+
+function closeModelProfileConfirm() {
+  if (els.modelProfileConfirm?.open) els.modelProfileConfirm.close();
+}
+
+function showModelProfileConfirmError(message) {
+  if (!els.modelProfileConfirmError) return;
+  els.modelProfileConfirmError.textContent = message;
+  els.modelProfileConfirmError.hidden = false;
+}
+
+async function confirmModelProfileApply() {
+  const profileId = modelProfileState.pendingId;
+  if (!profileId || modelProfileState.applyingId) return;
+  const profile = modelProfileState.profiles.find((item) => item.id === profileId);
+  if (!profile) return;
+  modelProfileState.applyingId = profileId;
+  if (els.modelProfileApplyBtn) {
+    els.modelProfileApplyBtn.disabled = true;
+    els.modelProfileApplyBtn.textContent = "应用中…";
+  }
+  if (els.modelProfileConfirmError) {
+    els.modelProfileConfirmError.hidden = true;
+    els.modelProfileConfirmError.textContent = "";
+  }
+  renderModelProfiles();
+  try {
+    const response = await fetch("/api/model-profiles/apply", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: profileId }),
+    });
+    if (response.status === 404 || response.status === 503) {
+      modelProfileState.available = false;
+      throw new Error("模型档案服务未就绪（HTTP 404/503）");
+    }
+    if (!response.ok) throw new Error(await describeApiError(response));
+    const payload = await response.json();
+    modelProfileState.selectedId = profileId;
+    rememberModelProfileId(profileId);
+    closeModelProfileConfirm();
+    toast(`已应用模型档案「${payload?.profile?.name ?? profile.name}」`);
+    await refreshState().catch(() => {});
+    if (els.settingsModal?.open) {
+      renderCatModelList();
+      renderModelProfiles();
+    }
+    renderAll();
+  } catch (error) {
+    showModelProfileConfirmError(`应用失败：${error.message}`);
+  } finally {
+    modelProfileState.applyingId = null;
+    if (els.modelProfileApplyBtn) {
+      els.modelProfileApplyBtn.disabled = false;
+      els.modelProfileApplyBtn.textContent = "确认应用";
+    }
+    renderModelProfiles();
+  }
+}
+
+async function describeApiError(response) {
+  try {
+    const payload = await response.json();
+    if (payload && typeof payload.error === "string" && payload.error) return payload.error;
+  } catch {
+    /* ignore */
+  }
+  return `HTTP ${response.status}`;
+}
+
 function renderCatModelList() {
   const host = els.catModelList;
   if (!host) return;
@@ -4337,6 +4710,7 @@ function catModelRow(cat) {
     : "跟随全局";
   const modelPlaceholder = `跟随全局：${app.globalModel || "未配置"}`;
   const overriding = Boolean(String(cat.llmModel ?? "").trim());
+  const effectiveBadge = catEffectiveModelBadge(cat);
   const tempValue =
     typeof cat.llmTemperature === "number" && Number.isFinite(cat.llmTemperature)
       ? String(cat.llmTemperature)
@@ -4356,15 +4730,19 @@ function catModelRow(cat) {
       h(
         "div",
         { class: "cat-model-id" },
-        h("strong", { text: cat.name }),
+        h(
+          "span",
+          { class: "cat-model-name-row" },
+          h("strong", { text: cat.name }),
+          h("span", {
+            class: "cat-model-badge",
+            "data-override": overriding ? "true" : "false",
+            title: overriding ? `模型覆盖：${cat.llmModel}` : "没有覆盖，使用全局模型",
+            text: effectiveBadge,
+          }),
+        ),
         h("span", { text: `${cat.species} · ${cat.title}` }),
       ),
-      h("span", {
-        class: "cat-model-tag",
-        "data-mode": app.state?.mode === "llm" ? "llm" : "mock",
-        title: model.title,
-        text: model.text,
-      }),
       h("button", {
         type: "button",
         class: "btn btn--tiny btn--ghost",
@@ -4505,7 +4883,10 @@ function applyUpdatedCat(updated) {
   const index = cats.findIndex((cat) => cat.id === updated.id);
   if (index >= 0) cats[index] = { ...cats[index], ...updated };
   renderAll();
-  if (els.settingsModal?.open) renderCatModelList();
+  if (els.settingsModal?.open) {
+    renderCatModelList();
+    renderModelProfiles();
+  }
   void refreshState().catch(() => {});
 }
 

@@ -3152,6 +3152,214 @@ button {
   justify-content: center;
 }
 
+/* ── 设置 · 模型分工 ─────────────────────────────────────────────────── */
+
+.model-profiles {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line-soft);
+  border-radius: 13px;
+  background: #fffaf1;
+}
+
+.model-profiles-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  align-items: center;
+}
+
+.model-profiles-title {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.model-profile-mode {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: var(--cream-deep);
+  color: #7a5a35;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.model-profile-mode[data-mode="mixed"] {
+  background: #fbf0da;
+  color: #8a6118;
+}
+
+.model-profile-mode[data-mode="uniform"] {
+  background: var(--ok-soft);
+  color: #3f6a4b;
+}
+
+.model-profiles-status {
+  color: var(--muted);
+  font-size: 9.5px;
+}
+
+.model-profiles-head .btn {
+  margin-left: auto;
+}
+
+.model-profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.model-profile-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid var(--line-soft);
+  border-radius: 11px;
+  background: #fffdf8;
+}
+
+.model-profile-card[data-recommended="true"] {
+  border-color: #e3b979;
+  background: #fffaf0;
+}
+
+.model-profile-card[data-selected="true"] {
+  box-shadow: inset 3px 0 0 var(--caramel-deep);
+}
+
+.model-profile-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.model-profile-name {
+  color: var(--ink);
+  font-size: 11.5px;
+  font-weight: 800;
+}
+
+.model-profile-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--cream-deep);
+  color: var(--muted);
+  font-size: 8.5px;
+  font-weight: 800;
+}
+
+.model-profile-badge[data-kind="recommended"] {
+  background: #fbf0da;
+  color: #8a6118;
+}
+
+.model-profile-badge[data-kind="drift"] {
+  background: #fbe9df;
+  color: #9a3f32;
+}
+
+.model-profile-badge[data-kind="active"] {
+  background: var(--ok-soft);
+  color: #3f6a4b;
+}
+
+.model-profile-desc {
+  margin: 0;
+  color: var(--muted);
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+.model-profile-endpoint {
+  color: #a79787;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+}
+
+.model-profile-map {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px 8px;
+}
+
+.model-profile-map-item {
+  display: flex;
+  gap: 4px;
+  align-items: baseline;
+  min-width: 0;
+  color: #6f5a48;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.model-profile-map-item strong {
+  flex: none;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+.model-profile-map-item code {
+  overflow: hidden;
+  color: #7a5a35;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.model-profile-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.model-profile-actions .btn {
+  margin-left: auto;
+}
+
+.model-profile-warning {
+  margin: 0;
+  padding: 8px 9px;
+  border: 1px solid #ebc9b7;
+  border-radius: 10px;
+  background: #fdf7f4;
+  color: #9a5b3c;
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.cat-model-name-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-items: center;
+}
+
+.cat-model-badge {
+  max-width: 190px;
+  overflow: hidden;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--cream-deep);
+  color: #7a5a35;
+  font-family: var(--font-mono);
+  font-size: 8.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cat-model-badge[data-override="true"] {
+  background: #fbf0da;
+  color: #8a6118;
+}
+
 /* ── 设置 · 猫猫与模型 ─────────────────────────────────────────────────── */
 
 .cat-model-list {
@@ -5696,6 +5904,23 @@ button {
 
   .mcp-actions {
     margin-left: 0;
+  }
+
+  .model-profile-map {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cat-model-row .cat-model-tag {
+    display: none;
+  }
+
+  .cat-model-badge {
+    max-width: 220px;
+  }
+
+  .model-profile-actions .btn {
+    margin-left: 0;
+    width: 100%;
   }
 
   .room-name--switch {
