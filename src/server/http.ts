@@ -719,7 +719,12 @@ export function createHttpServer(deps: HttpDeps): Server {
           degradations: llmForTask.filter((call) => call.degraded).length,
           retries: llmForTask.filter((call) => call.retried).length,
           toolCalls: toolForTask.length,
-          approvals: toolForTask.filter((call) => call.status === "rejected").length,
+          // rejected = 被拒；pending = 还在等；approved = 批过（由 tool 状态推断）
+          rejected: toolForTask.filter((call) => call.status === "rejected").length,
+          approvalWaitMs: toolForTask.reduce((sum, call) => {
+            if (!call.approvalRequestedAt || !call.approvalDecidedAt) return sum;
+            return sum + Math.max(0, call.approvalDecidedAt - call.approvalRequestedAt);
+          }, 0),
           handoffs: state.handoffs.filter((handoff) => handoff.taskId === taskId).length,
           artifacts: state.artifacts.filter((artifact) => artifact.taskId === taskId).length,
         };

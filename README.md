@@ -217,7 +217,8 @@ run_command node --test ...      ✓ exit 0（砚砚放行）
     "llmCalls": 11, "llmDurationMs": 88000,
     "inputTokens": 35474, "outputTokens": 9426,
     "degradations": 0, "retries": 0,
-    "toolCalls": 11, "approvals": 0,
+    "toolCalls": 11, "rejected": 0,
+    "approvalWaitMs": 0,
     "handoffs": 3, "artifacts": 2
   },
   "entries": [

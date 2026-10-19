@@ -1646,6 +1646,39 @@
       </div>
     </dialog>
 
+    <!-- ── 任务轨迹 ───────────────────────────────────────────────── -->
+    <dialog id="task-trace-modal" class="modal modal--trace" aria-labelledby="task-trace-title">
+      <div class="modal-card trace-card">
+        <header class="modal-head trace-head">
+          <div class="trace-head-text">
+            <h2 id="task-trace-title">任务轨迹</h2>
+            <p class="modal-sub" id="task-trace-sub">一次协作里发生了什么。</p>
+          </div>
+          <button type="button" class="icon-btn" data-action="refresh-task-trace" title="刷新轨迹" aria-label="刷新轨迹">
+            ↻
+          </button>
+          <button type="button" class="icon-btn" data-action="close-task-trace" aria-label="关闭轨迹">
+            ✕
+          </button>
+        </header>
+
+        <div id="trace-summary" class="trace-summary"></div>
+
+        <div class="trace-toolbar">
+          <div class="trace-filters" role="group" aria-label="轨迹筛选">
+            <button type="button" class="trace-filter is-active" data-action="filter-task-trace" data-filter="all">全部</button>
+            <button type="button" class="trace-filter" data-action="filter-task-trace" data-filter="llm">模型</button>
+            <button type="button" class="trace-filter" data-action="filter-task-trace" data-filter="tool">工具</button>
+            <button type="button" class="trace-filter" data-action="filter-task-trace" data-filter="handoff">交接</button>
+          </div>
+          <span class="trace-count" id="trace-entry-count"></span>
+        </div>
+
+        <p class="form-error" id="trace-error" role="alert" hidden></p>
+        <div id="trace-timeline" class="trace-timeline" role="list"></div>
+      </div>
+    </dialog>
+
     <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
 
     <script type="module" src="/app.js"></script>

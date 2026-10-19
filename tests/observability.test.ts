@@ -258,3 +258,71 @@ describe("Studio 记录与 trace", () => {
     }
   });
 });
+
+describe("审批等待时间", () => {
+  test("pending → start 会记录审批耗时", () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    try {
+      const call = studio.addToolCall({
+        catId: "jinjianceng",
+        tool: "run_command",
+        args: { cmd: "node", args: ["--version"] },
+        label: "跑版本",
+        status: "pending",
+      });
+      assert.ok(call.approvalRequestedAt, "pending 时应记录请求时间");
+      assert.equal(call.approvalDecidedAt, undefined);
+
+      studio.startToolCall(call.id);
+      const after = studio.snapshot().toolCalls.find((item) => item.id === call.id);
+      assert.ok(after?.approvalDecidedAt, "批准时应记录决定时间");
+      assert.ok(
+        (after?.approvalDecidedAt ?? 0) >= (after?.approvalRequestedAt ?? 0),
+        "决定时间不应早于请求时间",
+      );
+    } finally {
+      studio.close();
+    }
+  });
+
+  test("trace summary 汇总审批等待时间", async () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    const server = createHttpServer({
+      studio,
+      driver: fakeDriver(),
+      publicDir: resolve(import.meta.dirname, "../public"),
+      scenarios: SCENARIOS,
+      mode: "mock",
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", () => done()));
+    const address = server.address();
+    if (!address || typeof address !== "object") throw new Error("no port");
+    const base = `http://127.0.0.1:${address.port}`;
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "审批等待测试",
+        scenarioId: "export_csv",
+      });
+      const call = studio.addToolCall({
+        catId: "jinjianceng",
+        tool: "run_command",
+        args: { cmd: "node", args: ["--version"] },
+        label: "跑版本",
+        taskId: task.id,
+        status: "pending",
+      });
+      // 手动制造 50ms 的等待
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      studio.startToolCall(call.id);
+      studio.finishToolCall(call.id, { status: "ok", output: "v1" });
+
+      const res = await fetch(`${base}/api/tasks/${task.id}/trace`);
+      const body = (await res.json()) as { summary: Record<string, number> };
+      assert.ok((body.summary.approvalWaitMs ?? 0) >= 40, `应至少有 40ms，实际 ${body.summary.approvalWaitMs}`);
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()));
+      studio.close();
+    }
+  });
+});

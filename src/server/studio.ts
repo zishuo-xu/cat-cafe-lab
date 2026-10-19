@@ -453,6 +453,7 @@ export class Studio {
       startedAt: now(),
     };
     if (input.taskId) call.taskId = input.taskId;
+    if (call.status === "pending") call.approvalRequestedAt = call.startedAt;
     this.state.toolCalls.push(call);
     if (this.state.toolCalls.length > 300) {
       this.state.toolCalls.splice(0, this.state.toolCalls.length - 300);
@@ -466,6 +467,7 @@ export class Studio {
   startToolCall(id: string): ToolCall {
     const call = this.state.toolCalls.find((item) => item.id === id);
     if (!call) throw new Error(`tool call not found: ${id}`);
+    if (call.approvalRequestedAt && !call.approvalDecidedAt) call.approvalDecidedAt = now();
     call.status = "running";
     call.startedAt = now();
     this.notify();

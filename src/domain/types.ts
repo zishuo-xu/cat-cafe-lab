@@ -506,6 +506,10 @@ export interface ToolCall {
   output?: string;
   startedAt: number;
   finishedAt?: number;
+  /** 进入待审批的时间（pending 状态）。 */
+  approvalRequestedAt?: number;
+  /** 铲屎官做出决定的时间。 */
+  approvalDecidedAt?: number;
 }
 
 /**

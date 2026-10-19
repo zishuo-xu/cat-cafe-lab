@@ -171,6 +171,18 @@ const taskRecoveryState = {
   error: "",
 };
 
+/** 任务轨迹面板状态。 */
+const traceState = {
+  taskId: null,
+  loading: false,
+  available: null,
+  data: null,
+  error: "",
+  filter: "all",
+  collapsedStages: new Set(),
+  requestId: 0,
+};
+
 /** 模型分工档案状态。 */
 const modelProfileState = {
   loading: false,
@@ -961,6 +973,13 @@ function cacheDom() {
   els.settingsConfirmReset = $("#settings-confirm-reset");
   els.settingsSaveBtn = $("#settings-save-btn");
 
+  els.taskTraceModal = $("#task-trace-modal");
+  els.traceSub = $("#task-trace-sub");
+  els.traceSummary = $("#trace-summary");
+  els.traceTimeline = $("#trace-timeline");
+  els.traceCount = $("#trace-entry-count");
+  els.traceError = $("#trace-error");
+  els.traceFilters = $$(".trace-filter");
   els.modelProfilesList = $("#model-profile-list");
   els.modelProfilesStatus = $("#model-profiles-status");
   els.modelProfileMode = $("#model-profile-mode");
@@ -1658,6 +1677,13 @@ function renderProgress() {
         "span",
         { class: "owner-actions" },
         h("span", { class: "stall-note", "data-stall-note": "" }),
+        h("button", {
+          type: "button",
+          class: "btn btn--tiny btn--ghost trace-open-btn",
+          "data-action": "open-task-trace",
+          "data-task-id": task.id,
+          text: "🔍 查看轨迹",
+        }),
         h("button", {
           type: "button",
           class: "btn btn--tiny btn--nudge",
@@ -2769,6 +2795,12 @@ function bindUi() {
     });
   }
 
+  if (els.taskTraceModal) {
+    els.taskTraceModal.addEventListener("click", (event) => {
+      if (event.target === els.taskTraceModal) closeTaskTrace();
+    });
+  }
+
   if (els.modelProfileConfirm) {
     els.modelProfileConfirm.addEventListener("click", (event) => {
       if (event.target === els.modelProfileConfirm) closeModelProfileConfirm();
@@ -3233,6 +3265,33 @@ function onGlobalClick(event) {
       if (actionEl.dataset.workspaceId && actionEl.dataset.path) {
         void openWorkspaceFile(actionEl.dataset.workspaceId, actionEl.dataset.path);
       }
+      break;
+    case "open-task-trace":
+      if (actionEl.dataset.taskId) void openTaskTrace(actionEl.dataset.taskId);
+      break;
+    case "close-task-trace":
+      closeTaskTrace();
+      break;
+    case "refresh-task-trace":
+      if (traceState.taskId) void loadTaskTrace(traceState.taskId);
+      break;
+    case "filter-task-trace":
+      if (actionEl.dataset.filter) {
+        traceState.filter = actionEl.dataset.filter;
+        renderTaskTrace();
+      }
+      break;
+    case "toggle-trace-stage": {
+      const key = actionEl.dataset.stageKey;
+      if (key) {
+        if (traceState.collapsedStages.has(key)) traceState.collapsedStages.delete(key);
+        else traceState.collapsedStages.add(key);
+        renderTaskTrace();
+      }
+      break;
+    }
+    case "toggle-trace-detail":
+      actionEl.classList.toggle("is-expanded");
       break;
     case "open-task-diff":
       openTaskDiffModal();
@@ -4358,6 +4417,378 @@ async function resetStudio() {
 
 
 // ── 设置 · 猫猫与模型 / 猫猫档案 ────────────────────────────────────────
+
+// ── 任务轨迹面板 ───────────────────────────────────────────────────────
+
+const TRACE_KIND_META = {
+  llm: { icon: "✦", label: "模型" },
+  tool: { icon: "🛠", label: "工具" },
+  handoff: { icon: "🔁", label: "交接" },
+  artifact: { icon: "📄", label: "产物" },
+  review: { icon: "🔍", label: "评审" },
+  chat: { icon: "💬", label: "发言" },
+  decision: { icon: "⚖", label: "决策" },
+  memory: { icon: "🧠", label: "记忆" },
+  system: { icon: "•", label: "系统" },
+};
+
+function traceTime(at) {
+  const date = new Date(Number(at) || Date.now());
+  return [date.getHours(), date.getMinutes(), date.getSeconds()]
+    .map((value) => String(value).padStart(2, "0"))
+    .join(":");
+}
+
+function traceNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? new Intl.NumberFormat("zh-CN").format(number) : "0";
+}
+
+function traceActorName(actor, actorName) {
+  if (actorName) return actorName;
+  if (actor === "user") return "铲屎官";
+  if (actor === "system") return "系统";
+  return catById(actor)?.name ?? actor ?? "未知";
+}
+
+function parseTraceLlmDetail(detail) {
+  const text = String(detail ?? "");
+  const duration = /·\s*(\d+)ms(?:\s*·|$)/.exec(text);
+  const tokens = /in\s+(\d+)\/out\s+(\d+)/.exec(text);
+  return {
+    durationMs: duration ? Number(duration[1]) : undefined,
+    input: tokens ? Number(tokens[1]) : undefined,
+    output: tokens ? Number(tokens[2]) : undefined,
+  };
+}
+
+function parseToolTraceStatus(detail) {
+  const match = /(?:^|\s)(ok|error|rejected)(?:\s|\(|$)/.exec(String(detail ?? ""));
+  return match ? match[1] : "";
+}
+
+async function openTaskTrace(taskId) {
+  const task = taskId ? taskById(taskId) : activeTask();
+  if (!task || !els.taskTraceModal) return;
+  traceState.taskId = task.id;
+  traceState.filter = "all";
+  traceState.collapsedStages = new Set();
+  traceState.error = "";
+  traceState.data = null;
+  traceState.available = null;
+  traceState.loading = true;
+  if (els.traceSub) els.traceSub.textContent = `${task.title} · 读取轨迹…`;
+  if (!els.taskTraceModal.open) els.taskTraceModal.showModal();
+  renderTaskTrace();
+  await loadTaskTrace(task.id);
+}
+
+function closeTaskTrace() {
+  if (els.taskTraceModal?.open) els.taskTraceModal.close();
+  traceState.taskId = null;
+  traceState.data = null;
+  traceState.loading = false;
+}
+
+async function loadTaskTrace(taskId) {
+  const requestId = ++traceState.requestId;
+  traceState.loading = true;
+  traceState.error = "";
+  renderTaskTrace();
+  try {
+    const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/trace`, {
+      headers: { Accept: "application/json" },
+      cache: "no-store",
+    });
+    if (response.status === 404 || response.status === 503) {
+      throw Object.assign(new Error("轨迹服务未就绪"), { unavailable: true });
+    }
+    if (!response.ok) throw new Error(await describeHttpError(response, "GET task trace"));
+    const payload = await response.json();
+    if (requestId !== traceState.requestId) return;
+    traceState.data = payload;
+    traceState.available = true;
+    traceState.error = "";
+  } catch (error) {
+    if (requestId !== traceState.requestId) return;
+    traceState.available = false;
+    traceState.error = error.unavailable
+      ? "轨迹服务未就绪（GET /api/tasks/:id/trace 404/503）"
+      : `轨迹读取失败：${error.message}`;
+    traceState.data = null;
+  } finally {
+    if (requestId === traceState.requestId) {
+      traceState.loading = false;
+      renderTaskTrace();
+    }
+  }
+}
+
+function traceVisibleEntries(entries) {
+  const filter = traceState.filter;
+  if (filter === "all") return entries;
+  return entries.filter((entry) => entry.kind === filter);
+}
+
+function traceStageGroups(entries) {
+  const groups = [];
+  let current = { stage: "", label: "开始", at: null, entries: [] };
+  for (const entry of entries) {
+    if (entry.kind === "stage") {
+      const stage = String(entry.meta?.stage ?? "");
+      const hasContent = current.entries.length > 0;
+      if (hasContent || groups.length) groups.push(current);
+      current = {
+        stage,
+        label: STAGE_LABEL.get(stage) ?? stage ?? "阶段",
+        at: entry.at,
+        actorName: entry.actorName ?? entry.actor,
+        entries: [],
+      };
+      continue;
+    }
+    current.entries.push(entry);
+  }
+  groups.push(current);
+  return groups.filter((group) => group.stage || group.entries.length);
+}
+
+function traceSummaryNode(data) {
+  const summary = data?.summary ?? {};
+  const duration = Number(summary.durationMs) || 0;
+  const llmDuration = Number(summary.llmDurationMs) || 0;
+  const llmCalls = Number(summary.llmCalls) || 0;
+  const percent = duration > 0 ? Math.round((llmDuration / duration) * 100) : 0;
+  const metrics = [
+    { label: "总耗时", value: formatTestDuration(duration) },
+    { label: "模型调用", value: `${llmCalls} 次` },
+    { label: "Tokens", value: `in ${traceNumber(summary.inputTokens)} / out ${traceNumber(summary.outputTokens)}` },
+    { label: "工具", value: `${Number(summary.toolCalls) || 0} 次` },
+    { label: "交接", value: `${Number(summary.handoffs) || 0} 次` },
+    { label: "产物", value: `${Number(summary.artifacts) || 0} 个` },
+    { label: "降级", value: `${Number(summary.degradations) || 0} 次`, tone: Number(summary.degradations) > 0 ? "danger" : "" },
+    { label: "审批拒绝", value: `${Number(summary.approvals) || 0} 次` },
+    { label: "重试", value: `${Number(summary.retries) || 0} 次` },
+  ];
+  const hero = h(
+    "div",
+    { class: "trace-hero" },
+    h(
+      "div",
+      { class: "trace-hero-main" },
+      h("span", { class: "trace-hero-value", text: `${percent}%` }),
+      h("span", { class: "trace-hero-label", text: "模型思考占总耗时" }),
+      h("span", {
+        class: "trace-hero-sub",
+        text: `模型 ${formatTestDuration(llmDuration)} / 总 ${formatTestDuration(duration)} · ${llmCalls} 次调用`,
+      }),
+    ),
+    h(
+      "div",
+      { class: "trace-share" },
+      h(
+        "div",
+        {
+          class: "trace-share-track",
+          role: "img",
+          "aria-label": `模型思考占总耗时 ${percent}%`,
+        },
+        h("i", { class: "trace-share-fill", style: `width:${Math.max(percent, 0)}%` }),
+      ),
+      h(
+        "div",
+        { class: "trace-share-legend" },
+        h("span", {}, h("i", { class: "trace-share-dot" }), `模型 ${formatTestDuration(llmDuration)}`),
+        h("span", {}, h("i", { class: "trace-share-dot", "data-kind": "other" }), `其他 ${formatTestDuration(Math.max(0, duration - llmDuration))}`),
+      ),
+    ),
+  );
+  return [hero, h("div", { class: "trace-metrics" }, ...metrics.map((metric) =>
+    h(
+      "div",
+      { class: "trace-metric", "data-tone": metric.tone ?? "" },
+      h("span", { class: "trace-metric-label", text: metric.label }),
+      h("span", { class: "trace-metric-value", text: metric.value }),
+    ),
+  ))];
+}
+
+function renderTaskTrace() {
+  if (!els.traceTimeline) return;
+  const task = traceState.taskId ? taskById(traceState.taskId) : null;
+  if (els.traceSub) {
+    els.traceSub.textContent = task
+      ? `${task.title} · ${task.status === "done" ? "已完成" : task.status === "stalled" ? "卡住了" : "进行中"}`
+      : "一次协作里发生了什么。";
+  }
+  if (els.traceSummary) {
+    els.traceSummary.replaceChildren();
+    if (!traceState.loading && traceState.data) {
+      els.traceSummary.append(...traceSummaryNode(traceState.data));
+    }
+  }
+  for (const button of els.traceFilters ?? []) {
+    button.classList.toggle("is-active", button.dataset.filter === traceState.filter);
+  }
+  if (els.traceError) {
+    els.traceError.hidden = !traceState.error;
+    els.traceError.textContent = traceState.error || "";
+  }
+
+  const timeline = els.traceTimeline;
+  if (els.traceCount) els.traceCount.textContent = "";
+  if (traceState.loading) {
+    timeline.replaceChildren(h("div", { class: "trace-empty", text: "读取轨迹…" }));
+    return;
+  }
+  if (traceState.available === false) {
+    timeline.replaceChildren(
+      h(
+        "div",
+        { class: "trace-empty" },
+        h("strong", { text: "轨迹服务未就绪" }),
+        h("span", { text: traceState.error || "接口 404/503" }),
+        h("button", {
+          type: "button",
+          class: "btn btn--ghost btn--tiny",
+          "data-action": "refresh-task-trace",
+          text: "↻ 重试",
+        }),
+      ),
+    );
+    return;
+  }
+  const entries = Array.isArray(traceState.data?.entries) ? traceState.data.entries : [];
+  if (!entries.length) {
+    timeline.replaceChildren(h("div", { class: "trace-empty", text: "这个任务还没有轨迹。" }));
+    return;
+  }
+
+  const visible = traceVisibleEntries(entries);
+  if (els.traceCount) els.traceCount.textContent = `${visible.length} 条轨迹`;
+  if (!visible.length) {
+    timeline.replaceChildren(h("div", { class: "trace-empty", text: "没有匹配的轨迹条目。" }));
+    return;
+  }
+
+  const maxLlmDuration = Math.max(
+    1,
+    ...entries
+      .filter((entry) => entry.kind === "llm")
+      .map((entry) => parseTraceLlmDetail(entry.detail).durationMs ?? 0),
+  );
+
+  const groups = traceStageGroups(entries);
+  const nodes = [];
+  for (let index = 0; index < groups.length; index += 1) {
+    const group = groups[index];
+    const groupEntries = traceVisibleEntries(group.entries);
+    if (!groupEntries.length && traceState.filter !== "all") continue;
+    const key = group.stage ? `${group.stage}:${group.at ?? index}` : `group:${index}`;
+    const collapsed = traceState.collapsedStages.has(key);
+    const section = h("div", {
+      class: `trace-stage${collapsed ? " is-collapsed" : ""}`,
+      role: "group",
+      "data-stage-key": key,
+    });
+    if (group.stage) {
+      section.appendChild(
+        h(
+          "button",
+          {
+            type: "button",
+            class: "trace-stage-head",
+            "data-action": "toggle-trace-stage",
+            "data-stage-key": key,
+            "aria-expanded": collapsed ? "false" : "true",
+          },
+          h("span", { class: "trace-stage-chevron", text: "▾" }),
+          h("span", { class: "trace-stage-name", text: group.label }),
+          h("span", { class: "trace-stage-time", text: group.at ? traceTime(group.at) : "" }),
+          h("span", {
+            class: "trace-stage-count",
+            text: `${groupEntries.length} 条`,
+          }),
+        ),
+      );
+    }
+    const list = h("div", { class: "trace-stage-entries" });
+    for (const entry of groupEntries) {
+      list.appendChild(traceEntryNode(entry, maxLlmDuration));
+    }
+    section.appendChild(list);
+    nodes.push(section);
+  }
+  if (!nodes.length) {
+    timeline.replaceChildren(h("div", { class: "trace-empty", text: "没有匹配的轨迹条目。" }));
+    return;
+  }
+  timeline.replaceChildren(...nodes);
+}
+
+function traceEntryNode(entry, maxLlmDuration) {
+  const kind = String(entry.kind ?? "chat");
+  const meta = TRACE_KIND_META[kind] ?? { icon: "•", label: kind };
+  const actor = entry.actor ?? "";
+  const cat = actor !== "user" && actor !== "system" ? catById(actor) : null;
+  const actorName = traceActorName(actor, entry.actorName);
+  const degraded = kind === "llm" && entry.meta?.degraded === true;
+  const llm = kind === "llm" ? parseTraceLlmDetail(entry.detail) : null;
+  const toolStatus = kind === "tool" ? parseToolTraceStatus(entry.detail) : "";
+  const detail = h("div", {
+    class: "trace-detail",
+    "data-action": "toggle-trace-detail",
+    title: entry.detail || "",
+    text: entry.detail || "",
+    "data-tool-status": toolStatus,
+  });
+  const children = [
+    h("span", { class: "trace-actor" },
+      h("i", {
+        class: "trace-actor-dot",
+        "data-actor": actor,
+        style: cat?.accent ? `--accent:${safeCss(cat.accent)}` : null,
+      }),
+      h("span", { text: actorName }),
+    ),
+    detail,
+  ];
+  if (kind === "llm") {
+    const metaRow = h("div", { class: "trace-llm-meta" });
+    if (llm?.durationMs !== undefined) {
+      metaRow.appendChild(h("span", { class: "trace-llm-duration", text: `${llm.durationMs}ms` }));
+      const width = Math.max(4, Math.round((llm.durationMs / maxLlmDuration) * 100));
+      metaRow.appendChild(h("span", { class: "trace-llm-bar", title: `相对耗时 ${width}%` }, h("i", { style: `width:${width}%` })));
+    }
+    if (llm?.input !== undefined || llm?.output !== undefined) {
+      metaRow.appendChild(h("span", {
+        class: "trace-llm-tokens",
+        text: `in ${traceNumber(llm.input)} / out ${traceNumber(llm.output)}`,
+      }));
+    }
+    if (degraded) metaRow.appendChild(h("span", { class: "trace-degraded-badge", text: "降级" }));
+    children.push(metaRow);
+  }
+  if (kind === "tool" && entry.meta?.label) {
+    children.push(h("span", {
+      class: "trace-tool-extra",
+      text: `${entry.meta.label}${entry.meta.durationMs !== undefined ? ` · ${entry.meta.durationMs}ms` : ""}`,
+    }));
+  }
+  return h(
+    "div",
+    {
+      class: "trace-item",
+      role: "listitem",
+      "data-kind": kind,
+      "data-degraded": degraded ? "true" : "false",
+      ...(degraded ? { title: String(entry.meta?.degradeReason ?? "模型调用降级") } : {}),
+    },
+    h("span", { class: "trace-time", text: traceTime(entry.at) }),
+    h("span", { class: "trace-icon", "aria-hidden": "true", title: meta.label, text: meta.icon }),
+    h("div", { class: "trace-body" }, ...children),
+  );
+}
 
 // ── 模型分工档案 ───────────────────────────────────────────────────────
 
