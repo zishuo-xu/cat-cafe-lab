@@ -87,6 +87,12 @@ export function createCliBrain(
 
       if (envelope.is_error) {
         warn(`[cli-brain] CLI 返回错误（${envelope.subtype ?? "unknown"}），降级 fallback`);
+        ctx.onReport?.({
+          model: settings.model,
+          engine: "cli",
+          degraded: true,
+          degradeReason: `CLI is_error: ${envelope.subtype ?? "unknown"}`,
+        });
         return fallback.think(ctx);
       }
 
@@ -98,6 +104,13 @@ export function createCliBrain(
 
       const turns = parseTurns(content, ctx);
       if (turns.length > 0) {
+        const usage = (envelope as { usage?: { input_tokens?: number; output_tokens?: number } }).usage;
+        ctx.onReport?.({
+          model: settings.model,
+          engine: "cli",
+          ...(typeof usage?.input_tokens === "number" ? { inputTokens: usage.input_tokens } : {}),
+          ...(typeof usage?.output_tokens === "number" ? { outputTokens: usage.output_tokens } : {}),
+        });
         // 增量草稿：CLI 是整段返回，这里只推一次最终文本，让前端有反馈。
         ctx.onDelta?.({ catId: ctx.cat.id, roomId: ctx.room.id, text: clipPrimaryText(turns) });
         return turns;

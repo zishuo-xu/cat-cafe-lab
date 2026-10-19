@@ -204,6 +204,34 @@ run_command node --test ...      ✓ exit 0（砚砚放行）
 - 审批等待期间不会把任务误判成「卡住了」；
 - 同一轮里连续的 `read_file` / `list_files` 会**并行执行**（写文件和跑命令仍串行）。
 
+## 可观测性：一次协调查得到
+
+每次模型调用都会落一条 `LlmCall` 记录：模型、耗时、token、是否流式、是否降级、是否重试、产出了哪些 turn。
+
+`GET /api/tasks/:id/trace` 把这些拼成一条时间线 + 一份汇总：
+
+```json
+{
+  "summary": {
+    "durationMs": 121000,
+    "llmCalls": 11, "llmDurationMs": 88000,
+    "inputTokens": 35474, "outputTokens": 9426,
+    "degradations": 0, "retries": 0,
+    "toolCalls": 11, "approvals": 0,
+    "handoffs": 3, "artifacts": 2
+  },
+  "entries": [
+    { "kind": "stage",   "actorName": "宪宪",   "detail": "进入阶段 intake" },
+    { "kind": "llm",     "actorName": "宪宪",   "detail": "deepseek-v4.1-flash · 5642ms · in 1763/out 315" },
+    { "kind": "tool",    "actorName": "宪宪",   "detail": "list_files ok" },
+    { "kind": "handoff", "actorName": "宪宪",   "detail": "交接给 金渐层：实现 7 天长效凭证的签发与校验" }
+  ]
+}
+```
+
+这条数据回答了一个之前只能猜的问题：**时间到底花在哪**——上面那次任务 121 秒里，88 秒是模型思考，
+工具只占很小一部分。所以优化方向应该是"减少模型调用轮数 / 换快模型"，而不是"优化工具"。
+
 ## 猫的记忆：跨任务连续
 
 每只猫都有自己的「近期经历」——不是全局共享的记忆表，而是**按猫归属的会话记录**：

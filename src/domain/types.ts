@@ -248,6 +248,8 @@ export interface StudioState {
   catSessions: Record<CatId, CatSession>;
   /** 沙盒工具调用记录（写文件 / 跑命令）。 */
   toolCalls: ToolCall[];
+  /** 模型调用记录（可观测性）。 */
+  llmCalls: LlmCall[];
   /** roomId -> 正在打字的猫（同一房间同时只有一只猫打字）。 */
   typing: Record<RoomId, CatId | null>;
   /**
@@ -314,6 +316,11 @@ export interface TurnContext {
    * mock brain 不需要实现它；llm-brain 只在支持流式时调用。
    */
   onDelta?: (delta: DeltaUpdate) => void;
+  /**
+   * 用量回报（可选）。brain 在调用结束时回报 token / 降级 / 重试信息，
+   * driver 落成 LlmCall 记录，前端据此展示"这只猫这次想了多久、多贵"。
+   */
+  onReport?: (report: BrainReport) => void;
   /** 场景数据（mock brain 用于取台词模板）。 */
   scenario: Scenario | null;
 }
@@ -380,6 +387,22 @@ export interface DeltaUpdate {
   roomId: RoomId;
   /** 已累计的完整草稿文本（不是本段增量）。 */
   text: string;
+}
+
+/**
+ * 一次 think 的副产物（用量 / 降级 / 重试）。
+ * brain 通过 ctx.onReport 回传，driver 落成 LlmCall 记录。
+ */
+export interface BrainReport {
+  model?: string;
+  engine?: "api" | "cli";
+  inputTokens?: number;
+  outputTokens?: number;
+  streamed?: boolean;
+  degraded?: boolean;
+  degradeReason?: string;
+  retried?: boolean;
+  error?: string;
 }
 
 export interface CatBrain {
@@ -483,6 +506,42 @@ export interface ToolCall {
   output?: string;
   startedAt: number;
   finishedAt?: number;
+}
+
+/**
+ * 一次模型调用的记录（可观测性核心）。
+ *
+ * 记录"这只猫这一次想了多久、花了多少 token、有没有降级/重试"。
+ * 这是协作层唯一能看清"钱和时间花在哪"的地方。
+ */
+export interface LlmCall {
+  id: string;
+  taskId?: TaskId;
+  catId: CatId;
+  /** 调用的意图：哪个阶段、因为什么被唤醒。 */
+  stage?: TaskStage;
+  trigger?: TriggerKind;
+  model: string;
+  engine: "api" | "cli";
+  startedAt: number;
+  finishedAt?: number;
+  /** 耗时（毫秒）。 */
+  durationMs?: number;
+  /** token 用量（provider 返回才有）。 */
+  inputTokens?: number;
+  outputTokens?: number;
+  /** 是否走了流式。 */
+  streamed?: boolean;
+  /** 是否降级到 mock。 */
+  degraded?: boolean;
+  /** 降级原因（只记简短原因，不记原文）。 */
+  degradeReason?: string;
+  /** 被 max_tokens 截断后重试过一次。 */
+  retried?: boolean;
+  /** 产出的 turn 数量与种类，便于看"这次想了什么"。 */
+  turnKinds?: string[];
+  /** 错误信息（如果有）。 */
+  error?: string;
 }
 
 export interface SandboxFile {

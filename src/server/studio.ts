@@ -30,11 +30,13 @@ import type {
   StudioState,
   CatEpisode,
   CatSession,
+  LlmCall,
   Task,
   TaskStage,
   TaskStep,
   ToolCall,
   ToolResult,
+  TriggerKind,
 } from "../domain/types.ts";
 
 const MAX_MESSAGES = 1500;
@@ -106,6 +108,7 @@ function freshState(cats: Cat[], mode: BrainMode): StudioState {
     memory: [],
     catSessions: {},
     toolCalls: [],
+    llmCalls: [],
     typing: { [room.id]: null },
     drafts: {},
     seq: 0,
@@ -392,6 +395,43 @@ export class Studio {
     this.state.memory.push(entry);
     this.notify();
     return entry;
+  }
+
+  /** 模型调用：开始时落一条记录，结束时补齐。 */
+  startLlmCall(input: {
+    catId: CatId;
+    model: string;
+    engine: "api" | "cli";
+    taskId?: Task["id"];
+    stage?: TaskStage;
+    trigger?: TriggerKind;
+  }): LlmCall {
+    const call: LlmCall = {
+      id: ids.message(),
+      catId: input.catId,
+      model: input.model,
+      engine: input.engine,
+      startedAt: now(),
+    };
+    if (input.taskId) call.taskId = input.taskId;
+    if (input.stage) call.stage = input.stage;
+    if (input.trigger) call.trigger = input.trigger;
+    this.state.llmCalls.push(call);
+    // 只保留最近 200 条，避免状态无限增长。
+    if (this.state.llmCalls.length > 200) {
+      this.state.llmCalls.splice(0, this.state.llmCalls.length - 200);
+    }
+    return call;
+  }
+
+  finishLlmCall(id: string, patch: Partial<LlmCall>): LlmCall | undefined {
+    const call = this.state.llmCalls.find((item) => item.id === id);
+    if (!call) return undefined;
+    Object.assign(call, patch);
+    call.finishedAt = now();
+    call.durationMs = call.finishedAt - call.startedAt;
+    this.notify();
+    return call;
   }
 
   /** 沙盒工具调用：先落一条 running，执行完再 finish。 */
@@ -712,6 +752,7 @@ export class Studio {
     this.state.artifacts.length = 0;
     this.state.memory.length = 0;
     this.state.catSessions = {};
+    this.state.llmCalls.length = 0;
     this.state.toolCalls.length = 0;
     for (const roomId of Object.keys(this.state.typing)) this.state.typing[roomId] = null;
     this.state.drafts = {};
@@ -786,6 +827,7 @@ export class Studio {
       this.state.artifacts = (parsed.artifacts ?? []) as Artifact[];
       this.state.memory = (parsed.memory ?? []) as MemoryEntry[];
       this.state.catSessions = (parsed.catSessions ?? {}) as Record<string, CatSession>;
+      this.state.llmCalls = (parsed.llmCalls ?? []) as LlmCall[];
       this.state.toolCalls = (parsed.toolCalls ?? []) as ToolCall[];
       this.state.typing = (parsed.typing ?? {}) as Record<RoomId, CatId | null>;
       // 草稿是瞬态：重启后不恢复（否则会留下永远不消失的半截气泡）。

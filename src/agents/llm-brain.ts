@@ -160,6 +160,12 @@ export function createLlmBrain(
         warn(
           `[llm-brain] ${reason}，降级 fallback（猫=${ctx.cat.name}，model=${model || "-"}，stage=${ctx.task?.stage ?? "-"}）`,
         );
+        ctx.onReport?.({
+          model,
+          engine: "api",
+          degraded: true,
+          degradeReason: reason.slice(0, 200),
+        });
         return fallback.think(ctx);
       };
 
@@ -204,6 +210,7 @@ export function createLlmBrain(
 
           let content: string | null;
           let finish: string | null;
+          let payload: unknown = null;
           if (useStream) {
             const streamed = await consumeStream(response, ctx, warn);
             if (streamed === null) {
@@ -211,8 +218,8 @@ export function createLlmBrain(
             }
             content = streamed.content;
             finish = streamed.finishReason;
+            payload = streamed.usagePayload;
           } else {
-            let payload: unknown;
             try {
               payload = await response.json();
             } catch {
@@ -262,6 +269,14 @@ export function createLlmBrain(
               `模型输出不是可用的 CatTurn[]（finish=${finish ?? "-"}, len=${content.length}，原文前 300 字：${preview}）`,
             );
           }
+          // 成功路径：回报用量（token / 流式 / 重试），供可观测性记录。
+          ctx.onReport?.({
+            model,
+            engine: "api",
+            streamed: useStream,
+            retried,
+            ...usageFrom(payload),
+          });
           return turns;
         } catch (err) {
           const reason = controller.signal.aborted
@@ -289,7 +304,11 @@ async function consumeStream(
   response: Response,
   ctx: TurnContext,
   warn?: (line: string) => void,
-): Promise<{ content: string; finishReason: string | null } | null> {
+): Promise<{
+  content: string;
+  finishReason: string | null;
+  usagePayload: unknown;
+} | null> {
   const body = response.body;
   if (!body) return null;
   const reader = body.getReader();
@@ -297,6 +316,7 @@ async function consumeStream(
   let buffer = "";
   let content = "";
   let finishReason: string | null = null;
+  let usagePayload: unknown = null;
   let drafted = "";
 
   const pushDraft = (): void => {
@@ -326,6 +346,8 @@ async function consumeStream(
           continue;
         }
         if (!isRecord(event)) continue;
+        // usage 可能出现在 choices 为空的收尾 chunk 里，先抓。
+        if (isRecord(event.usage)) usagePayload = event;
         const choices = event.choices;
         if (!Array.isArray(choices) || choices.length === 0) continue;
         const first = choices[0];
@@ -347,7 +369,7 @@ async function consumeStream(
   } finally {
     reader.releaseLock?.();
   }
-  return { content, finishReason };
+  return { content, finishReason, usagePayload };
 }
 
 /**
@@ -1254,4 +1276,17 @@ function scrub(line: string, apiKey: string): string {
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
   return String(err);
+}
+
+/** 从 OpenAI / Anthropic 兼容响应里取 token 用量。 */
+function usageFrom(payload: unknown): { inputTokens?: number; outputTokens?: number } {
+  if (!isRecord(payload)) return {};
+  const usage = payload.usage;
+  if (!isRecord(usage)) return {};
+  const input = usage.prompt_tokens ?? usage.input_tokens;
+  const output = usage.completion_tokens ?? usage.output_tokens;
+  const result: { inputTokens?: number; outputTokens?: number } = {};
+  if (typeof input === "number") result.inputTokens = input;
+  if (typeof output === "number") result.outputTokens = output;
+  return result;
 }

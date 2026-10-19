@@ -600,6 +600,135 @@ export function createHttpServer(deps: HttpDeps): Server {
       }
     }
 
+    {
+      // 任务级 trace：把一次协作的完整链路按时间线拼出来。
+      const traceMatch = /^\/api\/tasks\/([^/]+)\/trace$/.exec(pathname);
+      if (traceMatch && method === "GET") {
+        const taskId = decodeURIComponent(traceMatch[1] ?? "");
+        const task = studio.getTask(taskId);
+        if (!task) {
+          fail(res, 404, "任务不存在");
+          return;
+        }
+        const state = studio.snapshot();
+        const names = new Map(state.cats.map((cat) => [cat.id, cat.name]));
+        type Entry = {
+          at: number;
+          kind: string;
+          actor?: string;
+          actorName?: string;
+          detail: string;
+          meta?: Record<string, unknown>;
+        };
+        const entries: Entry[] = [];
+
+        for (const step of task.steps) {
+          entries.push({
+            at: step.startedAt ?? task.createdAt,
+            kind: "stage",
+            actor: step.owner,
+            actorName: names.get(step.owner) ?? step.owner,
+            detail: `进入阶段 ${step.stage}`,
+            meta: { stage: step.stage, doneAt: step.doneAt },
+          });
+        }
+        for (const message of state.messages) {
+          if (message.taskId !== taskId) continue;
+          entries.push({
+            at: message.at,
+            kind: message.kind,
+            ...(message.author !== "user" && message.author !== "system"
+              ? { actor: message.author, actorName: names.get(message.author) ?? message.author }
+              : { actor: message.author }),
+            detail: message.text.slice(0, 200),
+            ...(message.mentions.length ? { meta: { mentions: message.mentions } } : {}),
+          });
+        }
+        for (const handoff of state.handoffs) {
+          if (handoff.taskId !== taskId) continue;
+          entries.push({
+            at: handoff.createdAt,
+            kind: "handoff",
+            actor: handoff.from,
+            actorName: names.get(handoff.from),
+            detail: `交接给 ${names.get(handoff.to) ?? handoff.to}：${handoff.card.what.slice(0, 80)}`,
+            meta: { to: handoff.to, openQuestions: handoff.card.openQuestions.length },
+          });
+        }
+        for (const artifact of state.artifacts) {
+          if (artifact.taskId !== taskId) continue;
+          entries.push({
+            at: artifact.createdAt,
+            kind: "artifact",
+            actor: artifact.author,
+            actorName: names.get(artifact.author),
+            detail: `${artifact.kind}「${artifact.title}」v${artifact.version}`,
+          });
+        }
+        for (const call of state.toolCalls) {
+          if (call.taskId !== taskId) continue;
+          entries.push({
+            at: call.startedAt,
+            kind: "tool",
+            actor: call.catId,
+            actorName: names.get(call.catId),
+            detail: `${call.tool} ${call.status}${call.exitCode !== undefined ? ` (exit ${call.exitCode})` : ""}`,
+            meta: { label: call.label, durationMs: (call.finishedAt ?? 0) - call.startedAt },
+          });
+        }
+        for (const call of state.llmCalls) {
+          if (call.taskId !== taskId) continue;
+          entries.push({
+            at: call.startedAt,
+            kind: "llm",
+            actor: call.catId,
+            actorName: names.get(call.catId),
+            detail:
+              `${call.model} · ${call.durationMs ?? 0}ms` +
+              (call.inputTokens !== undefined ? ` · in ${call.inputTokens}/out ${call.outputTokens ?? 0}` : "") +
+              (call.degraded ? " · 降级" : "") +
+              (call.retried ? " · 重试" : ""),
+            meta: {
+              engine: call.engine,
+              streamed: call.streamed,
+              degraded: call.degraded,
+              degradeReason: call.degradeReason,
+            },
+          });
+        }
+        for (const entry of state.memory) {
+          if (entry.sourceTaskId !== taskId) continue;
+          entries.push({
+            at: entry.createdAt,
+            kind: "memory",
+            detail: `${entry.kind}「${entry.title}」`,
+          });
+        }
+
+        entries.sort((a, b) => a.at - b.at);
+
+        // 汇总：模型调用总耗时 / token / 降级次数 / 工具耗时
+        const llmForTask = state.llmCalls.filter((call) => call.taskId === taskId);
+        const toolForTask = state.toolCalls.filter((call) => call.taskId === taskId);
+        const summary = {
+          durationMs: (task.doneAt ?? Date.now()) - task.createdAt,
+          llmCalls: llmForTask.length,
+          llmDurationMs: llmForTask.reduce((sum, call) => sum + (call.durationMs ?? 0), 0),
+          inputTokens: llmForTask.reduce((sum, call) => sum + (call.inputTokens ?? 0), 0),
+          outputTokens: llmForTask.reduce((sum, call) => sum + (call.outputTokens ?? 0), 0),
+          degradations: llmForTask.filter((call) => call.degraded).length,
+          retries: llmForTask.filter((call) => call.retried).length,
+          toolCalls: toolForTask.length,
+          approvals: toolForTask.filter((call) => call.status === "rejected").length,
+          handoffs: state.handoffs.filter((handoff) => handoff.taskId === taskId).length,
+          artifacts: state.artifacts.filter((artifact) => artifact.taskId === taskId).length,
+        };
+
+        json(res, 200, { task, entries, summary });
+        return;
+      }
+    }
+
     if (pathname === "/api/tools" && method === "GET") {
       json(res, 200, { tools: tools?.list() ?? [] });
       return;

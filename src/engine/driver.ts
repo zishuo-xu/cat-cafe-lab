@@ -23,6 +23,7 @@ import { SCENARIOS } from "../agents/personas.ts";
 import type {
   ApprovalGate,
   Artifact,
+  BrainReport,
   Cat,
   CatBrain,
   CatId,
@@ -576,12 +577,33 @@ export function createDriver(deps: {
         let turns: CatTurn[] = [];
         try {
           await wait(THINK_DELAY_MS);
+          const call = studio.startLlmCall({
+            catId: cat.id,
+            model: cat.llmModel?.trim() || "" ,
+            engine: "api",
+            ...(task ? { taskId: task.id } : {}),
+            ...(task ? { stage: task.stage } : {}),
+            trigger: trigger.kind,
+          });
+          let report: BrainReport = {};
           const context = buildContext(cat, room, task, trigger, (update) => {
             // 只接受本房间的草稿，避免串台。
             if (update.roomId !== room.id) return;
             studio.setDraft(room.id, { catId: update.catId, text: update.text });
           });
-          turns = await brain.think(context);
+          context.onReport = (next) => {
+            report = { ...report, ...next };
+          };
+          try {
+            turns = await brain.think(context);
+          } finally {
+            studio.finishLlmCall(call.id, {
+              ...report,
+              ...(report.model ? { model: report.model } : {}),
+              ...(report.engine ? { engine: report.engine } : {}),
+              turnKinds: turns.map((turn) => turn.kind),
+            });
+          }
         } catch (err) {
           console.error(`[engine] ${cat.id} 的 brain 调用失败，按空轮次继续：`, err);
         } finally {
