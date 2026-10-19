@@ -583,6 +583,12 @@ export interface PublicSettings {
   toolApproval: ToolApprovalMode;
   /** 真实模式是否用流式输出（真机首字/首句更快出现）。 */
   streaming: boolean;
+  /**
+   * 真实模式的大脑实现：
+   * - "api"：直接打 OpenAI 兼容 HTTP 接口（默认，轻量）
+   * - "cli"：起 `claude -p` 子进程（自带工具与 agent 能力，但更重）
+   */
+  engine: "api" | "cli";
   port: number;
   dataDir: string;
   version: string;
@@ -598,6 +604,7 @@ export interface SettingsPatch {
   toolsEnabled?: boolean;
   toolApproval?: ToolApprovalMode;
   streaming?: boolean;
+  engine?: "api" | "cli";
   llm?: {
     baseUrl?: string;
     model?: string;

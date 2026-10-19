@@ -10,6 +10,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 
 import { createLlmBrain } from "../agents/llm-brain.ts";
+import { createCliBrain } from "../agents/cli-brain.ts";
 import type {
   BrainMode,
   CatBrain,
@@ -54,6 +55,7 @@ interface PersistedSettings {
   toolsEnabled?: boolean;
   toolApproval?: ToolApprovalMode;
   streaming?: boolean;
+  engine?: "api" | "cli";
   llm?: {
     baseUrl?: string;
     model?: string;
@@ -68,6 +70,8 @@ export interface SettingsStoreOptions {
   settings: StudioSettings;
   dataDirAbs: string;
   port: number;
+  /** CLI 引擎的工作目录（通常是沙盒）。 */
+  cliCwd?: string;
 }
 
 export class SettingsStore implements SettingsApi {
@@ -76,6 +80,7 @@ export class SettingsStore implements SettingsApi {
   private toolsEnabled: boolean;
   private toolApproval: ToolApprovalMode;
   private streaming: boolean;
+  private engine: "api" | "cli";
   private baseUrl: string;
   private model: string;
   private temperature: number;
@@ -88,6 +93,7 @@ export class SettingsStore implements SettingsApi {
   private readonly stallMs: number;
   private readonly dataDirAbs: string;
   private readonly port: number;
+  private readonly cliCwd: string;
   private readonly file: string;
   private readonly envDefaults: boolean;
   /** 环境变量带来的自定义请求头（如 opencode zen 的 session）；面板不可见、不落盘。 */
@@ -101,6 +107,7 @@ export class SettingsStore implements SettingsApi {
     this.stallMs = opts.settings.stallMs;
     this.dataDirAbs = opts.dataDirAbs;
     this.port = opts.port;
+    this.cliCwd = opts.cliCwd ?? opts.dataDirAbs;
     this.file = join(opts.dataDirAbs, "settings.json");
     this.envDefaults = Boolean(opts.settings.llm);
     this.envHeaders = opts.settings.llm?.headers;
@@ -114,6 +121,7 @@ export class SettingsStore implements SettingsApi {
     this.toolsEnabled = persisted.toolsEnabled ?? opts.settings.toolsEnabled ?? true;
     this.toolApproval = persisted.toolApproval ?? opts.settings.toolApproval ?? "commands";
     this.streaming = persisted.streaming ?? true;
+    this.engine = persisted.engine === "cli" ? "cli" : "api";
     this.baseUrl = persisted.llm?.baseUrl ?? env?.baseUrl ?? "";
     this.model = persisted.llm?.model ?? env?.model ?? "";
     this.temperature = clampTemperature(
@@ -145,6 +153,10 @@ export class SettingsStore implements SettingsApi {
     return this.streaming;
   }
 
+  engineKind(): "api" | "cli" {
+    return this.engine;
+  }
+
   getPublic(): PublicSettings {
     return {
       mode: this.mode,
@@ -160,6 +172,7 @@ export class SettingsStore implements SettingsApi {
       toolsEnabled: this.toolsEnabled,
       toolApproval: this.toolApproval,
       streaming: this.streaming,
+      engine: this.engine,
       port: this.port,
       dataDir: this.dataDirAbs,
       version: this.version,
@@ -175,6 +188,9 @@ export class SettingsStore implements SettingsApi {
     }
     if (patch.streaming !== undefined && typeof patch.streaming !== "boolean") {
       throw new Error("streaming 必须是布尔值");
+    }
+    if (patch.engine !== undefined && patch.engine !== "api" && patch.engine !== "cli") {
+      throw new Error("engine 只能是 api 或 cli");
     }
     if (patch.speed !== undefined && !(patch.speed in SPEED_FACTOR)) {
       throw new Error("speed 只能是 slow / normal / fast");
@@ -195,6 +211,7 @@ export class SettingsStore implements SettingsApi {
     const nextSpeed = patch.speed ?? this.speed;
     const nextToolsEnabled = patch.toolsEnabled ?? this.toolsEnabled;
     const nextStreaming = patch.streaming ?? this.streaming;
+    const nextEngine = patch.engine ?? this.engine;
     const nextToolApproval = patch.toolApproval ?? this.toolApproval;
 
     let baseUrl = this.baseUrl;
@@ -235,12 +252,14 @@ export class SettingsStore implements SettingsApi {
       model !== this.model ||
       temperature !== this.temperature ||
       apiKey !== this.apiKey ||
-      nextStreaming !== this.streaming;
+      nextStreaming !== this.streaming ||
+      nextEngine !== this.engine;
 
     this.mode = nextMode;
     this.speed = nextSpeed;
     this.toolsEnabled = nextToolsEnabled;
     this.streaming = nextStreaming;
+    this.engine = nextEngine;
     this.toolApproval = nextToolApproval;
     this.baseUrl = baseUrl;
     this.model = model;
@@ -314,14 +333,24 @@ export class SettingsStore implements SettingsApi {
         temperature: this.temperature,
         ...(this.envHeaders ? { headers: this.envHeaders } : {}),
       };
-      this.switchable.set(
-        createLlmBrain(settings, this.mock, {
-          // 流式：仅在真有 ctx.onDelta 时才发流式请求（见 llm-brain 内部判断）。
-          get streaming() {
-            return streamingEnabled;
-          },
-        }),
-      );
+      if (this.engine === "cli") {
+        // CLI 大脑：起 `claude -p` 子进程。工作目录用沙盒，避免碰到用户仓库。
+        this.switchable.set(
+          createCliBrain(settings, this.mock, {
+            cwd: this.cliCwd,
+            ...(this.envHeaders ? { env: this.envHeaders } : {}),
+          }),
+        );
+      } else {
+        this.switchable.set(
+          createLlmBrain(settings, this.mock, {
+            // 流式：仅在真有 ctx.onDelta 时才发流式请求（见 llm-brain 内部判断）。
+            get streaming() {
+              return streamingEnabled;
+            },
+          }),
+        );
+      }
     } else {
       this.switchable.set(this.mock);
     }
@@ -348,6 +377,7 @@ export class SettingsStore implements SettingsApi {
         toolsEnabled: this.toolsEnabled,
         toolApproval: this.toolApproval,
         streaming: this.streaming,
+        engine: this.engine,
         llm: {
           baseUrl: this.baseUrl,
           model: this.model,

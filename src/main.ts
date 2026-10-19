@@ -45,6 +45,7 @@ const settingsStore = new SettingsStore({
   settings,
   dataDirAbs: dataDir,
   port: settings.port,
+  cliCwd: sandbox.root,
 });
 
 // 回复节奏只缩放延迟，不影响协作逻辑。

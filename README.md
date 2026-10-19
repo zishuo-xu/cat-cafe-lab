@@ -144,6 +144,30 @@ run_command node --test ...      ✓ exit 0（砚砚放行）
 
 ---
 
+## 两种引擎：API / CLI
+
+真实模式的大脑有两种实现，设置里可切换：
+
+| 引擎 | 实现 | 特点 |
+|---|---|---|
+| **API**（默认） | 直接 POST `{baseUrl}/chat/completions` | 轻量、快、每轮 token 少；自己管上下文与工具 |
+| **CLI** | 起 `claude -p --output-format json` 子进程 | 复用 Claude Code 的 agent 能力；每次调用≈20k input tokens，更重 |
+
+两种引擎共用同一套 prompt、同一份 `CatTurn[]` 结构、同一套工具与审批闸门——
+换引擎不需要改 driver 或 UI。
+
+**CLI 引擎的前提**（踩过的坑都在这）：
+
+1. `claude` 必须能写 `~/.claude`（沙盒只允许写工作区时它会卡死）；
+   必要时把 `CLAUDE_CONFIG_DIR` 指到可写目录；
+2. `~/.claude/settings.json` 里的 `ANTHROPIC_MODEL` 必须是端点真实存在的模型名；
+3. 默认禁用 CLI 内置工具（`--disallowedTools Bash,Edit,Write,Read,...`），
+   工具执行仍走我们的沙盒 + 审批，避免 CLI 绕过权限直接改文件；
+4. 工作目录固定到沙盒（`cliCwd`），不触碰用户仓库。
+
+实测：CLI 引擎能完整跑完一个任务（27 次工具调用、3 个产物、6 次交接），
+输出质量比 API 路线更细致；代价是慢（单轮 20–40s）与贵（~20k input tokens/轮）。
+
 ## 流式输出
 
 真实模式下，模型是边想边说的：`llm-brain` 用 SSE 收流，把「正在说的话」通过

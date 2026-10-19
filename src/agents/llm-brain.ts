@@ -934,7 +934,7 @@ function resolveTemperature(ctx: TurnContext, globalTemperature: number): number
   return globalTemperature;
 }
 
-function buildSystemPrompt(ctx: TurnContext, model: string): string {
+export function buildSystemPrompt(ctx: TurnContext, model: string): string {
   const { cat, room, task, availableTools, skills } = ctx;
   const selfId = cat.id;
   const others = room.catIds.filter((id) => id !== selfId);
@@ -1066,7 +1066,7 @@ function renderSkills(skills: Skill[]): string | null {
   return lines.join("\n");
 }
 
-function buildUserPrompt(ctx: TurnContext): string {
+export function buildUserPrompt(ctx: TurnContext): string {
   const {
     task,
     recentMessages,
