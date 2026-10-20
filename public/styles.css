@@ -345,6 +345,59 @@ button {
   background: linear-gradient(160deg, #f9e2d4, #f3cbb5);
 }
 
+/* Provider 预设 chips：一次填好 Base URL / 模型 / 请求头 */
+.provider-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 4px;
+}
+
+.provider-chip {
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.provider-chip:hover {
+  background: #faf4ea;
+}
+
+.provider-chip.is-active {
+  border-color: #c58a4a;
+  background: #f7ecd9;
+  color: #8a5a22;
+  font-weight: 700;
+}
+
+/* 高级：额外请求头 */
+.advanced-block {
+  margin: 8px 0 2px;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+}
+
+.advanced-block summary {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.advanced-block textarea {
+  width: 100%;
+  margin-top: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
 /* 顶部「模型连接状态」：只有真实模式，未配置要一眼看到 */
 .pill--model {
   cursor: pointer;

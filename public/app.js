@@ -136,6 +136,8 @@ const settingsState = {
   ready: false,
   data: null,
   saving: false,
+  /** 额外请求头是否被用户/预设改过（决定保存时是否上报 headers）。 */
+  headersDirty: false,
   testing: false,
   resetting: false,
   resetConfirm: false,
@@ -1049,6 +1051,10 @@ function cacheDom() {
   els.settingsTestBtn = $("#settings-test-btn");
   els.settingsTestResult = $("#settings-test-result");
   els.modelStatusPill = $("#model-status-pill");
+  els.settingsProviderPresets = $("#settings-provider-presets");
+  els.settingsHeadersBlock = $("#settings-headers-block");
+  els.settingsHeaders = $("#settings-headers");
+  els.settingsHeadersStatus = $("#settings-headers-status");
   els.settingsLlmSection = $("#settings-llm-section");
   els.settingsResetBtn = $("#settings-reset-btn");
   els.settingsResetConfirm = $("#settings-reset-confirm");
@@ -3571,6 +3577,9 @@ function onGlobalClick(event) {
     case "close-task-pivot":
       closeTaskPivotModal();
       break;
+    case "pick-provider":
+      if (actionEl.dataset.provider) applyProviderPreset(actionEl.dataset.provider);
+      break;
     case "open-task-search":
       openTaskSearch();
       break;
@@ -4016,12 +4025,38 @@ async function sendMessage() {
  * 判据（命中两条以上才算）：够长、有列表/编号、有明确的功能动词。
  * 宁可不提示也不要烦人——只在第一次命中时提示一次。
  */
+/**
+ * 这句话像「派活」还是像「聊天」？
+ *
+ * 旧规则要求 ≥60 字或带列表，结果「帮我写一个五子棋小程序」这种正经需求被漏掉，
+ * 直接进了聊天、得到一句客套回复（真实用户第一次就是这么卡住的）。
+ * 现在两条路：短句看祈使动词，长段看结构信号。
+ */
 function looksLikeTaskBrief(text) {
-  if (text.length < 60) return false;
+  const value = String(text ?? "").trim();
+  if (!value) return false;
+  // 明确 @ 了某个成员 = 针对某个问题聊天，不拦。
+  if (/(^|\s)@[\u4e00-\u9fa5A-Za-z]/.test(value)) return false;
+
+  // 1) 祈使/建设性动词：短句也能识别（但排除纯提问）
+  const imperative =
+    /(帮我|帮忙|请你|麻烦|需要你)/.test(value) ||
+    /(写一个|写个|做一个|做个|实现|开发|修复|修一下|改一下|改个|加一个|加个|新增|重构|优化|接入|导出|部署|生成)/.test(
+      value,
+    );
+  if (imperative) {
+    // 纯提问（「你能做什么」「怎么实现」「为什么…」）不算派活
+    if (/^(什么|怎么|为什么|如何|谁|哪里|哪|能否|是不是|有没有)/.test(value)) return false;
+    if (/(吗|呢|\?|？)$/.test(value) && value.length < 12) return false;
+    if (value.length >= 4) return true;
+  }
+
+  // 2) 长段需求：原来的结构信号（列表 / 多个要求 / 多分句）
+  if (value.length < 60) return false;
   let score = 0;
-  if (/\n\s*(\d+[.、)]|[-*•])/.test(text)) score += 2; // 有列表
-  if (/(要求|需要|必须|希望|实现|做一个|开发|支持|导出|接入)/.test(text)) score += 1;
-  if (/[,，。；;]/.test(text) && text.split(/[,，。；;]/).length >= 3) score += 1;
+  if (/\n\s*(\d+[.、)]|[-*•])/.test(value)) score += 2;
+  if (/(要求|需要|必须|希望|实现|做一个|开发|支持|导出|接入)/.test(value)) score += 1;
+  if (/[,，。；;]/.test(value) && value.split(/[,，。；;]/).length >= 3) score += 1;
   return score >= 2;
 }
 
@@ -4033,8 +4068,8 @@ function showBriefHint(text) {
   dialog.innerHTML = `
     <div class="confirm-card">
       <h2>这看起来是一个需求</h2>
-      <p>聊天框里的内容只会让成员「聊两句」，<strong>不会开工做任务</strong>。</p>
-      <p>要把它交给团队正式做吗？会创建任务并进入接单 → 规划 → 实现 → 评审的流程。</p>
+      <p>聊天框里说的话<strong>不会开工</strong>。要我把它建成任务吗？</p>
+      <p class="confirm-sub">建任务后会走接单 → 规划 → 实现 → 评审；没配置模型的话会先请你去配置。</p>
       <footer>
         <button type="button" data-choice="chat">就聊两句</button>
         <button type="button" class="primary" data-choice="task">开任务</button>
@@ -4401,6 +4436,120 @@ async function createTask() {
   }
 }
 
+// ── 设置面板：Provider 预设与额外请求头 ─────────────────────────────────
+
+/**
+ * 常用 provider 预设。
+ *
+ * 为什么要有：Base URL 结尾、默认模型、以及「某些端点要额外 header」这三件事
+ * 配错一次就会得到 HTTP 400（实测 opencode zen 漏 x-opencode-session 时整轮失败）。
+ * 预设把这三项一次填好，人只需要粘 key。
+ */
+const LLM_PROVIDERS = [
+  {
+    id: "opencode-zen",
+    label: "opencode zen",
+    baseUrl: "https://opencode.ai/zen/go/v1",
+    model: "deepseek-v4.1-flash",
+    headers: { "x-opencode-session": "deliverylab-session" },
+  },
+  {
+    id: "deepseek",
+    label: "DeepSeek",
+    baseUrl: "https://api.deepseek.com/v1",
+    model: "deepseek-chat",
+    headers: {},
+  },
+  {
+    id: "openai",
+    label: "OpenAI",
+    baseUrl: "https://api.openai.com/v1",
+    model: "gpt-4o-mini",
+    headers: {},
+  },
+  {
+    id: "ollama",
+    label: "本地 Ollama",
+    baseUrl: "http://127.0.0.1:11434/v1",
+    model: "qwen2.5:7b",
+    headers: {},
+  },
+  { id: "custom", label: "自定义", baseUrl: "", model: "", headers: {} },
+];
+
+function currentProviderId() {
+  const baseUrl = (els.settingsBaseUrl?.value.trim() ?? "").replace(/\/+$/, "");
+  const found = LLM_PROVIDERS.find((item) => item.baseUrl && item.baseUrl === baseUrl);
+  return found ? found.id : "custom";
+}
+
+function renderProviderPresets() {
+  const host = els.settingsProviderPresets;
+  if (!host) return;
+  const active = currentProviderId();
+  host.replaceChildren(
+    ...LLM_PROVIDERS.map((provider) =>
+      h(
+        "button",
+        {
+          type: "button",
+          class: `provider-chip${provider.id === active ? " is-active" : ""}`,
+          "data-action": "pick-provider",
+          "data-provider": provider.id,
+          "aria-pressed": provider.id === active ? "true" : "false",
+        },
+        provider.label,
+      ),
+    ),
+  );
+}
+
+/** 选中预设：填 Base URL / 模型 / 请求头；不覆盖已填的 key 与温度。 */
+function applyProviderPreset(providerId) {
+  const provider = LLM_PROVIDERS.find((item) => item.id === providerId);
+  if (!provider) return;
+  if (els.settingsBaseUrl) els.settingsBaseUrl.value = provider.baseUrl;
+  if (els.settingsModel) els.settingsModel.value = provider.model;
+  if (els.settingsHeaders) {
+    els.settingsHeaders.value = Object.keys(provider.headers).length
+      ? JSON.stringify(provider.headers)
+      : "";
+  }
+  settingsState.headersDirty = provider.id !== "custom";
+  renderProviderPresets();
+  renderHeadersStatus();
+}
+
+function parseHeadersInput() {
+  const raw = els.settingsHeaders?.value.trim() ?? "";
+  if (!raw) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw new Error("额外请求头格式不对：需要合法 JSON 对象");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("额外请求头格式不对：需要 JSON 对象");
+  }
+  const out = {};
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value !== "string") throw new Error(`请求头「${key}」的值必须是字符串`);
+    out[key] = value;
+  }
+  return out;
+}
+
+function renderHeadersStatus() {
+  const status = els.settingsHeadersStatus;
+  if (!status) return;
+  const names = settingsState.data?.llm?.headerNames ?? [];
+  const parts = [];
+  if (names.length) parts.push(`已生效：${names.join("、")}（值不回显）`);
+  if (settingsState.headersDirty) parts.push("保存后生效");
+  status.textContent = parts.join(" · ");
+}
+
 // ── 设置面板 ────────────────────────────────────────────────────────────
 
 async function refreshGlobalModel() {
@@ -4454,6 +4603,8 @@ async function openSettings() {
   renderCatModelList();
   renderCatManageList();
   renderScenarioList();
+  renderProviderPresets();
+  renderHeadersStatus();
   updateSettingsButtons();
 
   if (!modal.open) modal.showModal();
@@ -4543,6 +4694,9 @@ function resetSettingsForm() {
   if (els.settingsTemperature) els.settingsTemperature.value = "0.8";
   updateTempOutput();
   if (els.settingsApiKey) els.settingsApiKey.value = "";
+  if (els.settingsHeaders) els.settingsHeaders.value = "";
+  settingsState.headersDirty = false;
+  renderHeadersStatus();
   setKeyVisibility(false);
   renderKeyStatus(null);
   if (els.settingsToolsToggle) els.settingsToolsToggle.checked = true;
@@ -4590,6 +4744,10 @@ function fillSettingsForm(data) {
   setKeyVisibility(false);
   settingsState.clearKeyRequested = false;
   renderKeyStatus(llm);
+  settingsState.headersDirty = false;
+  if (els.settingsHeaders) els.settingsHeaders.value = "";
+  renderProviderPresets();
+  renderHeadersStatus();
   if (els.settingsToolsToggle) {
     const toolsEnabled =
       typeof data?.toolsEnabled === "boolean" ? data.toolsEnabled : true;
@@ -4802,6 +4960,9 @@ function updateSettingsButtons() {
 function onSettingsChange(event) {
   const target = event.target;
   if (!(target instanceof HTMLInputElement)) return;
+  if (els.settingsBaseUrl && target === els.settingsBaseUrl) {
+    renderProviderPresets();
+  }
   if (target.name === "settings-speed") {
     syncSettingsSegments();
   } else if (target === els.settingsToolsToggle) {
@@ -4811,6 +4972,11 @@ function onSettingsChange(event) {
 
 function onSettingsInput(event) {
   const target = event.target;
+  if (target === els.settingsHeaders) {
+    settingsState.headersDirty = true;
+    renderHeadersStatus();
+    return;
+  }
   if (target === els.settingsTemperature) {
     updateTempOutput();
     return;
@@ -4841,6 +5007,11 @@ function collectSettingsPatch() {
   const apiKey = els.settingsApiKey?.value.trim() ?? "";
   if (apiKey) patch.llm.apiKey = apiKey;
   if (settingsState.clearKeyRequested) patch.llm.clearKey = true;
+  // 额外请求头：只有用户/预设动过才上报，避免把服务端已有配置清空。
+  if (settingsState.headersDirty) {
+    const headers = parseHeadersInput();
+    patch.llm.headers = headers && Object.keys(headers).length > 0 ? headers : null;
+  }
   return patch;
 }
 
@@ -4857,10 +5028,19 @@ async function saveSettings() {
   settingsState.saving = true;
   updateSettingsButtons();
   try {
+    let patch;
+    try {
+      patch = collectSettingsPatch();
+    } catch (error) {
+      settingsState.saving = false;
+      updateSettingsButtons();
+      showSettingsError(error.message);
+      return;
+    }
     const response = await fetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(collectSettingsPatch()),
+      body: JSON.stringify(patch),
     });
     if (!response.ok) throw new Error(await describeHttpError(response, "PUT /api/settings"));
     const data = await response.json();
@@ -4911,6 +5091,10 @@ async function testLlmConnection() {
   try {
     const payload = { baseUrl, model };
     if (apiKey) payload.apiKey = apiKey;
+    if (settingsState.headersDirty) {
+      const headers = parseHeadersInput();
+      if (headers && Object.keys(headers).length > 0) payload.headers = headers;
+    }
     const response = await fetch("/api/settings/test", {
       method: "POST",
       headers: { "Content-Type": "application/json" },

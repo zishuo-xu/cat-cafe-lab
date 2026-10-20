@@ -184,6 +184,7 @@ data: {"seq":42,"state":{...}}
     "model": "some-model",
     "temperature": 0.8,
     "hasKey": true,
+    "headerNames": ["x-opencode-session"],
     "keySource": "env"
   },
   "stallMs": 12000,
@@ -206,6 +207,10 @@ data: {"seq":42,"state":{...}}
 - 503：`{"error":"settings api not enabled"}`。
 
 ### `PUT /api/settings`
+
+修改运行设置。`llm.headers` 可以传额外请求头（例如 opencode zen 的
+`x-opencode-session`）：**只存进程内存、不落盘、不回传值**；传 `null` 或空对象清空。
+
 
 请求体为 `SettingsPatch`，只传要改的字段：
 

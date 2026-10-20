@@ -451,10 +451,12 @@ test("task_created：architect 先说话，planning 把交接分发给周烁与�
   assert.equal(brain.callsFor("chenshi", "working")[0]?.trigger.kind, "handoff");
 
   // working 全部跑完后自动进入 reviewing，只有沈砚被唤醒。
+  // 这个剧本里沈砚只说话、不给结论，所以引擎会补一轮「必须给结论」的唤醒。
   const reviewerCalls = brain.callsFor("shenyan");
-  assert.equal(reviewerCalls.length, 1);
+  assert.equal(reviewerCalls.length, 2, "只说话 → 自动补一轮强制结论");
   assert.equal(reviewerCalls[0]?.stageAtCall, "reviewing");
   assert.equal(reviewerCalls[0]?.trigger.kind, "artifact");
+  assert.equal(reviewerCalls[1]?.trigger.kind, "nudge");
 
   assert.equal(task.stage, "reviewing");
   assert.equal(task.owner, "shenyan");
@@ -2338,6 +2340,102 @@ describe("done 阶段是终态：不再派活", () => {
         (handoff) => handoff.taskId === task.id && handoff.to === "chenshi",
       );
       assert.equal(lateHandoffs.length, 1, "只该有 planning 阶段那一张交接，done 后的被忽略");
+    } finally {
+      studio.close();
+    }
+  });
+});
+
+describe("任务暂停后不再跑排队的普通 wake", () => {
+  /**
+   * 模型失败会把任务暂停。队列里可能还压着早期排进来的 kickoff/worker wake，
+   * 放它们继续跑只会再失败一次、再刷一条「模型调用失败」。
+   */
+  test("stalled 任务只接受 chat / nudge，其他 wake 直接丢弃", async () => {
+    const studio = makeStudio();
+    const task = studio.createTask({
+      roomId: ROOM_ID,
+      brief: "写一个五子棋小程序",
+      scenarioId: SCENARIO_ID,
+    });
+    studio.setTaskStatus(task.id, "stalled");
+
+    let calls = 0;
+    const brain = scriptedBrain(() => {
+      calls += 1;
+      return [message("我不该被叫起来。")];
+    });
+    const driver = makeDriver(studio, brain);
+    try {
+      driver.submit({ type: "task_created", roomId: ROOM_ID, taskId: task.id });
+      await driver.whenIdle();
+
+      assert.equal(calls, 0, "暂停中的任务不该被普通 wake 唤醒");
+      const systemMessages = studio.state.messages.filter(
+        (item) => item.taskId === task.id && item.author === "system",
+      );
+      assert.equal(systemMessages.length, 0, "也不该再刷失败消息");
+      assert.equal(studio.getTask(task.id)?.status, "stalled");
+    } finally {
+      studio.close();
+    }
+  });
+});
+
+describe("评审轮只说话不给结论时，自动补一轮强制结论", () => {
+  test("第一轮只发消息，第二轮被要求给 verdict，任务正常收尾", async () => {
+    const studio = makeStudio();
+    const task = studio.createTask({
+      roomId: ROOM_ID,
+      brief: "修三个 bug",
+      scenarioId: SCENARIO_ID,
+    });
+    let reviewerCalls = 0;
+    const forcedTriggers: string[] = [];
+
+    const brain = scriptedBrain((ctx) => {
+      const stage = ctx.task?.stage ?? null;
+      const cat = ctx.cat.id;
+
+      if (cat === "linzhiyuan" && stage === "intake") return [message("接住。")];
+      if (cat === "linzhiyuan" && stage === "planning") {
+        return [{ kind: "handoff", to: "chenshi", card: card("实现"), text: "@陈实" }];
+      }
+      if (cat === "chenshi" && (stage === "working" || stage === "revising")) {
+        return [
+          { kind: "handoff", to: "shenyan", card: card("review"), text: "@沈砚 看下" },
+        ];
+      }
+      if (cat === "shenyan" && stage === "reviewing") {
+        reviewerCalls += 1;
+        if (ctx.trigger.kind === "nudge" && ctx.trigger.text) {
+          forcedTriggers.push(ctx.trigger.text);
+        }
+        if (reviewerCalls === 1) {
+          // 只说话，不给结论（真实模型的常见行为）
+          return [message("我先跑一下测试看看。")];
+        }
+        return [
+          { kind: "review", title: "通过", verdict: "approve", findings: [], text: "通过。" },
+        ];
+      }
+      if (cat === "linzhiyuan" && stage === "done") {
+        return [{ kind: "decision", artifact: { title: "收尾", body: "ok" }, text: "收工。", memory: [] }];
+      }
+      return [message("收到。")];
+    });
+
+    const driver = makeDriver(studio, brain);
+    try {
+      driver.submit({ type: "task_created", roomId: ROOM_ID, taskId: task.id });
+      await driver.whenIdle();
+
+      const after = studio.getTask(task.id);
+      assert.equal(reviewerCalls, 2, "评审应该被补叫一次");
+      assert.equal(forcedTriggers.length, 1, "补的那轮应带「必须给结论」指令");
+      assert.match(forcedTriggers[0] ?? "", /必须输出 kind:"review"/);
+      assert.equal(after?.status, "done");
+      assert.equal(after?.stage, "done");
     } finally {
       studio.close();
     }

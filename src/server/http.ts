@@ -311,15 +311,33 @@ export function createHttpServer(deps: HttpDeps): Server {
         baseUrl?: unknown;
         model?: unknown;
         apiKey?: unknown;
+        headers?: unknown;
       };
       const baseUrl = typeof body.baseUrl === "string" ? body.baseUrl : "";
       const model = typeof body.model === "string" ? body.model : "";
       const apiKey = typeof body.apiKey === "string" ? body.apiKey : undefined;
+      const headers =
+        body.headers && typeof body.headers === "object" && !Array.isArray(body.headers)
+          ? Object.fromEntries(
+              Object.entries(body.headers as Record<string, unknown>).filter(
+                (entry): entry is [string, string] => typeof entry[1] === "string",
+              ),
+            )
+          : undefined;
       if (!baseUrl.trim() || !model.trim()) {
         fail(res, 400, "baseUrl 和 model 都必填");
         return;
       }
-      json(res, 200, await settingsApi.test({ baseUrl, model, ...(apiKey ? { apiKey } : {}) }));
+      json(
+        res,
+        200,
+        await settingsApi.test({
+          baseUrl,
+          model,
+          ...(apiKey ? { apiKey } : {}),
+          ...(headers ? { headers } : {}),
+        }),
+      );
       return;
     }
 

@@ -767,6 +767,8 @@ export interface PublicSettings {
     temperature: number;
     hasKey: boolean;
     keySource: "env" | "ui" | null;
+    /** 已生效的额外请求头名字（只露名字，值绝不回传）。 */
+    headerNames: string[];
   };
   stallMs: number;
   /** 是否允许成员在沙盒里执行工具（写文件 / 跑命令）。 */
@@ -815,6 +817,11 @@ export interface SettingsPatch {
     /** 留空表示不修改；只有非空字符串才会覆盖。 */
     apiKey?: string;
     clearKey?: boolean;
+    /**
+     * 额外请求头（如 opencode zen 的 x-opencode-session）。
+     * 传 null / 空对象表示清空。**只在内存里**，不落盘、不回传值。
+     */
+    headers?: Record<string, string> | null;
   };
 }
 
@@ -828,7 +835,12 @@ export interface LlmTestResult {
 export interface SettingsApi {
   getPublic(): PublicSettings;
   update(patch: SettingsPatch): Promise<PublicSettings>;
-  test(draft: { baseUrl: string; model: string; apiKey?: string }): Promise<LlmTestResult>;
+  test(draft: {
+    baseUrl: string;
+    model: string;
+    apiKey?: string;
+    headers?: Record<string, string>;
+  }): Promise<LlmTestResult>;
 }
 
 // ───────────────────────── 工厂签名（各模块导出） ─────────────────────────

@@ -59,7 +59,11 @@ export const STREAM_TIMEOUT_MS = 90_000;
  */
 export const DEFAULT_MAX_TOKENS = 4096;
 /** 被 max_tokens 截断时的重试上限。 */
-const ESCALATED_MAX_TOKENS = 8192;
+/**
+ * 截断后的阶梯预算：推理型模型的思考链也吃 completion 预算，8192 可能还不够。
+ * 实测 deepseek-v4.1-flash 在「写规范 + 交接卡」这种长输出上 8192 仍被截断。
+ */
+const ESCALATED_MAX_TOKENS = [8192, 16384] as const;
 /** 一次最多接受的 turn 数，防止模型刷屏。 */
 export const MAX_TURNS = 6;
 /** delayMs 上限，防止模型给出离谱的停顿把演出拖死。 */
@@ -191,6 +195,7 @@ export function createLlmBrain(
         return true;
       };
       let retried = false;
+      let escalations = 0;
       let attemptTokens = maxTokens;
       for (;;) {
         const body = JSON.stringify({
@@ -205,7 +210,13 @@ export function createLlmBrain(
         });
 
         const controller = new AbortController();
-        const effectiveTimeout = streamMode ? streamTimeoutMs : timeoutMs;
+        // 非流式回退通常是「流被截断」之后的重试，慢模型（推理链）需要更长超时；
+        // 否则会从「截断」变成「20s 超时」，白白多失败一次。
+        const effectiveTimeout = streamMode
+          ? streamTimeoutMs
+          : streamFellBack
+            ? Math.max(timeoutMs, streamTimeoutMs)
+            : timeoutMs;
         const timer = setTimeout(() => controller.abort(), effectiveTimeout);
         timer.unref?.();
 
@@ -244,11 +255,12 @@ export function createLlmBrain(
             content = extractContent(payload);
             finish = finishReasonOf(payload);
           }
-          if (finish === "length" && !retried) {
+          if (finish === "length" && escalations < ESCALATED_MAX_TOKENS.length) {
             retried = true;
-            attemptTokens = Math.max(attemptTokens, ESCALATED_MAX_TOKENS);
+            attemptTokens = Math.max(attemptTokens, ESCALATED_MAX_TOKENS[escalations] ?? attemptTokens);
+            escalations += 1;
             warn(
-              `输出被 max_tokens=${maxTokens} 截断（reasoning 型模型会先消耗思考链），用 ${attemptTokens} 重试一次`,
+              `输出被 max_tokens 截断（reasoning 型模型会先消耗思考链），用 ${attemptTokens} 重试第 ${escalations} 次`,
             );
             continue;
           }

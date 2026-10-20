@@ -524,11 +524,17 @@
           <fieldset class="settings-section" id="settings-llm-section">
             <legend class="settings-legend">LLM 连接</legend>
             <p class="settings-desc">
-              <strong>必填：</strong>没接上模型只能聊天、不能派活。填 OpenAI 兼容接口，例如
-              <code>https://api.deepseek.com/v1</code>、opencode zen
-              <code>https://opencode.ai/zen/go/v1</code>、或本地 Ollama
-              <code>http://127.0.0.1:11434/v1</code>。
+              <strong>必填：</strong>没接上模型只能聊天、不能派活。先选一个 provider，
+              会自动填好 Base URL、默认模型和需要的请求头，你只需要粘 key。
             </p>
+
+            <div class="field">
+              <span class="field-label">Provider 预设</span>
+              <div class="provider-presets" id="settings-provider-presets" role="group" aria-label="Provider 预设"></div>
+              <span class="field-hint" id="settings-provider-hint">
+                选完仍可手动改下面的字段；不确定就选「自定义」。
+              </span>
+            </div>
 
             <div class="field">
               <label class="field-label" for="settings-base-url">Base URL</label>
@@ -600,6 +606,21 @@
                 </button>
               </div>
             </div>
+
+            <details class="advanced-block" id="settings-headers-block">
+              <summary>高级：额外请求头</summary>
+              <p class="field-hint">
+                有些端点要求自定义 header（例如 opencode zen 的
+                <code>x-opencode-session</code>）。填 JSON 对象，值只存内存、不落盘。
+              </p>
+              <textarea
+                id="settings-headers"
+                rows="3"
+                spellcheck="false"
+                placeholder='{"x-opencode-session":"deliverylab-1"}'
+              ></textarea>
+              <span class="field-hint" id="settings-headers-status"></span>
+            </details>
 
             <div class="field">
               <label class="field-label" for="settings-temperature">

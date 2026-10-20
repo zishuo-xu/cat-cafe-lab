@@ -27,6 +27,23 @@ import type { Studio } from "./studio.ts";
 
 const SPEED_FACTOR: Record<Speed, number> = { slow: 1.7, normal: 1, fast: 0.5 };
 
+/** 校验额外请求头：键名只允许 [A-Za-z0-9-]，值 ≤500 字符，最多 10 个。 */
+function sanitizeHeaders(input: unknown): Record<string, string> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  const out: Record<string, string> = {};
+  let count = 0;
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (count >= 10) break;
+    if (!/^[A-Za-z0-9-]{1,64}$/.test(key)) continue;
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.length > 500) continue;
+    out[key] = trimmed;
+    count += 1;
+  }
+  return out;
+}
+
 /**
  * 还没接上模型时的大脑。
  *
@@ -110,6 +127,9 @@ export class SettingsStore implements SettingsApi {
   private temperature: number;
   private apiKey: string;
   private keySource: "env" | "ui" | null;
+
+  /** 设置面板里填的额外请求头：只在内存，不落盘、不回传值。 */
+  private uiHeaders: Record<string, string> = {};
 
   private readonly studio: Studio;
   private readonly mock: AgentBrain;
@@ -198,6 +218,7 @@ export class SettingsStore implements SettingsApi {
         temperature: this.temperature,
         hasKey: this.apiKey.length > 0,
         keySource: this.keySource,
+        headerNames: Object.keys(this.effectiveHeaders() ?? {}),
       },
       stallMs: this.stallMs,
       toolsEnabled: this.toolsEnabled,
@@ -260,6 +281,7 @@ export class SettingsStore implements SettingsApi {
     let temperature = this.temperature;
     let apiKey = this.apiKey;
     let keySource = this.keySource;
+    let nextUiHeaders = this.uiHeaders;
 
     const llm = patch.llm;
     if (llm) {
@@ -282,6 +304,10 @@ export class SettingsStore implements SettingsApi {
         apiKey = llm.apiKey.trim();
         keySource = "ui";
       }
+      // 额外请求头：只存在内存（与 apiKey 同等对待），用于 opencode zen 这类端点。
+      if (llm.headers !== undefined) {
+        nextUiHeaders = sanitizeHeaders(llm.headers);
+      }
     }
 
     const llmChanged =
@@ -289,6 +315,7 @@ export class SettingsStore implements SettingsApi {
       model !== this.model ||
       temperature !== this.temperature ||
       apiKey !== this.apiKey ||
+      JSON.stringify(nextUiHeaders) !== JSON.stringify(this.uiHeaders) ||
       nextStreaming !== this.streaming ||
       nextEngine !== this.engine;
 
@@ -305,6 +332,7 @@ export class SettingsStore implements SettingsApi {
     this.temperature = temperature;
     this.apiKey = apiKey;
     this.keySource = keySource;
+    this.uiHeaders = nextUiHeaders;
 
     if (llmChanged) this.applyBrain();
     this.studio.setMode("llm");
@@ -316,6 +344,7 @@ export class SettingsStore implements SettingsApi {
     baseUrl: string;
     model: string;
     apiKey?: string;
+    headers?: Record<string, string>;
   }): Promise<LlmTestResult> {
     const baseUrl = String(draft.baseUrl ?? "").trim().replace(/\/+$/, "");
     const model = String(draft.model ?? "").trim();
@@ -330,8 +359,12 @@ export class SettingsStore implements SettingsApi {
 
     const startedAt = Date.now();
     try {
+      const extra = draft.headers !== undefined ? sanitizeHeaders(draft.headers) : this.effectiveHeaders();
       const response = await fetch(`${baseUrl}/models`, {
-        headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+        headers: {
+          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+          ...(extra ?? {}),
+        },
         signal: AbortSignal.timeout(8000),
       });
       const latencyMs = Date.now() - startedAt;
@@ -362,6 +395,12 @@ export class SettingsStore implements SettingsApi {
     return this.baseUrl.length > 0 && this.model.length > 0;
   }
 
+  /** 当前生效的额外请求头（env 打底 + 面板覆盖；值不回传）。 */
+  private effectiveHeaders(): Record<string, string> | undefined {
+    const merged = { ...(this.envHeaders ?? {}), ...this.uiHeaders };
+    return Object.keys(merged).length > 0 ? merged : undefined;
+  }
+
   /** 模型是否已配好（baseUrl + model）。没配好时只能聊天，不能派活。 */
   isConfigured(): boolean {
     return this.hasLlmConfig();
@@ -379,14 +418,14 @@ export class SettingsStore implements SettingsApi {
         model: this.model,
         apiKey: this.apiKey,
         temperature: this.temperature,
-        ...(this.envHeaders ? { headers: this.envHeaders } : {}),
+        ...(this.effectiveHeaders() ? { headers: this.effectiveHeaders() } : {}),
       };
       if (this.engine === "cli") {
         // CLI 大脑：起 `claude -p` 子进程。工作目录用沙盒，避免碰到用户仓库。
         this.switchable.set(
           createCliBrain(settings, this.mock, {
             cwd: this.cliCwd,
-            ...(this.envHeaders ? { env: this.envHeaders } : {}),
+            ...(this.effectiveHeaders() ? { env: this.effectiveHeaders() } : {}),
           }),
         );
       } else {

@@ -1517,3 +1517,98 @@ describe("流式被提前断开时退回非流式重试", () => {
     assert.equal(reports[0]?.degraded, true);
   });
 });
+
+describe("长输出与慢模型：预算与超时", () => {
+  function lengthThenOk() {
+    const bodies: Array<{ max_tokens?: number; stream?: boolean }> = [];
+    const fake = (async (_url: string, init: { body?: string }) => {
+      const body = JSON.parse(String(init.body)) as { max_tokens?: number; stream?: boolean };
+      bodies.push(body);
+      const attempts = bodies.length;
+      if (attempts <= 2) {
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: "{\"kind\":" }, finish_reason: "length" }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: { content: JSON.stringify([{ kind: "message", text: "终于完整了。" }]) },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+    return { fake, bodies };
+  }
+
+  test("连续截断时阶梯提升 max_tokens（4096 → 8192 → 16384）", async () => {
+    const { fake, bodies } = lengthThenOk();
+    const reports: Array<{ retried?: boolean }> = [];
+    const brain = createLlmBrain(
+      { baseUrl: "https://example.test/v1", model: "reasoner", apiKey: "k", temperature: 0.7 },
+      makeFallback().brain,
+      { fetchImpl: fake, streaming: false },
+    );
+    const turns = await brain.think(
+      makeContext({
+        onReport: (report) => reports.push(report),
+      }),
+    );
+    assert.deepEqual(
+      bodies.map((body) => body.max_tokens),
+      [4096, 8192, 16384],
+      "应该逐级提升预算，而不是只重试一次",
+    );
+    assert.equal(turns.length, 1);
+    assert.equal(reports[0]?.retried, true);
+  });
+
+  test("非流式回退使用更长超时（慢模型不会被 20s 掐断）", async () => {
+    // 先返回截断的流 → 触发非流式回退；回退响应故意延迟 120ms。
+    const fake = (async (_url: string, init: { body?: string }) => {
+      const body = JSON.parse(String(init.body)) as { stream?: boolean };
+      if (body.stream) {
+        const half = '[{"kind":"message","text":"先';
+        const stream = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                `data: ${JSON.stringify({ choices: [{ delta: { content: half } }] })}\n\n`,
+              ),
+            );
+            controller.close();
+          },
+        });
+        return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: { content: JSON.stringify([{ kind: "message", text: "慢但完整。" }]) },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const fallback = makeFallback();
+    const brain = createLlmBrain(
+      { baseUrl: "https://example.test/v1", model: "m", apiKey: "k", temperature: 0.7 },
+      fallback.brain,
+      // 故意把超时设成 50ms：只有回退用了更长超时才会成功。
+      { fetchImpl: fake, streaming: true, timeoutMs: 50 },
+    );
+    const turns = await brain.think(makeContext({ onDelta: () => undefined }));
+    assert.equal(fallback.calls(), 0, "不该降级");
+    assert.match(String((turns[0] as { text?: string }).text), /慢但完整/);
+  });
+});

@@ -301,6 +301,14 @@ interface TaskRuntime {
    * 没有它的话，"任务一直不判卡住"会变成一个无法解释的现象。
    */
   lastBusyReason: string | null;
+  /**
+   * 评审轮是否已经补过一次「必须给结论」。
+   *
+   * 真实模型在 reviewing 阶段常见行为：跑了几轮工具、只说话，始终不给 review 结论，
+   * 于是阶段不推进、被 stall 判定抓住，看起来像「卡住了」。
+   * 这里允许自动补一轮明确要求 verdict 的唤醒；补过仍不给结论才交给人工。
+   */
+  reviewConclusionForced?: boolean;
 }
 
 interface ReviewApplied {
@@ -582,6 +590,17 @@ export function createDriver(deps: {
     const task = wake.taskId ? studio.getTask(wake.taskId) ?? null : null;
     const runtime = task ? runtimeFor(task.id) : null;
     if (task && task.status === "done" && wake.purpose !== "chat") return;
+    // 任务因为模型失败被暂停后，队列里可能还压着早期排进来的普通 wake；
+    // 放它们继续跑只会再失败一次、再刷一条「模型调用失败」。
+    // 只允许「聊天」与「催一下」继续——恢复面板的操作会先把状态改回 active。
+    if (
+      task &&
+      task.status === "stalled" &&
+      wake.purpose !== "chat" &&
+      wake.purpose !== "nudge"
+    ) {
+      return;
+    }
     if (task) clearStall(task.id);
 
     studio.setTyping(room.id, cat.id);
@@ -1262,7 +1281,34 @@ export function createDriver(deps: {
       }
 
       case "reviewer": {
-        if (!applied.review) return;
+        if (!applied.review) {
+          // 只说不做：自动补一轮「现在必须给结论」，避免直接判定卡住。
+          if (!runtime.reviewConclusionForced) {
+            runtime.reviewConclusionForced = true;
+            const reviewer =
+              runtime.deferredReviewer?.catId ?? cat.id;
+            console.warn(
+              `[engine] 评审轮没有给出 review 结论（成员=${cat.id}），补一轮强制结论`,
+            );
+            enqueueWake({
+              roomId: room.id,
+              catId: reviewer,
+              taskId: task.id,
+              purpose: "reviewer",
+              trigger: {
+                kind: "nudge",
+                roomId: room.id,
+                taskId: task.id,
+                text:
+                  "你上一轮只说了话、没有给出 review 结论。现在必须输出 kind:\"review\"：" +
+                  "verdict 为 approve 或 request_changes，并给出具体 findings（每条带 severity/title/detail）。" +
+                  "除非还缺一条关键证据，否则不要再请求工具，直接下结论。",
+              },
+            });
+          }
+          return;
+        }
+        runtime.reviewConclusionForced = false;
         const move = reviewMove(
           studio.state.cats,
           applied.review.verdict,
