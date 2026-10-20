@@ -16,6 +16,7 @@ import { ids } from "../domain/ids.ts";
 import type {
   Artifact,
   ArtifactKind,
+  ArtifactTrace,
   BrainMode,
   Member,
   MemberId,
@@ -574,6 +575,8 @@ export class Studio {
     title: string;
     body: string;
     author: MemberId;
+    /** 产物溯源：产生它的模型调用与阶段。 */
+    trace?: ArtifactTrace;
   }): Artifact {
     this.requireTask(input.taskId);
     const sameKind = this.state.artifacts.filter(
@@ -588,6 +591,7 @@ export class Studio {
       author: input.author,
       version: sameKind.length + 1,
       createdAt: now(),
+      ...(input.trace ? { trace: input.trace } : {}),
     };
     this.state.artifacts.push(artifact);
     this.touchTask(input.taskId);

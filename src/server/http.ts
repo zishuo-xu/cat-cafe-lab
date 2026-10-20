@@ -716,6 +716,18 @@ export function createHttpServer(deps: HttpDeps): Server {
             actor: artifact.author,
             actorName: names.get(artifact.author),
             detail: `${artifact.kind}「${artifact.title}」v${artifact.version}`,
+            meta: {
+              artifactId: artifact.id,
+              version: artifact.version,
+              // 产物溯源：前端据此从产物跳回产生它的那次模型调用。
+              ...(artifact.trace
+                ? {
+                    stage: artifact.trace.stage,
+                    ...(artifact.trace.llmCallId ? { llmCallId: artifact.trace.llmCallId } : {}),
+                    ...(artifact.trace.trigger ? { trigger: artifact.trace.trigger } : {}),
+                  }
+                : {}),
+            },
           });
         }
         for (const call of state.toolCalls) {
@@ -742,10 +754,17 @@ export function createHttpServer(deps: HttpDeps): Server {
               (call.degraded ? " · 降级" : "") +
               (call.retried ? " · 重试" : ""),
             meta: {
+              id: call.id,
+              stage: call.stage,
+              trigger: call.trigger,
               engine: call.engine,
               streamed: call.streamed,
               degraded: call.degraded,
               degradeReason: call.degradeReason,
+              durationMs: call.durationMs ?? 0,
+              ...(call.inputTokens !== undefined
+                ? { inputTokens: call.inputTokens, outputTokens: call.outputTokens ?? 0 }
+                : {}),
             },
           });
         }

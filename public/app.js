@@ -205,6 +205,9 @@ const traceState = {
   filter: "all",
   collapsedStages: new Set(),
   requestId: 0,
+  /** 从产物「查看来源」进来时要定位并高亮的模型调用 id。 */
+  focusLlmId: "",
+  focusScrolled: false,
 };
 
 /** 模型分工档案状态。 */
@@ -1055,6 +1058,7 @@ function cacheDom() {
   els.traceTimeline = $("#trace-timeline");
   els.traceCount = $("#trace-entry-count");
   els.traceError = $("#trace-error");
+  els.traceHighlightNote = $("#trace-highlight-note");
   els.traceFilters = $$(".trace-filter");
   els.taskSearchModal = $("#task-search-modal");
   els.taskSearchInput = $("#task-search-input");
@@ -2327,10 +2331,12 @@ function artifactNode(artifact) {
   const details = h("details", { class: "artifact-card", "data-artifact-id": artifact.id });
   if (app.expanded.has(artifact.id)) details.setAttribute("open", "");
 
-  details.appendChild(
+  const summary = h(
+    "summary",
+    {},
     h(
-      "summary",
-      {},
+      "span",
+      { class: "artifact-summary-row" },
       h("span", { class: "summary-chevron", "aria-hidden": "true", text: "▸" }),
       h("span", {
         class: "artifact-kind",
@@ -2347,6 +2353,35 @@ function artifactNode(artifact) {
       ),
     ),
   );
+
+  // 产物溯源：来自哪次模型调用。老数据没有 trace 时整行不渲染。
+  const traceText = artifactTraceText(artifact);
+  const traceLlmCallId = String(artifact.trace?.llmCallId ?? "");
+  if (traceText) {
+    summary.appendChild(
+      h(
+        "span",
+        {
+          class: "artifact-trace",
+          title: traceLlmCallId ? `来源模型调用 ${traceLlmCallId}` : "",
+        },
+        h("span", { class: "artifact-trace-source", text: traceText }),
+        traceLlmCallId && artifact.taskId
+          ? h("button", {
+              type: "button",
+              class: "artifact-trace-open",
+              "data-action": "artifact-trace",
+              "data-task-id": artifact.taskId,
+              "data-llm-call-id": traceLlmCallId,
+              title: `在任务轨迹里定位这次模型调用（${shortLlmCallId(traceLlmCallId)}）`,
+              text: "查看来源",
+            })
+          : null,
+      ),
+    );
+  }
+
+  details.appendChild(summary);
   details.appendChild(h("pre", { class: "artifact-body", text: artifact.body || "（正文为空）" }));
   details.addEventListener("toggle", () => {
     if (details.open) app.expanded.add(artifact.id);
@@ -3690,6 +3725,14 @@ function onGlobalClick(event) {
     case "open-task-trace":
       if (actionEl.dataset.taskId) void openTaskTrace(actionEl.dataset.taskId);
       break;
+    case "artifact-trace": {
+      // 产物卡片在 <summary> 里：阻止默认的展开/收起，只打开轨迹。
+      event.preventDefault();
+      const taskId = actionEl.dataset.taskId;
+      const llmCallId = actionEl.dataset.llmCallId;
+      if (taskId && llmCallId) void openTaskTrace(taskId, { focusLlmId: llmCallId });
+      break;
+    }
     case "close-task-trace":
       closeTaskTrace();
       break;
@@ -4983,12 +5026,70 @@ function parseToolTraceStatus(detail) {
   return match ? match[1] : "";
 }
 
-async function openTaskTrace(taskId) {
+/** 模型调用的短 id（如 #a1b2c3），方便和产物来源对齐。 */
+function shortLlmCallId(id) {
+  const text = String(id ?? "").trim();
+  if (!text) return "";
+  const tail = text.includes("_") ? text.slice(text.lastIndexOf("_") + 1) : text;
+  return `#${tail.slice(0, 6)}`;
+}
+
+/** 产物来源文案；老数据没有 trace 时返回空串（不渲染、不报错）。 */
+function artifactTraceText(artifact) {
+  const trace = artifact?.trace;
+  if (!trace || typeof trace !== "object") return "";
+  const stageRaw = String(trace.stage ?? "");
+  const stage = stageRaw ? (STAGE_LABEL.get(stageRaw) ?? stageRaw) : "";
+  if (trace.llmCallId) return stage ? `来自 ${stage} · 模型调用` : "来自模型调用";
+  return stage ? `来自 ${stage}` : "";
+}
+
+function hideTraceHighlightNote() {
+  if (!els.traceHighlightNote) return;
+  els.traceHighlightNote.hidden = true;
+  els.traceHighlightNote.textContent = "";
+}
+
+/** 轨迹渲染完后按 focusLlmId 高亮并滚动到对应模型调用。 */
+function applyTraceFocus() {
+  const focusId = traceState.focusLlmId;
+  if (!focusId) {
+    hideTraceHighlightNote();
+    return;
+  }
+  const entries = Array.isArray(traceState.data?.entries) ? traceState.data.entries : [];
+  const exists = entries.some(
+    (entry) => entry.kind === "llm" && entry.meta?.id === focusId,
+  );
+  if (!exists) {
+    if (els.traceHighlightNote) {
+      els.traceHighlightNote.textContent =
+        "这条产物产生时的调用已被裁剪（轨迹里找不到对应记录）。";
+      els.traceHighlightNote.hidden = false;
+    }
+    return;
+  }
+  hideTraceHighlightNote();
+  const items = els.traceTimeline?.querySelectorAll('.trace-item[data-kind="llm"]') ?? [];
+  const node = Array.from(items).find((item) => item.dataset.llmId === focusId);
+  if (!node) return;
+  node.classList.add("is-highlight");
+  if (!traceState.focusScrolled) {
+    traceState.focusScrolled = true;
+    const behavior = prefersReducedMotion() ? "auto" : "smooth";
+    requestAnimationFrame(() => node.scrollIntoView({ block: "center", behavior }));
+  }
+}
+
+async function openTaskTrace(taskId, options = {}) {
   const task = taskId ? taskById(taskId) : activeTask();
   if (!task || !els.taskTraceModal) return;
   traceState.taskId = task.id;
   traceState.filter = "all";
   traceState.collapsedStages = new Set();
+  traceState.focusLlmId = String(options.focusLlmId ?? "");
+  traceState.focusScrolled = false;
+  hideTraceHighlightNote();
   traceState.error = "";
   traceState.data = null;
   traceState.available = null;
@@ -5004,6 +5105,9 @@ function closeTaskTrace() {
   traceState.taskId = null;
   traceState.data = null;
   traceState.loading = false;
+  traceState.focusLlmId = "";
+  traceState.focusScrolled = false;
+  hideTraceHighlightNote();
 }
 
 async function loadTaskTrace(taskId) {
@@ -5154,10 +5258,12 @@ function renderTaskTrace() {
   const timeline = els.traceTimeline;
   if (els.traceCount) els.traceCount.textContent = "";
   if (traceState.loading) {
+    hideTraceHighlightNote();
     timeline.replaceChildren(h("div", { class: "trace-empty", text: "读取轨迹…" }));
     return;
   }
   if (traceState.available === false) {
+    hideTraceHighlightNote();
     timeline.replaceChildren(
       h(
         "div",
@@ -5176,6 +5282,7 @@ function renderTaskTrace() {
   }
   const entries = Array.isArray(traceState.data?.entries) ? traceState.data.entries : [];
   if (!entries.length) {
+    hideTraceHighlightNote();
     timeline.replaceChildren(h("div", { class: "trace-empty", text: "这个任务还没有轨迹。" }));
     return;
   }
@@ -5240,6 +5347,7 @@ function renderTaskTrace() {
     return;
   }
   timeline.replaceChildren(...nodes);
+  applyTraceFocus();
 }
 
 function traceEntryNode(entry, maxLlmDuration) {
@@ -5249,7 +5357,20 @@ function traceEntryNode(entry, maxLlmDuration) {
   const cat = actor !== "user" && actor !== "system" ? catById(actor) : null;
   const actorName = traceActorName(actor, entry.actorName);
   const degraded = kind === "llm" && entry.meta?.degraded === true;
+  const llmCallId = kind === "llm" ? String(entry.meta?.id ?? "") : "";
   const llm = kind === "llm" ? parseTraceLlmDetail(entry.detail) : null;
+  if (llm && entry.meta) {
+    // 新轨迹的 meta 是结构化的；detail 解析兜底老数据。
+    if (llm.durationMs === undefined && Number.isFinite(Number(entry.meta.durationMs))) {
+      llm.durationMs = Number(entry.meta.durationMs);
+    }
+    if (llm.input === undefined && entry.meta.inputTokens !== undefined) {
+      llm.input = Number(entry.meta.inputTokens);
+    }
+    if (llm.output === undefined && entry.meta.outputTokens !== undefined) {
+      llm.output = Number(entry.meta.outputTokens);
+    }
+  }
   const toolStatus = kind === "tool" ? parseToolTraceStatus(entry.detail) : "";
   const detail = h("div", {
     class: "trace-detail",
@@ -5271,6 +5392,15 @@ function traceEntryNode(entry, maxLlmDuration) {
   ];
   if (kind === "llm") {
     const metaRow = h("div", { class: "trace-llm-meta" });
+    if (llmCallId) {
+      metaRow.appendChild(
+        h("span", {
+          class: "trace-llm-id",
+          title: llmCallId,
+          text: shortLlmCallId(llmCallId),
+        }),
+      );
+    }
     if (llm?.durationMs !== undefined) {
       metaRow.appendChild(h("span", { class: "trace-llm-duration", text: `${llm.durationMs}ms` }));
       const width = Math.max(4, Math.round((llm.durationMs / maxLlmDuration) * 100));
@@ -5298,6 +5428,7 @@ function traceEntryNode(entry, maxLlmDuration) {
       role: "listitem",
       "data-kind": kind,
       "data-degraded": degraded ? "true" : "false",
+      ...(llmCallId ? { "data-llm-id": llmCallId } : {}),
       ...(degraded ? { title: String(entry.meta?.degradeReason ?? "模型调用降级") } : {}),
     },
     h("span", { class: "trace-time", text: traceTime(entry.at) }),

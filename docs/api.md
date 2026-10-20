@@ -458,8 +458,9 @@ CSV 的任务，但忘了在哪个房间」这类检索。
 {
   "task": { "id": "task_xxx", "title": "…", "stage": "done" },
   "entries": [
-    { "at": 1792420786000, "kind": "stage", "actor": "xianxian", "actorName": "林知远", "detail": "进入阶段 intake", "meta": { "stage": "intake" } },
-    { "at": 1792420786100, "kind": "llm", "actor": "xianxian", "actorName": "林知远", "detail": "some-model · 10063ms · in 2378/out 905", "meta": { "engine": "api", "streamed": true, "degraded": false } },
+    { "at": 1792420786000, "kind": "stage", "actor": "linzhiyuan", "actorName": "林知远", "detail": "进入阶段 intake", "meta": { "stage": "intake" } },
+    { "at": 1792420786100, "kind": "llm", "actor": "linzhiyuan", "actorName": "林知远", "detail": "some-model · 10063ms · in 2378/out 905", "meta": { "id": "msg_abc", "stage": "intake", "trigger": "task_created", "engine": "api", "streamed": true, "degraded": false, "durationMs": 10063 } },
+    { "at": 1792420786500, "kind": "artifact", "actor": "jinjianceng", "actorName": "陈实", "detail": "patch「后台导出 CSV 实现 v1」v1", "meta": { "artifactId": "art_xyz", "version": 1, "stage": "working", "llmCallId": "msg_abc", "trigger": "handoff" } },
     { "at": 1792420787000, "kind": "tool", "actor": "jinjianceng", "actorName": "陈实", "detail": "run_command error (exit 1)", "meta": { "label": "跑测试", "durationMs": 97 } }
   ],
   "summary": {
@@ -480,6 +481,9 @@ CSV 的任务，但忘了在哪个房间」这类检索。
 ```
 
 `entries[].kind` 可能是 `stage` / 消息的 kind（`chat` / `handoff` / `review` / `decision` / `artifact` / `tool` / `system`）/ `handoff` / `artifact` / `tool` / `llm` / `memory`。
+
+**产物溯源**：`artifact` 条目的 `meta.llmCallId` 对应某个 `llm` 条目的 `meta.id`，
+前端据此从产物跳回产生它的那次模型调用（老数据可能没有 `llmCallId`）。
 错误：`404`（任务不存在）。
 
 ### `GET /api/tasks/:id/diff`
@@ -487,7 +491,7 @@ CSV 的任务，但忘了在哪个房间」这类检索。
 只读查看任务分支或工作树的 diff（git 工作区）。
 
 ```json
-{ "ok": true, "branch": "catcafe/task_xxx", "base": "main", "status": " M src/a.js", "diff": "diff --git ..." }
+{ "ok": true, "branch": "deliverylab/task_xxx", "base": "main", "status": " M src/a.js", "diff": "diff --git ..." }
 ```
 
 错误：`400`（任务所在房间没有工作区）、`404`、`503`。

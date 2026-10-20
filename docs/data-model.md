@@ -359,10 +359,19 @@ interface Artifact {
   author: CatId;
   version: number;       // 同一任务、同一 kind 自增（1,2,3…）
   createdAt: number;
+  trace?: ArtifactTrace; // 产物溯源
+}
+
+interface ArtifactTrace {
+  stage: TaskStage;      // 产出时所在阶段
+  llmCallId?: string;    // 哪次模型调用写出来的（演出模式下可能没有）
+  trigger?: TriggerKind; // 这一轮被什么触发（handoff / review_result / nudge…）
 }
 ```
 
 - 版本号由 `Studio.addArtifact` 按「同任务同 kind 的数量 + 1」自动生成；
+- `trace` 让「产物 ↔ 模型调用」可互查：轨迹接口里产物条目的 `meta.llmCallId`
+  能对上模型调用条目的 `meta.id`，前端据此从产物跳回产生它的一次调用；
   所以 remember_me 会看到 patch v1 / v2、review v1 / v2。
 - `review` 的正文由 `formatReviewBody()` 生成固定格式，前端按行解析 `[blocker]` / `[minor]`。
 

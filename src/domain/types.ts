@@ -221,6 +221,23 @@ export interface Artifact {
   author: MemberId;
   version: number;
   createdAt: number;
+  /**
+   * 产物来源：由哪一次模型调用、在哪个阶段产出。
+   *
+   * 为什么需要：任务轨迹能回答「121 秒里 88 秒花在模型思考」，但反过来——
+   * 「这个 patch 是哪次调用写的、当时在评审哪条 blocker」——以前答不出来，
+   * 产出与调用之间没有连线，可追溯性只做了半件。
+   */
+  trace?: ArtifactTrace;
+}
+
+/** 产物溯源：指向产生它的模型调用。 */
+export interface ArtifactTrace {
+  stage: TaskStage;
+  /** 产生这条产物时正在进行的模型调用（演出模式下可能没有）。 */
+  llmCallId?: string;
+  /** 触发这一轮的原因（handoff / review_result / nudge …）。 */
+  trigger?: TriggerKind;
 }
 
 export type Severity = "blocker" | "minor";

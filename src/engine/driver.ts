@@ -49,6 +49,7 @@ import type {
   ToolResult,
   ToolRunResult,
   Trigger,
+  TriggerKind,
   TurnContext,
 } from "../domain/types.ts";
 import type { Studio } from "../server/studio.ts";
@@ -600,6 +601,8 @@ export function createDriver(deps: {
       // 由 afterTurns 统一按正常 turn 处理。
       for (;;) {
         let turns: AgentTurn[] = [];
+        // 本轮模型调用 id：产物要记「我是哪次调用写出来的」，用于任务轨迹里的溯源。
+        let roundLlmCallId: string | undefined;
         try {
           await wait(THINK_DELAY_MS);
           const call = studio.startLlmCall({
@@ -610,6 +613,7 @@ export function createDriver(deps: {
             ...(task ? { stage: task.stage } : {}),
             trigger: trigger.kind,
           });
+          roundLlmCallId = call.id;
           let report: BrainReport = {};
           const context = buildContext(cat, room, task, trigger, (update) => {
             // 只接受本房间的草稿，避免串台。
@@ -645,7 +649,10 @@ export function createDriver(deps: {
                   turn.kind === "message" || turn.kind === "silence" || turn.kind === "tool",
               )
             : turns;
-        const applied = await applyTurns(room, cat, task, effectiveTurns);
+        const applied = await applyTurns(room, cat, task, effectiveTurns, {
+          ...(roundLlmCallId ? { llmCallId: roundLlmCallId } : {}),
+          trigger: trigger.kind,
+        });
         mergeApplied(merged, applied);
 
         const roundCap =
@@ -692,6 +699,8 @@ export function createDriver(deps: {
     cat: Member,
     task: Task | null,
     turns: readonly AgentTurn[],
+    /** 本轮来源：产物溯源用它记「哪次模型调用写的」。 */
+    source?: { llmCallId?: string; trigger?: TriggerKind },
   ): Promise<AppliedTurns> {
     const applied: AppliedTurns = {
       handoffs: [],
@@ -797,6 +806,15 @@ export function createDriver(deps: {
             title: turn.artifact.title,
             body: turn.artifact.body,
             author: cat.id,
+            ...(source
+              ? {
+                  trace: {
+                    stage: task.stage,
+                    ...(source.llmCallId ? { llmCallId: source.llmCallId } : {}),
+                    ...(source.trigger ? { trigger: source.trigger } : {}),
+                  },
+                }
+              : {}),
           });
           studio.appendMessage({
             roomId: room.id,
@@ -836,6 +854,15 @@ export function createDriver(deps: {
             title: turn.title,
             body: formatReviewBody(turn.verdict, turn.findings),
             author: cat.id,
+            ...(source
+              ? {
+                  trace: {
+                    stage: task.stage,
+                    ...(source.llmCallId ? { llmCallId: source.llmCallId } : {}),
+                    ...(source.trigger ? { trigger: source.trigger } : {}),
+                  },
+                }
+              : {}),
           });
           const mentions = normalizeMentions(turn.mentions, studio.state.cats);
           studio.appendMessage({
@@ -874,6 +901,15 @@ export function createDriver(deps: {
             title: turn.artifact.title,
             body: turn.artifact.body,
             author: cat.id,
+            ...(source
+              ? {
+                  trace: {
+                    stage: task.stage,
+                    ...(source.llmCallId ? { llmCallId: source.llmCallId } : {}),
+                    ...(source.trigger ? { trigger: source.trigger } : {}),
+                  },
+                }
+              : {}),
           });
           studio.appendMessage({
             roomId: room.id,
