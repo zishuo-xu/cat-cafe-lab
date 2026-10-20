@@ -4913,7 +4913,7 @@ function traceEntryNode(entry, maxLlmDuration) {
 
 // ── 模型分工档案 ───────────────────────────────────────────────────────
 
-const MODEL_PROFILE_STORAGE_KEY = "catcafe.modelProfileId";
+const MODEL_PROFILE_STORAGE_KEY = "deliverylab.modelProfileId";
 
 function modelProfileGlobalModel() {
   return String(settingsState.data?.llm?.model ?? app.globalModel ?? "").trim();

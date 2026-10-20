@@ -196,7 +196,7 @@ export class TestRunner {
     scenario: string | undefined,
   ): { command: string; args: string[]; cwd: string; env: Record<string, string> } {
     const base = `http://127.0.0.1:${this.opts.port}`;
-    const env: Record<string, string> = { CATCAFE_BASE: base, PYTHONUNBUFFERED: "1" };
+    const env: Record<string, string> = { DELIVERYLAB_BASE: base, PYTHONUNBUFFERED: "1" };
     if (kind === "unit") {
       return {
         command: process.execPath,
@@ -216,7 +216,7 @@ export class TestRunner {
         "--scenario",
         kind === "real" ? "all" : (scenario ?? "basic"),
         "--out",
-        "/tmp/catcafe-matrix-ui.json",
+        "/tmp/deliverylab-matrix-ui.json",
       ],
       cwd: toolsDir,
       env,

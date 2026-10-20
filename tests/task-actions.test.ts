@@ -145,7 +145,7 @@ describe("HTTP /api/tasks/:id/action", () => {
   let base: string;
 
   before(async () => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-action-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-action-"));
     studio = new Studio({ cats: CATS, mode: "mock" });
     const driver = createDriver({
       studio,

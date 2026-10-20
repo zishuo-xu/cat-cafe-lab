@@ -39,8 +39,8 @@ async function listen(target: ReturnType<typeof createHttpServer>): Promise<stri
 }
 
 async function createHarness(): Promise<Harness> {
-  const dataDir = mkdtempSync(join(tmpdir(), "catcafe-rooms-"));
-  const repoDir = mkdtempSync(join(tmpdir(), "catcafe-rooms-repo-"));
+  const dataDir = mkdtempSync(join(tmpdir(), "deliverylab-rooms-"));
+  const repoDir = mkdtempSync(join(tmpdir(), "deliverylab-rooms-repo-"));
   const manager = new WorkspaceManager(dataDir);
   const workspace = manager.add({ name: "测试仓库", path: repoDir });
   const studio = new Studio({ cats: CATS, mode: "mock" });

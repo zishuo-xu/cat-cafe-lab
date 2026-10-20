@@ -60,7 +60,7 @@ describe("HTTP /api/tool-calls", () => {
   }
 
   before(async () => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-approvals-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-approvals-"));
     studio = new Studio({ cats: CATS, mode: "llm" });
     queue = new ApprovalQueue();
     server = createHttpServer({

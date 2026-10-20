@@ -28,7 +28,7 @@ describe("model profiles", () => {
   let base: string;
 
   before(async () => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-profiles-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-profiles-"));
     studio = new Studio({ cats: CATS, mode: "mock" });
     server = createHttpServer({
       studio,

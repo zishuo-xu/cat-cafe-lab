@@ -68,8 +68,8 @@ node src/main.ts
 
 ```bash
 PORT=4400 node src/main.ts                          # 换端口
-CATCAFE_DATA_DIR=/tmp/cat-cafe node src/main.ts     # 换数据目录
-CATCAFE_STALL_MS=30000 node src/main.ts             # 把「卡住」判定放宽到 30 秒
+DELIVERYLAB_DATA_DIR=/tmp/cat-cafe node src/main.ts     # 换数据目录
+DELIVERYLAB_STALL_MS=30000 node src/main.ts             # 把「卡住」判定放宽到 30 秒
 ```
 
 说明：

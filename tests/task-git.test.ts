@@ -15,7 +15,7 @@ import { WorkspaceManager } from "../src/workspaces/manager.ts";
 import { fakeDriver } from "./helpers/fake-driver.ts";
 
 function makeRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "catcafe-git-"));
+  const dir = mkdtempSync(join(tmpdir(), "deliverylab-git-"));
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
   execFileSync("git", ["config", "user.email", "cat@example.com"], { cwd: dir });
   execFileSync("git", ["config", "user.name", "Member Café"], { cwd: dir });
@@ -32,7 +32,7 @@ function git(dir: string, args: string[]): string {
 function resetRepo(dir: string): void {
   execFileSync("git", ["checkout", "-q", "main"], { cwd: dir });
   execFileSync("git", ["reset", "--hard", "-q"], { cwd: dir });
-  const branches = execFileSync("git", ["branch", "--list", "catcafe/*"], {
+  const branches = execFileSync("git", ["branch", "--list", "deliverylab/*"], {
     cwd: dir,
     encoding: "utf8",
   })
@@ -79,11 +79,11 @@ describe("C-2 任务 git 工作流", () => {
   }
 
   before(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), "catcafe-git-data-"));
+    dataDir = mkdtempSync(join(tmpdir(), "deliverylab-git-data-"));
     repoDir = makeRepo();
     readonlyRepoDir = makeRepo();
     noBranchRepoDir = makeRepo();
-    plainDir = mkdtempSync(join(tmpdir(), "catcafe-plain-"));
+    plainDir = mkdtempSync(join(tmpdir(), "deliverylab-plain-"));
     writeFileSync(join(plainDir, "note.txt"), "hello", "utf8");
 
     manager = new WorkspaceManager(dataDir);
@@ -132,9 +132,9 @@ describe("C-2 任务 git 工作流", () => {
     rmSync(plainDir, { recursive: true, force: true });
   });
 
-  test("建任务自动创建 catcafe/<taskId> 分支", async () => {
+  test("建任务自动创建 deliverylab/<taskId> 分支", async () => {
     const task = await createTask("给登录页加记住我");
-    assert.ok(task.git?.branch?.startsWith("catcafe/task_"));
+    assert.ok(task.git?.branch?.startsWith("deliverylab/task_"));
     assert.equal(git(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]), task.git?.branch);
     // 干净分支，可以继续干活。
     assert.equal(git(repoDir, ["status", "--porcelain=v1"]), "");
@@ -206,10 +206,10 @@ describe("C-2 任务 git 工作流", () => {
     assert.ok(rolledBody.task.git?.stashedAt);
     assert.equal(git(repoDir, ["rev-parse", "--abbrev-ref", "HEAD"]), "main");
     assert.equal(readFileSync(join(repoDir, "app.js"), "utf8"), "export const x = 1;\n");
-    assert.match(git(repoDir, ["stash", "list"]), /catcafe-rollback-/);
+    assert.match(git(repoDir, ["stash", "list"]), /deliverylab-rollback-/);
     // 空任务分支已删除。
-    const branches = git(repoDir, ["branch", "--list", "catcafe/*"]);
-    assert.ok(!branches.includes(task.git?.branch ?? "catcafe/none"));
+    const branches = git(repoDir, ["branch", "--list", "deliverylab/*"]);
+    assert.ok(!branches.includes(task.git?.branch ?? "deliverylab/none"));
   });
 
   test("已提交的任务拒绝回滚", async () => {

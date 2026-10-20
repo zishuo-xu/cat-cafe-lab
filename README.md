@@ -393,7 +393,7 @@ run_command node --test ...      ✓ exit 0（沈砚放行）
 
 ### 任务级 git 工作流
 
-读写 git 工作区里开任务时，会自动从当前 base 分支切出 `catcafe/<taskId>`：
+读写 git 工作区里开任务时，会自动从当前 base 分支切出 `deliverylab/<taskId>`：
 
 1. 成员在一个独立任务分支上改文件，工作树不干净 / 已有未收尾任务分支时**不会硬开**，只记录提示；
 2. 右侧「任务 Git」卡显示分支、base、工作树改动数；「查看 diff」是真实 `git diff`；
@@ -486,7 +486,7 @@ run_command node --test ...      ✓ exit 0（沈砚放行）
 LLM_BASE_URL=https://opencode.ai/zen/go/v1 \
 LLM_MODEL=deepseek-v4.1-flash \
 LLM_API_KEY=oc_sk_... \
-LLM_HEADERS='{"x-opencode-session":"catcafe-任意标识"}' \
+LLM_HEADERS='{"x-opencode-session":"deliverylab-任意标识"}' \
 node src/main.ts
 ```
 
@@ -612,7 +612,7 @@ src/domain/types.ts   唯一契约
 ## 目录
 
 ```
-cat-cafe-lab/
+delivery-lab/
 ├── src/
 │   ├── domain/        types.ts（契约）、ids.ts
 │   ├── server/        studio.ts、http.ts、settings.ts、settings-store.ts

@@ -26,7 +26,7 @@ describe("Sandbox", () => {
   let sandbox: Sandbox;
 
   before(() => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-sandbox-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-sandbox-"));
     sandbox = sandboxAt(dir);
   });
 
@@ -146,7 +146,7 @@ describe("HTTP /api/workspace", () => {
   }
 
   before(async () => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-workspace-http-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-workspace-http-"));
     sandbox = sandboxAt(dir);
     const studio = new Studio({ cats: CATS, mode: "mock" });
     server = createHttpServer({

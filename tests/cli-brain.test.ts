@@ -86,7 +86,7 @@ describe("CLI brain", () => {
   let dir: string;
 
   before(() => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-cli-brain-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-cli-brain-"));
   });
 
   after(() => {

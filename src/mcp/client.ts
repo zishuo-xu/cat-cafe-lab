@@ -23,7 +23,7 @@ import type {
 } from "../domain/types.ts";
 
 const PROTOCOL_VERSION = "2024-11-05";
-const CLIENT_INFO = { name: "cat-cafe-lab", version: "0.1.0" };
+const CLIENT_INFO = { name: "delivery-lab", version: "0.1.0" };
 const REQUEST_TIMEOUT_MS = 8000;
 
 interface RpcResponse {

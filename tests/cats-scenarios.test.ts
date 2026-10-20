@@ -41,7 +41,7 @@ describe("猫猫档案 updateCat", () => {
   let studio: Studio;
 
   before(() => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-cats-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-cats-"));
     studio = new Studio({ cats: CATS, mode: "mock", dataDir: dir });
   });
 
@@ -151,7 +151,7 @@ describe("剧本库 registry", () => {
   let dir: string;
 
   before(() => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-scenarios-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-scenarios-"));
     initScenarios(dir, CATS.map((cat) => cat.id));
   });
 
@@ -209,7 +209,7 @@ describe("HTTP /api/cats 与 /api/scenarios", () => {
   let base: string;
 
   before(async () => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-layer2-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-layer2-"));
     initScenarios(dir, CATS.map((cat) => cat.id));
     studio = new Studio({ cats: CATS, mode: "mock" });
     driver = fakeDriver();

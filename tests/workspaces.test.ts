@@ -16,7 +16,7 @@ import { WorkspaceManager } from "../src/workspaces/manager.ts";
 import { fakeDriver } from "./helpers/fake-driver.ts";
 
 function makeRepo(): string {
-  const dir = mkdtempSync(join(tmpdir(), "catcafe-repo-"));
+  const dir = mkdtempSync(join(tmpdir(), "deliverylab-repo-"));
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
   execFileSync("git", ["config", "user.email", "cat@example.com"], { cwd: dir });
   execFileSync("git", ["config", "user.name", "Member Café"], { cwd: dir });
@@ -35,7 +35,7 @@ describe("WorkspaceManager", () => {
   let manager: WorkspaceManager;
 
   before(() => {
-    dataDir = mkdtempSync(join(tmpdir(), "catcafe-ws-data-"));
+    dataDir = mkdtempSync(join(tmpdir(), "deliverylab-ws-data-"));
     repoDir = makeRepo();
     manager = new WorkspaceManager(dataDir);
   });
@@ -116,7 +116,7 @@ describe("WorkspaceManager", () => {
   });
 
   test("非 git 目录也能作为只读工作区，git 信息返回 isGit=false", async () => {
-    const plain = mkdtempSync(join(tmpdir(), "catcafe-plain-"));
+    const plain = mkdtempSync(join(tmpdir(), "deliverylab-plain-"));
     try {
       writeFileSync(join(plain, "a.txt"), "a", "utf8");
       const workspace = manager.add({ name: "Plain", path: plain });
@@ -227,7 +227,7 @@ describe("HTTP workspaces / rooms", () => {
   }
 
   before(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), "catcafe-ws-http-"));
+    dataDir = mkdtempSync(join(tmpdir(), "deliverylab-ws-http-"));
     repoDir = makeRepo();
     manager = new WorkspaceManager(dataDir);
     studio = new Studio({ cats: CATS, mode: "mock" });

@@ -3,7 +3,7 @@
 
 运行前先起真实实例（示例）：
   LLM_BASE_URL=https://api.deepseek.com LLM_MODEL=deepseek-flash \
-  LLM_API_KEY=sk-... PORT=4320 CATCAFE_DATA_DIR=/tmp/catcafe-real2 node src/main.ts
+  LLM_API_KEY=sk-... PORT=4320 DELIVERYLAB_DATA_DIR=/tmp/deliverylab-real2 node src/main.ts
 
 然后：
   python3 tools/matrix.py --scenario all
@@ -218,7 +218,7 @@ SCENARIOS = {
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--scenario", default="all")
-    parser.add_argument("--out", default="/tmp/catcafe-matrix.json")
+    parser.add_argument("--out", default="/tmp/deliverylab-matrix.json")
     args = parser.parse_args()
 
     code, health = req("GET", "/api/health")

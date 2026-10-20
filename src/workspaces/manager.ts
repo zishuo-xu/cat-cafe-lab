@@ -209,7 +209,7 @@ export class WorkspaceManager {
     if (!workspace.branchPerTask) return {};
 
     const current = await this.git(workspace.root, ["rev-parse", "--abbrev-ref", "HEAD"]);
-    if (current.ok && current.stdout.trim().startsWith("catcafe/")) {
+    if (current.ok && current.stdout.trim().startsWith("deliverylab/")) {
       return { error: `当前在任务分支 ${current.stdout.trim()} 上，请先提交或回滚再开新任务` };
     }
 
@@ -221,7 +221,7 @@ export class WorkspaceManager {
 
     const baseBranch = await this.git(workspace.root, ["rev-parse", "--abbrev-ref", "HEAD"]);
     const baseCommit = await this.git(workspace.root, ["rev-parse", "HEAD"]);
-    const branch = `catcafe/${taskId}`;
+    const branch = `deliverylab/${taskId}`;
     const created = await this.git(workspace.root, ["checkout", "-b", branch]);
     if (!created.ok) return { error: created.stderr.trim() || "创建分支失败" };
     return {
@@ -327,7 +327,7 @@ export class WorkspaceManager {
     if (status.ok && !status.stdout.trim()) {
       return { ok: true, note: "没有改动需要回滚" };
     }
-    const label = `catcafe-rollback-${taskId}`;
+    const label = `deliverylab-rollback-${taskId}`;
     const stash = await this.git(workspace.root, ["stash", "push", "-u", "-m", label]);
     if (!stash.ok) return { ok: false, error: stash.stderr.trim() || "git stash 失败" };
 

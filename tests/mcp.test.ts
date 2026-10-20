@@ -105,7 +105,7 @@ async function startRecordingMcpHttpServer(): Promise<{
 }
 
 function tempSandbox(): { dir: string; sandbox: Sandbox } {
-  const dir = mkdtempSync(join(tmpdir(), "catcafe-registry-"));
+  const dir = mkdtempSync(join(tmpdir(), "deliverylab-registry-"));
   const sandbox = new Sandbox(join(dir, "workspace"));
   sandbox.ensureSeed();
   return { dir, sandbox };

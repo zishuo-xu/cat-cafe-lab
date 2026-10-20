@@ -80,7 +80,7 @@ describe("Studio", () => {
   });
 
   test("持久化后重开能恢复状态", () => {
-    const dir = mkdtempSync(join(tmpdir(), "catcafe-"));
+    const dir = mkdtempSync(join(tmpdir(), "deliverylab-"));
     try {
       const studio = new Studio({ cats: CATS, mode: "mock", dataDir: dir });
       studio.appendMessage({

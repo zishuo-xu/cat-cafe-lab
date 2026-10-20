@@ -2,16 +2,25 @@
  * 从环境变量解析运行配置。API key 只存在内存里，绝不落盘。
  *
  * 额外支持 LLM_HEADERS：JSON 字符串，例如
- *   LLM_HEADERS='{"x-opencode-session":"catcafe-abc"}'
+ *   LLM_HEADERS='{"x-opencode-session":"deliverylab-abc"}'
  * 用于 opencode zen 这类需要自定义请求头的端点。值同样不进日志、不回传前端。
  */
 
 import type { LlmSettings, StudioSettings, ToolApprovalMode } from "../domain/types.ts";
 
+/**
+ * 读环境变量，同时接受新前缀（DELIVERYLAB_）与旧前缀（CATCAFE_）。
+ *
+ * 旧前缀是项目改名前的名字，保留是为了不破坏已有的启动脚本。
+ */
+function readEnv(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  return env[`DELIVERYLAB_${name}`] ?? env[`CATCAFE_${name}`];
+}
+
 export function readSettings(env: NodeJS.ProcessEnv = process.env): StudioSettings {
   const port = Number.parseInt(env.PORT ?? "4318", 10);
-  const dataDir = env.CATCAFE_DATA_DIR?.trim() || "data";
-  const stallMs = Number.parseInt(env.CATCAFE_STALL_MS ?? "12000", 10);
+  const dataDir = readEnv(env, "DATA_DIR")?.trim() || "data";
+  const stallMs = Number.parseInt(readEnv(env, "STALL_MS") ?? "12000", 10);
 
   const baseUrl = env.LLM_BASE_URL?.trim() ?? "";
   const apiKey = env.LLM_API_KEY?.trim() ?? "";
@@ -34,10 +43,10 @@ export function readSettings(env: NodeJS.ProcessEnv = process.env): StudioSettin
     mode: llm ? "llm" : "mock",
     llm,
     stallMs: Number.isFinite(stallMs) && stallMs > 0 ? stallMs : 12000,
-    toolsEnabled: env.CATCAFE_TOOLS !== "0",
+    toolsEnabled: readEnv(env, "TOOLS") !== "0",
     toolApproval:
-      env.CATCAFE_APPROVAL === "auto" || env.CATCAFE_APPROVAL === "all"
-        ? env.CATCAFE_APPROVAL
+      readEnv(env, "APPROVAL") === "auto" || readEnv(env, "APPROVAL") === "all"
+        ? (readEnv(env, "APPROVAL") as "auto" | "all")
         : "commands",
   };
 }

@@ -54,7 +54,7 @@ describe("SettingsStore", () => {
   let ctx: ReturnType<typeof makeStore>;
 
   before(() => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-settings-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-settings-"));
     ctx = makeStore(dir);
   });
 
@@ -162,7 +162,7 @@ describe("SettingsStore 环境变量", () => {
   let dir: string;
 
   before(() => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-env-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-env-"));
   });
 
   after(() => {
@@ -194,7 +194,7 @@ describe("SettingsStore.test", () => {
   let fakePort: number;
 
   before(async () => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-testconn-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-testconn-"));
     ctx = makeStore(dir);
     fake = createServer((req, res) => {
       if (req.url === "/v1/models") {
@@ -248,7 +248,7 @@ describe("HTTP /api/settings", () => {
   let base: string;
 
   before(async () => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-http-settings-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-http-settings-"));
     ctx = makeStore(dir);
     server = createHttpServer({
       studio: ctx.studio,
@@ -343,7 +343,7 @@ describe("工具执行开关", () => {
   let dir: string;
 
   before(() => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-tools-flag-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-tools-flag-"));
   });
 
   after(() => {

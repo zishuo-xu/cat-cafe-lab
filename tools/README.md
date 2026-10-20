@@ -7,7 +7,7 @@
 LLM_BASE_URL=https://api.deepseek.com \
 LLM_MODEL=deepseek-flash \
 LLM_API_KEY=sk-... \
-PORT=4320 CATCAFE_DATA_DIR=/tmp/catcafe-real node src/main.ts
+PORT=4320 DELIVERYLAB_DATA_DIR=/tmp/deliverylab-real node src/main.ts
 
 # 2. 跑矩阵（可指定场景）
 cd tools

@@ -113,7 +113,7 @@ describe("每猫持久会话", () => {
     const { mkdtempSync, rmSync } = await import("node:fs");
     const { tmpdir } = await import("node:os");
     const { join } = await import("node:path");
-    const dir = mkdtempSync(join(tmpdir(), "catcafe-session-"));
+    const dir = mkdtempSync(join(tmpdir(), "deliverylab-session-"));
     try {
       const studio = new Studio({ cats: CATS, mode: "mock", dataDir: dir });
       studio.recordEpisode({

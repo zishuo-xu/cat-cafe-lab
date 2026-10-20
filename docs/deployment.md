@@ -62,22 +62,22 @@ node src/main.ts
 **面板里填的 key 只存在进程内存**，重启后丢失；写进环境变量的 key 每次启动都会有。
 
 `mode` 判定规则：`readSettings()` 只有在 `LLM_BASE_URL` 与 `LLM_MODEL` **都非空**时
-才生成 `llm` 配置；否则是 `mock`。没有设置 `CATCAFE_MODE` 这类环境变量。
+才生成 `llm` 配置；否则是 `mock`。没有设置 `DELIVERYLAB_MODE` 这类环境变量。
 
 ### 2.3 指定端口 / 数据目录
 
 ```bash
-PORT=4400 CATCAFE_DATA_DIR=/var/lib/cat-cafe-lab node src/main.ts
+PORT=4400 DELIVERYLAB_DATA_DIR=/var/lib/cat-cafe-lab node src/main.ts
 ```
 
 - `PORT` 只影响 HTTP 端口；服务固定绑定 `127.0.0.1`（见 `src/main.ts` 的
   `server.listen(settings.port, "127.0.0.1", …)`），没有绑定地址环境变量。
-- `CATCAFE_DATA_DIR` 支持相对路径（相对于进程工作目录）和绝对路径；目录不存在会自动创建。
-- 同一台机器可以起多个实例，只要 `PORT` 和 `CATCAFE_DATA_DIR` 都不同：
+- `DELIVERYLAB_DATA_DIR` 支持相对路径（相对于进程工作目录）和绝对路径；目录不存在会自动创建。
+- 同一台机器可以起多个实例，只要 `PORT` 和 `DELIVERYLAB_DATA_DIR` 都不同：
 
 ```bash
-PORT=4319 CATCAFE_DATA_DIR=/tmp/catcafe-a node src/main.ts
-PORT=4320 CATCAFE_DATA_DIR=/tmp/catcafe-b node src/main.ts
+PORT=4319 DELIVERYLAB_DATA_DIR=/tmp/catcafe-a node src/main.ts
+PORT=4320 DELIVERYLAB_DATA_DIR=/tmp/catcafe-b node src/main.ts
 ```
 
 ### 2.4 测试与类型检查
@@ -108,10 +108,10 @@ npx tsc --noEmit       # 类型检查
 | 变量 | 默认值 | 作用 | 示例 / 说明 |
 |---|---|---|---|
 | `PORT` | `4318` | HTTP 监听端口 | `PORT=4400`；`Number.parseInt`，非法值回落 4318 |
-| `CATCAFE_DATA_DIR` | `data` | 数据目录 | `CATCAFE_DATA_DIR=/var/lib/cat-cafe-lab`；相对路径基于进程 cwd |
-| `CATCAFE_STALL_MS` | `12000` | 判定任务「卡住了」的静默毫秒数 | 只接受正数；非法/<=0 回落 12000。前端也会读 `/api/health.stallMs` |
-| `CATCAFE_TOOLS` | 开启 | 是否允许成员执行沙盒工具 | **只有字符串 `"0"` 关闭**；其他值都视为开启。设置面板保存的 `toolsEnabled` 会覆盖初始值 |
-| `CATCAFE_APPROVAL` | `commands` | 工具审批策略 | `auto`（全自动）/ `all`（全审批）/ `commands`（只审批跑命令，默认）；其他值按 `commands` |
+| `DELIVERYLAB_DATA_DIR` | `data` | 数据目录 | `DELIVERYLAB_DATA_DIR=/var/lib/cat-cafe-lab`；相对路径基于进程 cwd |
+| `DELIVERYLAB_STALL_MS` | `12000` | 判定任务「卡住了」的静默毫秒数 | 只接受正数；非法/<=0 回落 12000。前端也会读 `/api/health.stallMs` |
+| `DELIVERYLAB_TOOLS` | 开启 | 是否允许成员执行沙盒工具 | **只有字符串 `"0"` 关闭**；其他值都视为开启。设置面板保存的 `toolsEnabled` 会覆盖初始值 |
+| `DELIVERYLAB_APPROVAL` | `commands` | 工具审批策略 | `auto`（全自动）/ `all`（全审批）/ `commands`（只审批跑命令，默认）；其他值按 `commands` |
 | `LLM_BASE_URL` | 空 | OpenAI 兼容 API base URL | `https://api.deepseek.com/v1`；末尾 `/` 会被去掉；与 `LLM_MODEL` 同时非空才进入真实模式 |
 | `LLM_MODEL` | 空 | 默认模型名 | `deepseek-chat`；与 `LLM_BASE_URL` 同时非空才进入真实模式 |
 | `LLM_API_KEY` | 空 | 模型 API key | 只读进进程内存；`getPublic()` 只回 `hasKey/keySource`，不落盘、不回前端、不进日志 |
@@ -127,7 +127,7 @@ npx tsc --noEmit       # 类型检查
 3. `LLM_API_KEY` 没有持久化字段：启动时只从环境变量取；面板输入的 key 只存在于当前进程；
 4. `LLM_HEADERS` 也只来自环境变量，保存在 `SettingsStore.envHeaders`，不写入
    `settings.json`、不通过 API 暴露；如果重启时需要它，必须重新提供环境变量；
-5. `CATCAFE_STALL_MS` 不走 `settings.json`，每次启动由环境变量决定；
+5. `DELIVERYLAB_STALL_MS` 不走 `settings.json`，每次启动由环境变量决定；
 6. 如果持久化配置是 `llm` 但缺少 Base URL 或模型名，启动时会回落到 `mock`。
 
 > 注意：`/api/settings` 的 PUT 会持久化上面第 2 条列出的非敏感字段；
@@ -139,7 +139,7 @@ npx tsc --noEmit       # 类型检查
 
 ### 4.1 `data/` 目录结构
 
-默认 `data/`（可用 `CATCAFE_DATA_DIR` 改）：
+默认 `data/`（可用 `DELIVERYLAB_DATA_DIR` 改）：
 
 ```
 data/
@@ -238,7 +238,7 @@ server.listen(settings.port, "127.0.0.1", …)
 
 ### 5.2 审批不是身份认证
 
-- 默认 `CATCAFE_APPROVAL=commands`，模型主动发起的 `run_command` 会挂起等待批准；
+- 默认 `DELIVERYLAB_APPROVAL=commands`，模型主动发起的 `run_command` 会挂起等待批准；
 - `auto` 会跳过审批，`all` 会连读文件也要求批准；
 - 审批超时 5 分钟自动按拒绝处理；「批准并记住」只在进程内有效；
 - 审批 UI 是**给人看的确认环节**，不是安全边界。任何拿到 HTTP 访问权的人都能点批准，
@@ -360,7 +360,7 @@ tar czf catcafe-backup-$(date +%F).tgz data/
 
 ### 7.2 恢复 / 迁移
 
-1. 把备份的 `data/` 放到目标机器，或 `CATCAFE_DATA_DIR` 指向它；
+1. 把备份的 `data/` 放到目标机器，或 `DELIVERYLAB_DATA_DIR` 指向它；
 2. 如果换了路径，确保 `workspaces.json` 里的真实仓库绝对路径在新机器存在，否则在设置里重新添加；
 3. 环境变量按新机器重新配置（key、headers、端口）；
 4. `chmod 700` 数据目录、`chmod 600 data/settings.json data/mcp.json data/workspaces.json data/scenarios.json`；
@@ -382,7 +382,7 @@ tar czf catcafe-backup-$(date +%F).tgz data/
 | 模型 404 / 400 | Base URL 或模型名不对；provider 需要额外 header | 用 `curl {baseUrl}/models` 检查；`LLM_HEADERS` 是否为合法 JSON；看 trace 里的降级原因 |
 | 模型 429 / 超时 | 限流；长时间 reasoning | 看任务轨迹的 llm 条目和降级标记；换模型/降低并发；不要把 `stallMs` 调得过低 |
 | 工具调用一直 pending | 审批策略要求人工批准；页面没看到 Needs Me | 看左上 `Needs Me` / `#jump-latest`；5 分钟后服务端自动拒绝；重启后 pending 队列会丢，重新触发任务 |
-| 任务一直 stalled | `CATCAFE_STALL_MS` 太小；审批等待被误判；漏 @ / 交接没唤醒 | 看 `GET /api/state` 的 task.status 和 `/api/tasks/:id/trace`；点「催一下」/恢复面板；确认没有 pending 工具 |
+| 任务一直 stalled | `DELIVERYLAB_STALL_MS` 太小；审批等待被误判；漏 @ / 交接没唤醒 | 看 `GET /api/state` 的 task.status 和 `/api/tasks/:id/trace`；点「催一下」/恢复面板；确认没有 pending 工具 |
 | 真实模式没有流式草稿 | `settings.streaming=false`；provider 不走 SSE；演出模式不产生草稿 | `GET /api/settings` 看 `streaming`；设置里打开「流式输出」；演出模式没有草稿是预期 |
 | MCP server 显示未连接 | 命令/参数路径不对、stdio 进程起不来、HTTP 不可达 | 看启动日志；检查 `data/mcp.json`（0600）里的 command/args/env/url；先手动跑该命令 |
 | 测试中心 503 / 未就绪 | 服务端未挂载 TestRunner；旧进程 | 用最新 `node src/main.ts`；`GET /api/tests/runs` 看状态；测试中心只在 `main.ts` 组装 |
@@ -410,7 +410,7 @@ curl -s http://127.0.0.1:4318/api/state | jq '{rooms: (.rooms|length), tasks: (.
 ## 9. 运维检查清单
 
 - [ ] Node >= 24；进程 cwd 是仓库根目录；
-- [ ] `PORT` / `CATCAFE_DATA_DIR` 明确且互不冲突；
+- [ ] `PORT` / `DELIVERYLAB_DATA_DIR` 明确且互不冲突；
 - [ ] `data/` 只允许本机用户访问（建议 `chmod 700`；敏感 JSON `0600`）；
 - [ ] 只要不是本机使用，先加 VPN/SSH 隧道或代理认证；**绝不以无鉴权状态暴露公网**；
 - [ ] `LLM_API_KEY` 只通过环境变量/密钥管理系统注入，不写进仓库；

@@ -150,7 +150,7 @@ describe("集成 · 完整协作链路（mock 模式）", () => {
   let state: StudioState;
 
   before(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), "catcafe-e2e-"));
+    dataDir = mkdtempSync(join(tmpdir(), "deliverylab-e2e-"));
     studio = new Studio({ cats: CATS, mode: "mock", dataDir });
     driver = createDriver({
       studio,
@@ -328,7 +328,7 @@ describe("集成 · 真实模式降级后协作仍能跑完", () => {
   let originalWarn: typeof console.warn | null = null;
 
   before(async () => {
-    dataDir = mkdtempSync(join(tmpdir(), "catcafe-e2e-llm-"));
+    dataDir = mkdtempSync(join(tmpdir(), "deliverylab-e2e-llm-"));
     studio = new Studio({ cats: CATS, mode: "llm", dataDir });
 
     // 断头端点：真实模式每次调用都会失败 → 应该全部降级到 mock brain，

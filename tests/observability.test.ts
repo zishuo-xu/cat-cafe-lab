@@ -133,7 +133,7 @@ describe("Studio 记录与 trace", () => {
   let base: string;
 
   before(async () => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-trace-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-trace-"));
     studio = new Studio({ cats: CATS, mode: "mock" });
     server = createHttpServer({
       studio,

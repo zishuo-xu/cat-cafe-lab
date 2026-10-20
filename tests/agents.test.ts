@@ -511,7 +511,7 @@ test("所有工具节拍结构合法：路径相对、命令只有 node、参数
 test("剧本里的 v1/v2 在真实沙盒里：测试失败 → 修复后通过", async () => {
   for (const item of TOOL_CASES) {
     const scenario = scenarioOf(item.id);
-    const dir = mkdtempSync(join(tmpdir(), "catcafe-agents-"));
+    const dir = mkdtempSync(join(tmpdir(), "deliverylab-agents-"));
     const sandbox = new Sandbox(dir);
     try {
       sandbox.ensureSeed();

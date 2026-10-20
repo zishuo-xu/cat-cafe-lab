@@ -12,7 +12,7 @@ import time
 import urllib.error
 import urllib.request
 
-BASE = os.environ.get("CATCAFE_BASE", "http://127.0.0.1:4320").rstrip("/")
+BASE = os.environ.get("DELIVERYLAB_BASE", "http://127.0.0.1:4320").rstrip("/")
 
 
 def req(method, path, body=None, timeout=30):

@@ -245,7 +245,7 @@ cd cat-cafe-lab
 LLM_BASE_URL=https://api.deepseek.com \
 LLM_MODEL=deepseek-flash \
 LLM_API_KEY=sk-... \
-PORT=4320 CATCAFE_DATA_DIR=/tmp/catcafe-real node src/main.ts
+PORT=4320 DELIVERYLAB_DATA_DIR=/tmp/catcafe-real node src/main.ts
 
 cd tools
 python3 matrix.py --scenario all --out /tmp/matrix.json

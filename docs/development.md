@@ -74,10 +74,10 @@ node src/main.ts
 | 变量 | 默认 | 作用 |
 |---|---|---|
 | `PORT` | `4318` | HTTP 端口 |
-| `CATCAFE_DATA_DIR` | `data` | 状态/配置/沙盒根目录 |
-| `CATCAFE_STALL_MS` | `12000` | 判定「卡住」的毫秒数（真实模型建议调大） |
-| `CATCAFE_TOOLS` | 开启 | 设为 `0` 关闭工具执行 |
-| `CATCAFE_APPROVAL` | `commands` | 审批策略：`auto / commands / all` |
+| `DELIVERYLAB_DATA_DIR` | `data` | 状态/配置/沙盒根目录 |
+| `DELIVERYLAB_STALL_MS` | `12000` | 判定「卡住」的毫秒数（真实模型建议调大） |
+| `DELIVERYLAB_TOOLS` | 开启 | 设为 `0` 关闭工具执行 |
+| `DELIVERYLAB_APPROVAL` | `commands` | 审批策略：`auto / commands / all` |
 | `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` | 空 | 配置后进入真实模型模式（见 `docs/llm.md`） |
 | `LLM_TEMPERATURE` | `0.8` | 全局温度 |
 | `LLM_HEADERS` | 空 | JSON 字符串形式的额外请求头（键值都不进日志/前端） |
@@ -104,7 +104,7 @@ curl -s -X POST http://127.0.0.1:4318/api/tasks \
 
 ```bash
 TMPD=$(mktemp -d)
-PORT=4599 CATCAFE_DATA_DIR="$TMPD" node src/main.ts
+PORT=4599 DELIVERYLAB_DATA_DIR="$TMPD" node src/main.ts
 # Ctrl-C 后 rm -rf "$TMPD"
 ```
 
@@ -360,7 +360,7 @@ fake registry）。
 | 看模型调用开销 | `GET /api/state` 里的 `llmCalls`（耗时 / token / 降级 / 重试） |
 | 重置状态 | `POST /api/reset`（清空协作状态并重新种入房间与招呼） |
 | 只跑某个用例 | `node --test --test-name-pattern="关键词" tests/xxx.test.ts` |
-| 隔离数据 | `CATCAFE_DATA_DIR=$(mktemp -d) PORT=4599 node src/main.ts` |
+| 隔离数据 | `DELIVERYLAB_DATA_DIR=$(mktemp -d) PORT=4599 node src/main.ts` |
 | 复现真实模型问题 | 见 `tools/README.md`（`matrix.py` / `probe.py`） |
 
 小技巧：`curl` 结果用 Node 一行解析，避免依赖 `jq`：

@@ -124,7 +124,7 @@ export interface TaskStep {
 export type TaskStatus = "active" | "done" | "stalled";
 
 export interface TaskGit {
-  /** 任务分支（catcafe/<taskId>）。 */
+  /** 任务分支（deliverylab/<taskId>）。 */
   branch?: string;
   baseBranch?: string;
   baseCommit?: string;
@@ -638,7 +638,7 @@ export interface Workspace {
   policy: WorkspacePolicy;
   kind: "sandbox" | "repo";
   isGit: boolean;
-  /** 任务开始时是否创建 catcafe/<taskId> 分支（仅读写 git 仓库生效）。 */
+  /** 任务开始时是否创建 deliverylab/<taskId> 分支（仅读写 git 仓库生效）。 */
   branchPerTask: boolean;
   createdAt: number;
 }

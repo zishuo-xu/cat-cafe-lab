@@ -18,7 +18,7 @@ import { fakeDriver } from "./helpers/fake-driver.ts";
  * 真实项目里包含本测试文件，`node --test tests/` 会递归 spawn 自己。
  */
 function makeFixtureProject(): string {
-  const dir = mkdtempSync(join(tmpdir(), "catcafe-fixture-"));
+  const dir = mkdtempSync(join(tmpdir(), "deliverylab-fixture-"));
   mkdirSync(join(dir, "tests"), { recursive: true });
   writeFileSync(
     join(dir, "tests", "slow.test.ts"),
@@ -56,7 +56,7 @@ describe("TestRunner", () => {
   let fixture: string;
 
   before(() => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-tests-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-tests-"));
     fixture = makeFixtureProject();
     studio = new Studio({ cats: CATS, mode: "mock" });
     runner = new TestRunner({
@@ -143,7 +143,7 @@ describe("HTTP /api/tests", () => {
   let fixture: string;
 
   before(async () => {
-    dir = mkdtempSync(join(tmpdir(), "catcafe-tests-http-"));
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-tests-http-"));
     fixture = makeFixtureProject();
     studio = new Studio({ cats: CATS, mode: "mock" });
     runner = new TestRunner({ projectRoot: fixture, port: 0, realModelReady: () => false });

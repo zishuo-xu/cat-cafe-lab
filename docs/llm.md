@@ -20,8 +20,8 @@
 | `LLM_MODEL` | 是 | 空 | 模型名，原样透传给端点 |
 | `LLM_TEMPERATURE` | 否 | `0.8` | 采样温度，会被夹到 `[0, 2]` |
 | `PORT` | 否 | `4318` | HTTP 端口 |
-| `CATCAFE_DATA_DIR` | 否 | `data` | 状态持久化目录（`studio.json`） |
-| `CATCAFE_STALL_MS` | 否 | `12000` | 任务卡住判定阈值 |
+| `DELIVERYLAB_DATA_DIR` | 否 | `data` | 状态持久化目录（`studio.json`） |
+| `DELIVERYLAB_STALL_MS` | 否 | `12000` | 任务卡住判定阈值 |
 
 **模式判定**：`LLM_BASE_URL` 和 `LLM_MODEL` 都非空才进入真实模式，否则演出模式。
 `GET /api/health` 返回的 `mode` 字段可以确认当前模式。
