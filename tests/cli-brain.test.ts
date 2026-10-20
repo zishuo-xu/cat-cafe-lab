@@ -8,7 +8,7 @@ import { after, before, describe, test } from "node:test";
 
 import { createCliBrain } from "../src/agents/cli-brain.ts";
 import { CATS } from "../src/agents/personas.ts";
-import type { CatBrain, LlmSettings, TurnContext } from "../src/domain/types.ts";
+import type { AgentBrain, LlmSettings, TurnContext } from "../src/domain/types.ts";
 import { BUILTIN_TOOLS } from "../src/tools/builtin.ts";
 
 const SETTINGS: LlmSettings = {
@@ -18,7 +18,7 @@ const SETTINGS: LlmSettings = {
   temperature: 0.7,
 };
 
-function makeFallback(): { brain: CatBrain; calls: () => number } {
+function makeFallback(): { brain: AgentBrain; calls: () => number } {
   let calls = 0;
   return {
     brain: {
@@ -36,7 +36,7 @@ function makeContext(): TurnContext {
   const cat = CATS.find((item) => item.role === "architect")!;
   const room = {
     id: "room_cafe",
-    name: "猫咖",
+    name: "交付台",
     topic: "",
     catIds: CATS.map((item) => item.id),
     createdAt: 0,
@@ -93,7 +93,7 @@ describe("CLI brain", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("正常输出：解析成 CatTurn[]", async () => {
+  test("正常输出：解析成 AgentTurn[]", async () => {
     const brain = createCliBrain(SETTINGS, makeFallback().brain, {
       command: makeFakeCli(dir, "ok"),
       cwd: dir,

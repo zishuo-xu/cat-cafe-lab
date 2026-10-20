@@ -1,12 +1,12 @@
 /**
- * CLI brain：把「猫的大脑」接到 Claude Code CLI（`claude -p`）。
+ * CLI brain：把成员的推理接到 Claude Code CLI（`claude -p`）。
  *
  * 与 llm-brain 的区别：
  * - llm-brain 直接打 HTTP API，自己拼 prompt、自己解析 JSON；
  * - cli-brain 起一个 `claude -p --output-format json` 子进程，把同样的
  *   system/user prompt 交给它，读回 JSON envelope 里的 result 字段。
  *
- * 为什么还要自己解析 CatTurn[]：CLI 的输出是自然语言（result 是一段文本），
+ * 为什么还要自己解析 AgentTurn[]：CLI 的输出是自然语言（result 是一段文本），
  * 我们要求它内部只输出 JSON 数组，再用和 API 版完全相同的 parseTurns 校验。
  * 这样两种 brain 产出的 turn 结构完全一致，driver / UI 不用改。
  *
@@ -18,7 +18,7 @@
 
 import { spawn } from "node:child_process";
 
-import type { CatBrain, CatTurn, LlmSettings, TurnContext } from "../domain/types.ts";
+import type { AgentBrain, AgentTurn, LlmSettings, TurnContext } from "../domain/types.ts";
 import {
   buildSystemPrompt,
   buildUserPrompt,
@@ -53,15 +53,15 @@ interface CliEnvelope {
 
 export function createCliBrain(
   settings: LlmSettings,
-  fallback: CatBrain,
+  fallback: AgentBrain,
   options: CliBrainOptions,
-): CatBrain {
+): AgentBrain {
   const command = options.command ?? "claude";
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
     mode: "llm",
-    async think(ctx: TurnContext): Promise<CatTurn[]> {
+    async think(ctx: TurnContext): Promise<AgentTurn[]> {
       const warn = (line: string): void => {
         console.warn(line.split(settings.apiKey).join("***"));
       };
@@ -117,14 +117,14 @@ export function createCliBrain(
       }
 
       // 兜底：模型没按 JSON 输出，当成一条普通消息。
-      warn("[cli-brain] 输出不是 CatTurn[]，包成一条 message");
+      warn("[cli-brain] 输出不是 AgentTurn[]，包成一条 message");
       return [{ kind: "message", text: content.trim().slice(0, 600) }];
     },
   };
 }
 
 /** 从 turns 里挑一段文本当天花板草稿。 */
-function clipPrimaryText(turns: CatTurn[]): string {
+function clipPrimaryText(turns: AgentTurn[]): string {
   for (const turn of turns) {
     if (turn.kind === "message") return turn.text.slice(0, 600);
     if (turn.kind === "artifact") return turn.artifact.body.slice(0, 800);

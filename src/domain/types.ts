@@ -1,5 +1,5 @@
 /**
- * Cat Café Lab — 领域契约。
+ * Delivery Lab — 领域契约。
  *
  * 这个文件是唯一契约：其他人只读。要改它，先找 Lead。
  * 约定：所有 import 都带 .ts 后缀；不用 enum / namespace / 参数属性。
@@ -7,7 +7,7 @@
 
 // ───────────────────────── IDs ─────────────────────────
 
-export type CatId = string;
+export type MemberId = string;
 export type RoomId = string;
 export type TaskId = string;
 export type MessageId = string;
@@ -16,21 +16,21 @@ export type HandoffId = string;
 export type MemoryId = string;
 export type StepId = string;
 
-/** 消息作者：某只猫、铲屎官、或系统。 */
-export type AuthorId = CatId | "user" | "system";
+/** 消息作者：某个成员、负责人、或系统。 */
+export type AuthorId = MemberId | "user" | "system";
 
-// ───────────────────────── 猫 ─────────────────────────
+// ───────────────────────── 成员 ─────────────────────────
 
 export type Role = "architect" | "reviewer" | "designer" | "implementer";
 
 export type CatModel = "claude" | "gpt" | "gemini" | "opencode";
 
-export interface Cat {
-  id: CatId;
+export interface Member {
+  id: MemberId;
   name: string;
-  species: string;
+  discipline: string;
   role: Role;
-  /** 角色定位，如「主架构师 / 主理猫」。 */
+  /** 角色定位，如「主架构师 / 架构师」。 */
   title: string;
   model: CatModel;
   /** 一句话人格。 */
@@ -40,12 +40,13 @@ export interface Cat {
   /** 主题色 hex，前端用于头像环 / 名字 / 气泡描边。 */
   accent: string;
   /** 头像风格 key，前端据此生成内联 SVG。 */
-  avatar: "ragdoll" | "mainecoon" | "siamese" | "golden";
+  /** 头像标识：决定前端用哪张 SVG。 */
+  avatar: "architect" | "reviewer" | "designer" | "implementer";
   /** 初次进房时的招呼语。 */
   greeting: string;
-  /** 真实模式下这只猫使用的模型 id；空/缺省时用全局 LLM_MODEL。 */
+  /** 真实模式下这个成员使用的模型 id；空/缺省时用全局 LLM_MODEL。 */
   llmModel?: string;
-  /** 真实模式下这只猫的温度；缺省时用全局。 */
+  /** 真实模式下这个成员的温度；缺省时用全局。 */
   llmTemperature?: number;
   /** 允许使用的工具名；缺省 = 全部允许（内置工具默认全开）。 */
   tools?: string[];
@@ -59,7 +60,7 @@ export interface Room {
   id: RoomId;
   name: string;
   topic: string;
-  catIds: CatId[];
+  catIds: MemberId[];
   /** 绑定的工作区 id；缺省用内置沙盒。 */
   workspaceId?: string;
   createdAt: number;
@@ -80,8 +81,8 @@ export interface Message {
   author: AuthorId;
   kind: MessageKind;
   text: string;
-  /** 被 @ 的猫；空数组表示没有显式点名。 */
-  mentions: CatId[];
+  /** 被 @ 的成员；空数组表示没有显式点名。 */
+  mentions: MemberId[];
   taskId?: TaskId;
   handoffId?: HandoffId;
   artifactId?: ArtifactId;
@@ -114,7 +115,7 @@ export type StepStatus = "pending" | "active" | "done";
 export interface TaskStep {
   id: StepId;
   stage: TaskStage;
-  owner: CatId;
+  owner: MemberId;
   status: StepStatus;
   startedAt?: number;
   doneAt?: number;
@@ -145,7 +146,7 @@ export interface Task {
   status: TaskStatus;
   stage: TaskStage;
   /** 当前阶段的负责人。 */
-  owner: CatId;
+  owner: MemberId;
   steps: TaskStep[];
   createdAt: number;
   updatedAt: number;
@@ -168,8 +169,8 @@ export interface HandoffCard {
 export interface Handoff {
   id: HandoffId;
   taskId: TaskId;
-  from: CatId;
-  to: CatId;
+  from: MemberId;
+  to: MemberId;
   card: HandoffCard;
   createdAt: number;
 }
@@ -183,7 +184,7 @@ export interface Artifact {
   title: string;
   /** 纯文本 / 轻量 markdown（前端渲染有限语法）。 */
   body: string;
-  author: CatId;
+  author: MemberId;
   version: number;
   createdAt: number;
 }
@@ -217,18 +218,18 @@ export interface MemoryEntry {
 export type BrainMode = "mock" | "llm";
 
 /**
- * 每只猫的「近期经历」：跨任务的连续记忆。
+ * 每个成员的「近期经历」：跨任务的连续记忆。
  *
- * 为什么需要：现在每只猫每次任务都是失忆的——它看不到"我上次参与过什么、做过哪些决定、
- * 踩过什么坑"。Cat Café 的经验是「任何一只猫新开窗口，5 分钟内能进入状态」，
+ * 为什么需要：现在每个成员每次任务都是失忆的——它看不到"我上次参与过什么、做过哪些决定、
+ * 踩过什么坑"。Member Café 的经验是「任何一个成员新开窗口，5 分钟内能进入状态」，
  * 靠的就是这种跨会话的连续性。
  */
-export interface CatEpisode {
+export interface MemberEpisode {
   /** 任务 id。 */
   taskId: TaskId;
   /** 任务标题（便于人类和模型快速识别）。 */
   title: string;
-  /** 这只猫在该任务里做了什么（从它自己的消息/产物里摘要）。 */
+  /** 这个成员在该任务里做了什么（从它自己的消息/产物里摘要）。 */
   summary: string;
   /** 最终结果。 */
   outcome: "done" | "abandoned" | "open";
@@ -236,36 +237,36 @@ export interface CatEpisode {
   at: number;
 }
 
-export interface CatSession {
-  catId: CatId;
+export interface MemberSession {
+  catId: MemberId;
   /** 最近参与的 N 个任务（新的在前）。 */
-  episodes: CatEpisode[];
-  /** 这只猫自己的长期记忆（从共享记忆里分流出来的一部分）。 */
+  episodes: MemberEpisode[];
+  /** 这个成员自己的长期记忆（从共享记忆里分流出来的一部分）。 */
   lessons: MemoryEntry[];
   updatedAt: number;
 }
 
 export interface StudioState {
   rooms: Room[];
-  cats: Cat[];
+  cats: Member[];
   messages: Message[];
   tasks: Task[];
   handoffs: Handoff[];
   artifacts: Artifact[];
   memory: MemoryEntry[];
-  /** 每只猫的跨任务会话记忆。 */
-  catSessions: Record<CatId, CatSession>;
+  /** 每个成员的跨任务会话记忆。 */
+  catSessions: Record<MemberId, MemberSession>;
   /** 沙盒工具调用记录（写文件 / 跑命令）。 */
   toolCalls: ToolCall[];
   /** 模型调用记录（可观测性）。 */
   llmCalls: LlmCall[];
-  /** roomId -> 正在打字的猫（同一房间同时只有一只猫打字）。 */
-  typing: Record<RoomId, CatId | null>;
+  /** roomId -> 正在打字的成员（同一房间同时只有一个成员打字）。 */
+  typing: Record<RoomId, MemberId | null>;
   /**
-   * 流式草稿：猫正在说但还没成型的文字。
+   * 流式草稿：成员正在说但还没成型的文字。
    * 最终消息落库时清空；为空对象表示没有草稿。
    */
-  drafts: Record<RoomId, { catId: CatId; text: string; at: number } | null>;
+  drafts: Record<RoomId, { catId: MemberId; text: string; at: number } | null>;
   /** 单调递增，SSE 用。 */
   seq: number;
   mode: BrainMode;
@@ -282,7 +283,7 @@ export type TriggerKind =
   | "review_result"
   | "tool_result"
   | "nudge"
-  /** 猫自己巡查时决定要说话（主动协作）。 */
+  /** 成员自己巡查时决定要说话（主动协作）。 */
   | "proactive";
 
 export interface Trigger {
@@ -291,8 +292,8 @@ export interface Trigger {
   taskId?: TaskId;
   /** 触发这条轮次的消息 / 交接 / 产物。 */
   text?: string;
-  mentions?: CatId[];
-  fromCatId?: CatId;
+  mentions?: MemberId[];
+  fromMemberId?: MemberId;
   handoff?: HandoffCard;
   artifact?: Artifact;
   review?: { verdict: ReviewVerdict; findings: ReviewFinding[] };
@@ -301,7 +302,7 @@ export interface Trigger {
 }
 
 export interface TurnContext {
-  cat: Cat;
+  cat: Member;
   room: Room;
   task: Task | null;
   trigger: Trigger;
@@ -314,14 +315,14 @@ export interface TurnContext {
   artifacts: Artifact[];
   /** 最近的工具回执（真实模式下用来继续推理）。 */
   recentToolResults: ToolRunResult[];
-  /** 这只猫当前可用的工具（已按权限过滤）。 */
+  /** 这个成员当前可用的工具（已按权限过滤）。 */
   availableTools: ToolDefinition[];
-  /** 这只猫挂载的技能包。 */
+  /** 这个成员挂载的技能包。 */
   skills: Skill[];
-  /** 这只猫的跨任务经历（最近几个任务 + 自己的教训）。 */
-  session: CatSession | null;
-  /** 房间里所有猫的 id 与名字（prompt 里用来对齐称呼，避免模型自创名字）。 */
-  roomCats: Array<{ id: CatId; name: string; role: Role }>;
+  /** 这个成员的跨任务经历（最近几个任务 + 自己的教训）。 */
+  session: MemberSession | null;
+  /** 房间里所有成员的 id 与名字（prompt 里用来对齐称呼，避免模型自创名字）。 */
+  roomCats: Array<{ id: MemberId; name: string; role: Role }>;
   /**
    * 流式增量回调（可选）。brain 在生成过程中可以把"正在说的话"陆续推过来，
    * 前端渲染成半透明草稿气泡；最终 turn 落库后草稿会被正式消息替换。
@@ -331,19 +332,19 @@ export interface TurnContext {
   onDelta?: (delta: DeltaUpdate) => void;
   /**
    * 用量回报（可选）。brain 在调用结束时回报 token / 降级 / 重试信息，
-   * driver 落成 LlmCall 记录，前端据此展示"这只猫这次想了多久、多贵"。
+   * driver 落成 LlmCall 记录，前端据此展示"这个成员这次想了多久、多贵"。
    */
   onReport?: (report: BrainReport) => void;
   /** 场景数据（mock brain 用于取台词模板）。 */
   scenario: Scenario | null;
 }
 
-export type CatTurn =
-  | { kind: "message"; text: string; mentions?: CatId[]; delayMs?: number }
+export type AgentTurn =
+  | { kind: "message"; text: string; mentions?: MemberId[]; delayMs?: number }
   /**
    * 主动巡查时的「我不说话」。
    *
-   * 巡查唤醒不是任务推进，猫有权判断"这里不需要我"。
+   * 巡查唤醒不是任务推进，成员有权判断"这里不需要我"。
    * 返回 silence 不会产生任何消息，只记一条审计（避免"它为什么不说话"无从查证）。
    */
   | { kind: "silence"; reason?: string }
@@ -355,18 +356,18 @@ export type CatTurn =
       label?: string;
       /** 执行后可选的伴随说明。 */
       text?: string;
-      mentions?: CatId[];
+      mentions?: MemberId[];
       delayMs?: number;
     }
   | {
       kind: "handoff";
-      to: CatId;
+      to: MemberId;
       card: HandoffCard;
       /** 可选的伴随说明。 */
       text?: string;
       /**
-       * 演示埋点：这次交接故意没 @ 到人（只写入卡片，不唤醒接收猫）。
-       * driver 会让任务进入 stalled，等铲屎官「催一下」再补救。
+       * 演示埋点：这次交接故意没 @ 到人（只写入卡片，不唤醒接收方）。
+       * driver 会让任务进入 stalled，等负责人「催一下」再补救。
        */
       fault?: "missed_mention";
       delayMs?: number;
@@ -375,7 +376,7 @@ export type CatTurn =
       kind: "artifact";
       artifact: { kind: ArtifactKind; title: string; body: string };
       text?: string;
-      mentions?: CatId[];
+      mentions?: MemberId[];
       delayMs?: number;
     }
   | {
@@ -384,7 +385,7 @@ export type CatTurn =
       title: string;
       findings: ReviewFinding[];
       text: string;
-      mentions?: CatId[];
+      mentions?: MemberId[];
       delayMs?: number;
     }
   | {
@@ -401,9 +402,9 @@ export type CatTurn =
       delayMs?: number;
     };
 
-/** 流式增量：一只猫正在打的字。 */
+/** 流式增量：一个成员正在打的字。 */
 export interface DeltaUpdate {
-  catId: CatId;
+  catId: MemberId;
   roomId: RoomId;
   /** 已累计的完整草稿文本（不是本段增量）。 */
   text: string;
@@ -425,9 +426,9 @@ export interface BrainReport {
   error?: string;
 }
 
-export interface CatBrain {
+export interface AgentBrain {
   readonly mode: BrainMode;
-  think(ctx: TurnContext): Promise<CatTurn[]>;
+  think(ctx: TurnContext): Promise<AgentTurn[]>;
 }
 
 // ───────────────────────── 场景（mock 演出的数据） ─────────────────────────
@@ -435,8 +436,8 @@ export interface CatBrain {
 export interface ScenarioBeat {
   /** 在哪个阶段播放。 */
   stage: TaskStage;
-  cat: CatId;
-  turn: CatTurn;
+  cat: MemberId;
+  turn: AgentTurn;
   /** 演示埋点：这一拍故意漏 @ / 掉线。 */
   fault?: "missed_mention" | "silent_drop";
 }
@@ -458,7 +459,7 @@ export interface ScenarioWithSource {
 
 // ───────────────────────── 引擎契约 ─────────────────────────
 
-/** 铲屎官对「卡住 / 强制收尾」任务的处理方式。 */
+/** 负责人对「卡住 / 强制收尾」任务的处理方式。 */
 export type TaskAction = "continue" | "pivot" | "close";
 
 export type EngineEvent =
@@ -466,7 +467,7 @@ export type EngineEvent =
       type: "user_message";
       roomId: RoomId;
       text: string;
-      mentions: CatId[];
+      mentions: MemberId[];
       /** 房间有活跃任务时，用户明确表示"我就是要说话"，跳过提醒。 */
       force?: boolean;
     }
@@ -531,7 +532,7 @@ export type ToolName = BuiltinToolName | (string & {});
 export interface ToolCall {
   id: string;
   taskId?: TaskId;
-  catId: CatId;
+  catId: MemberId;
   tool: ToolName;
   input: Record<string, unknown>;
   label: string;
@@ -543,20 +544,20 @@ export interface ToolCall {
   finishedAt?: number;
   /** 进入待审批的时间（pending 状态）。 */
   approvalRequestedAt?: number;
-  /** 铲屎官做出决定的时间。 */
+  /** 负责人做出决定的时间。 */
   approvalDecidedAt?: number;
 }
 
 /**
  * 一次模型调用的记录（可观测性核心）。
  *
- * 记录"这只猫这一次想了多久、花了多少 token、有没有降级/重试"。
+ * 记录"这个成员这一次想了多久、花了多少 token、有没有降级/重试"。
  * 这是协作层唯一能看清"钱和时间花在哪"的地方。
  */
 export interface LlmCall {
   id: string;
   taskId?: TaskId;
-  catId: CatId;
+  catId: MemberId;
   /** 调用的意图：哪个阶段、因为什么被唤醒。 */
   stage?: TaskStage;
   trigger?: TriggerKind;
@@ -684,14 +685,14 @@ export type ToolApprovalMode = "auto" | "commands" | "all";
 
 export type ToolApprovalDecision = "approved" | "rejected";
 
-/** 审批闸门：driver 发起，HTTP 层负责 resolve（铲屎官点按钮）。 */
+/** 审批闸门：driver 发起，HTTP 层负责 resolve（负责人点按钮）。 */
 export interface ApprovalGate {
   request(input: {
     callId: string;
     mode: ToolApprovalMode;
     tool: ToolName;
     label: string;
-    catId: CatId;
+    catId: MemberId;
   }): Promise<ToolApprovalDecision>;
   resolve(callId: string, decision: ToolApprovalDecision): boolean;
 }
@@ -708,16 +709,16 @@ export interface PublicSettings {
     keySource: "env" | "ui" | null;
   };
   stallMs: number;
-  /** 是否允许猫在沙盒里执行工具（写文件 / 跑命令）。 */
+  /** 是否允许成员在沙盒里执行工具（写文件 / 跑命令）。 */
   toolsEnabled: boolean;
   /** 审批策略：auto / commands / all。 */
   toolApproval: ToolApprovalMode;
   /** 真实模式是否用流式输出（真机首字/首句更快出现）。 */
   streaming: boolean;
   /**
-   * 主动协作：猫在任务推进时会不会自己决定插话。
+   * 主动协作：成员在任务推进时会不会自己决定插话。
    * - "off"：完全被动（只有 @ 和交接才动）
-   * - "watch"：巡查模式——在关键节点让其他猫判断"我要不要说话"
+   * - "watch"：巡查模式——在关键节点让其他成员判断"我要不要说话"
    */
   proactive: "off" | "watch";
   /** 巡查间隔（毫秒），只在 watch 模式生效。 */
@@ -772,18 +773,18 @@ export interface SettingsApi {
 // ───────────────────────── 工厂签名（各模块导出） ─────────────────────────
 
 /** T2 导出：src/agents/mock-brain.ts */
-export type MockBrainFactory = (scenarios: Scenario[]) => CatBrain;
+export type MockBrainFactory = (scenarios: Scenario[]) => AgentBrain;
 
 /** T4 导出：src/agents/llm-brain.ts */
 export type LlmBrainFactory = (
   settings: LlmSettings,
-  fallback: CatBrain,
-) => CatBrain;
+  fallback: AgentBrain,
+) => AgentBrain;
 
 /** T1 导出：src/engine/driver.ts */
 export type DriverFactory = (deps: {
   studio: import("../server/studio.ts").Studio;
-  brain: CatBrain;
+  brain: AgentBrain;
   wait?: (ms: number) => Promise<void>;
   stallMs?: number;
   /** 沙盒工具执行器；不传则 tool turn 直接报错（便于测试/降级）。 */

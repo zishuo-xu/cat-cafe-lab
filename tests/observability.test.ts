@@ -10,7 +10,7 @@ import { after, before, describe, test } from "node:test";
 import { createLlmBrain } from "../src/agents/llm-brain.ts";
 import { CATS, SCENARIOS } from "../src/agents/personas.ts";
 import { createMockBrain } from "../src/agents/mock-brain.ts";
-import type { BrainReport, CatBrain, Driver, LlmSettings, TurnContext } from "../src/domain/types.ts";
+import type { BrainReport, AgentBrain, Driver, LlmSettings, TurnContext } from "../src/domain/types.ts";
 import { createDriver } from "../src/engine/driver.ts";
 import { createHttpServer } from "../src/server/http.ts";
 import { Studio } from "../src/server/studio.ts";
@@ -23,7 +23,7 @@ function makeContext(
   onDelta?: (d: { catId: string; roomId: string; text: string }) => void,
 ): TurnContext {
   const cat = CATS.find((item) => item.role === "architect")!;
-  const room = { id: "room_cafe", name: "猫咖", topic: "", catIds: CATS.map((c) => c.id), createdAt: 0 };
+  const room = { id: "room_cafe", name: "交付台", topic: "", catIds: CATS.map((c) => c.id), createdAt: 0 };
   return {
     cat,
     room,
@@ -91,7 +91,7 @@ describe("模型调用记录", () => {
     apiKey: "k",
     temperature: 0.7,
   });
-  const fallback: CatBrain = { mode: "mock", async think() { return [{ kind: "message", text: "fb" }]; } };
+  const fallback: AgentBrain = { mode: "mock", async think() { return [{ kind: "message", text: "fb" }]; } };
 
   test("非流式：回报 token 用量", async () => {
     let report: BrainReport = {};
@@ -156,7 +156,7 @@ describe("Studio 记录与 trace", () => {
 
   test("startLlmCall / finishLlmCall 记录耗时与用量", () => {
     const call = studio.startLlmCall({
-      catId: "xianxian",
+      catId: "linzhiyuan",
       model: "m1",
       engine: "api",
       stage: "planning",
@@ -175,7 +175,7 @@ describe("Studio 记录与 trace", () => {
 
   test("最多保留 200 条调用记录", () => {
     for (let i = 0; i < 210; i += 1) {
-      const call = studio.startLlmCall({ catId: "yanyan", model: "m", engine: "api" });
+      const call = studio.startLlmCall({ catId: "shenyan", model: "m", engine: "api" });
       studio.finishLlmCall(call.id, {});
     }
     assert.ok(studio.snapshot().llmCalls.length <= 200);
@@ -189,19 +189,19 @@ describe("Studio 记录与 trace", () => {
     });
     studio.appendMessage({
       roomId: "room_cafe",
-      author: "xianxian",
+      author: "linzhiyuan",
       kind: "chat",
       text: "我先接住",
       taskId: task.id,
     });
     studio.addHandoff({
       taskId: task.id,
-      from: "xianxian",
-      to: "jinjianceng",
+      from: "linzhiyuan",
+      to: "chenshi",
       card: { what: "实现", why: "拆活", tradeoff: "先做最小", openQuestions: [], nextAction: "交实现" },
     });
     const call = studio.startLlmCall({
-      catId: "xianxian",
+      catId: "linzhiyuan",
       model: "m",
       engine: "api",
       taskId: task.id,
@@ -263,7 +263,7 @@ describe("审批等待时间", () => {
     const studio = new Studio({ cats: CATS, mode: "mock" });
     try {
       const call = studio.addToolCall({
-        catId: "jinjianceng",
+        catId: "chenshi",
         tool: "run_command",
         args: { cmd: "node", args: ["--version"] },
         label: "跑版本",
@@ -304,7 +304,7 @@ describe("审批等待时间", () => {
         scenarioId: "export_csv",
       });
       const call = studio.addToolCall({
-        catId: "jinjianceng",
+        catId: "chenshi",
         tool: "run_command",
         args: { cmd: "node", args: ["--version"] },
         label: "跑版本",
@@ -340,7 +340,7 @@ describe("全量测试发现的问题（回归）", () => {
         kind: "patch",
         title: "实现补丁",
         body: "…",
-        author: "jinjianceng",
+        author: "chenshi",
       });
       assert.equal(studio.snapshot().memory.length, 0);
 

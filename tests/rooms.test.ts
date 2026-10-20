@@ -167,9 +167,9 @@ test("PATCH 房间：改名 / 改 topic / 换 workspaceId 都生效并落库", a
   assert.equal(persisted.workspaceId, "ws_sandbox");
 
   // 默认房间也可以编辑；name 前后空白会被 trim。
-  const padded = await patchRoom(h.base, ROOM_ID, { name: "  铲屎官大厅  " });
+  const padded = await patchRoom(h.base, ROOM_ID, { name: "  负责人大厅  " });
   assert.equal(padded.status, 200);
-  assert.equal(padded.body.name, "铲屎官大厅");
+  assert.equal(padded.body.name, "负责人大厅");
 });
 
 // ───────────────────────── PATCH 校验 ─────────────────────────
@@ -317,8 +317,8 @@ test("DELETE 房间：级联清理本房间数据，其它房间不受影响", a
   });
   const handoff = h.studio.addHandoff({
     taskId: task.id,
-    from: "xianxian",
-    to: "jinjianceng",
+    from: "linzhiyuan",
+    to: "chenshi",
     card: card("测试交接"),
   });
   const artifact = h.studio.addArtifact({
@@ -326,10 +326,10 @@ test("DELETE 房间：级联清理本房间数据，其它房间不受影响", a
     kind: "patch",
     title: "测试产物",
     body: "补丁内容",
-    author: "jinjianceng",
+    author: "chenshi",
   });
   const call = h.studio.addToolCall({
-    catId: "jinjianceng",
+    catId: "chenshi",
     tool: "read_file",
     args: { path: "src/remember.js" },
     label: "读取 src/remember.js",
@@ -350,8 +350,8 @@ test("DELETE 房间：级联清理本房间数据，其它房间不受影响", a
     body: "不要删",
     tags: ["global"],
   });
-  h.studio.setTyping(room.id, "jinjianceng");
-  assert.equal(h.studio.state.typing[room.id], "jinjianceng");
+  h.studio.setTyping(room.id, "chenshi");
+  assert.equal(h.studio.state.typing[room.id], "chenshi");
 
   const res = await deleteRoom(h.base, room.id);
   assert.equal(res.status, 200);

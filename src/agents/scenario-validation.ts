@@ -79,7 +79,7 @@ function validateBeat(
   }
   const cat = raw["cat"];
   if (typeof cat !== "string" || !catIds.includes(cat)) {
-    errors.push(`${path}.cat 必须是现有猫的 id（${catIds.join(" / ")}）`);
+    errors.push(`${path}.cat 必须是现有成员的 id（${catIds.join(" / ")}）`);
   }
   if (raw["fault"] !== undefined && raw["fault"] !== "missed_mention" && raw["fault"] !== "silent_drop") {
     errors.push(`${path}.fault 只能是 missed_mention 或 silent_drop`);
@@ -107,7 +107,7 @@ function validateTurn(
     }
     case "handoff": {
       if (typeof raw["to"] !== "string" || !catIds.includes(raw["to"])) {
-        errors.push(`${path}.to 必须是现有猫的 id`);
+        errors.push(`${path}.to 必须是现有成员的 id`);
       }
       const card = raw["card"];
       if (!isObject(card)) {
@@ -285,7 +285,7 @@ function optionalMentions(
   }
   mentions.forEach((mention, i) => {
     if (typeof mention !== "string" || !catIds.includes(mention)) {
-      errors.push(`${path}.mentions[${i}] 必须是现有猫的 id`);
+      errors.push(`${path}.mentions[${i}] 必须是现有成员的 id`);
     }
   });
 }

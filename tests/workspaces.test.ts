@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import { after, before, describe, test } from "node:test";
 
 import { CATS, SCENARIOS } from "../src/agents/personas.ts";
-import type { CatBrain, CatTurn, Driver, SandboxRunner } from "../src/domain/types.ts";
+import type { AgentBrain, AgentTurn, Driver, SandboxRunner } from "../src/domain/types.ts";
 import { createDriver } from "../src/engine/driver.ts";
 import { createHttpServer } from "../src/server/http.ts";
 import { Studio } from "../src/server/studio.ts";
@@ -19,7 +19,7 @@ function makeRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "catcafe-repo-"));
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
   execFileSync("git", ["config", "user.email", "cat@example.com"], { cwd: dir });
-  execFileSync("git", ["config", "user.name", "Cat Café"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "Member Café"], { cwd: dir });
   writeFileSync(join(dir, "README.md"), "# demo repo\n", "utf8");
   mkdirSync(join(dir, "src"));
   writeFileSync(join(dir, "src/app.js"), "export const x = 1;\n", "utf8");
@@ -169,9 +169,9 @@ describe("driver 按房间选沙盒", () => {
       },
     };
     let round = 0;
-    const brain: CatBrain = {
+    const brain: AgentBrain = {
       mode: "mock",
-      async think(): Promise<CatTurn[]> {
+      async think(): Promise<AgentTurn[]> {
         round += 1;
         return round === 1
           ? [

@@ -129,7 +129,7 @@ export class WorkspaceManager {
       throw new Error("这个目录已经是一个工作区");
     }
     if (canonical === this.dataDir || canonical.startsWith(`${this.dataDir}/`)) {
-      throw new Error("不要把猫咖自己的数据目录添加为工作区");
+      throw new Error("不要把交付台自己的数据目录添加为工作区");
     }
 
     const workspace: Workspace = {
@@ -347,7 +347,7 @@ export class WorkspaceManager {
   private defaultWorkspace(): Workspace {
     return {
       id: DEFAULT_WORKSPACE_ID,
-      name: "猫咖沙盒",
+      name: "交付台沙盒",
       root: join(this.dataDir, "workspace"),
       policy: "read-write",
       kind: "sandbox",

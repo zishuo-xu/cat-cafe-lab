@@ -18,10 +18,10 @@ export const BUILTIN_SCENARIO_IDS: readonly string[] = BUILTIN_SCENARIOS.map((s)
 export const SCENARIOS: Scenario[] = [...BUILTIN_SCENARIOS];
 
 let filePath: string | null = null;
-let validCatIds: string[] = [];
+let validMemberIds: string[] = [];
 
 export function initScenarios(dataDir: string, catIds: string[]): void {
-  validCatIds = [...catIds];
+  validMemberIds = [...catIds];
   filePath = join(dataDir, "scenarios.json");
   SCENARIOS.splice(BUILTIN_SCENARIOS.length, SCENARIOS.length - BUILTIN_SCENARIOS.length);
 
@@ -30,7 +30,7 @@ export function initScenarios(dataDir: string, catIds: string[]): void {
     const parsed: unknown = JSON.parse(readFileSync(filePath, "utf8"));
     if (!Array.isArray(parsed)) return;
     for (const raw of parsed) {
-      const result = validateScenario(raw, { catIds: validCatIds });
+      const result = validateScenario(raw, { catIds: validMemberIds });
       if (!result.ok) {
         console.warn(`[scenarios] 跳过无效自定义剧本：${result.errors[0] ?? "unknown"}`);
         continue;
@@ -61,7 +61,7 @@ export function isBuiltinScenario(id: string): boolean {
 export function addScenario(
   raw: unknown,
 ): { ok: true; scenario: Scenario } | { ok: false; errors: string[] } {
-  const result = validateScenario(raw, { catIds: validCatIds });
+  const result = validateScenario(raw, { catIds: validMemberIds });
   if (!result.ok) return result;
   if (SCENARIOS.some((s) => s.id === result.scenario.id)) {
     return { ok: false, errors: [`剧本 id "${result.scenario.id}" 已存在`] };

@@ -9,8 +9,8 @@
 
 import type {
   Artifact,
-  Cat,
-  CatId,
+  Member,
+  MemberId,
   ReviewFinding,
   ReviewVerdict,
   Role,
@@ -36,23 +36,23 @@ export function isTerminalStage(stage: TaskStage): boolean {
   return stage === "done";
 }
 
-export function findByRole(cats: readonly Cat[], role: Role): Cat | null {
+export function findByRole(cats: readonly Member[], role: Role): Member | null {
   return cats.find((cat) => cat.role === role) ?? null;
 }
 
-export function catById(cats: readonly Cat[], id: CatId): Cat | null {
+export function catById(cats: readonly Member[], id: MemberId): Member | null {
   return cats.find((cat) => cat.id === id) ?? null;
 }
 
-/** 主理猫：role=architect；配置缺失时退化为第一只猫，方便测试 / 自定义房间。 */
-export function architectOf(cats: readonly Cat[]): Cat | null {
+/** 架构师：role=architect；配置缺失时退化为第一个成员，方便测试 / 自定义房间。 */
+export function architectOf(cats: readonly Member[]): Member | null {
   return findByRole(cats, "architect") ?? cats[0] ?? null;
 }
 
 /** 进入下一阶段的目标。 */
 export interface StageMove {
   stage: TaskStage;
-  cat: Cat;
+  cat: Member;
 }
 
 /**
@@ -61,7 +61,7 @@ export interface StageMove {
  *   - reviewing/revising 里交给其他人 → revising（打回返工）；
  *   - 其余情况 → working。
  */
-export function handoffMove(current: TaskStage, target: Cat): StageMove {
+export function handoffMove(current: TaskStage, target: Member): StageMove {
   if (target.role === "reviewer") return { stage: "reviewing", cat: target };
   if (current === "reviewing" || current === "revising") {
     return { stage: "revising", cat: target };
@@ -75,9 +75,9 @@ export function handoffMove(current: TaskStage, target: Cat): StageMove {
  *   - approve → done，交给 architect 落 decision。
  */
 export function reviewMove(
-  cats: readonly Cat[],
+  cats: readonly Member[],
   verdict: ReviewVerdict,
-  mentions: readonly CatId[],
+  mentions: readonly MemberId[],
   artifacts: readonly Artifact[],
 ): StageMove | null {
   if (verdict === "approve") {
@@ -93,13 +93,13 @@ export function reviewMove(
  * 再次最近一个 patch 的作者，最后按角色兜底。
  */
 export function pickReviseTarget(
-  cats: readonly Cat[],
-  mentions: readonly CatId[],
+  cats: readonly Member[],
+  mentions: readonly MemberId[],
   artifacts: readonly Artifact[],
-): Cat | null {
+): Member | null {
   const mentioned = mentions
     .map((id) => catById(cats, id))
-    .filter((cat): cat is Cat => cat !== null);
+    .filter((cat): cat is Member => cat !== null);
 
   const implementer = mentioned.find((cat) => cat.role === "implementer");
   if (implementer) return implementer;

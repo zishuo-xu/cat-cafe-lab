@@ -7,10 +7,10 @@
     <meta name="theme-color" content="#FBF6EE" />
     <meta
       name="description"
-      content="猫咖工作台：铲屎官提一句需求，四只猫在同一个房间里把它做出来。"
+      content="协作交付台：负责人提一句需求，四个角色在同一个房间里把它做出来。"
     />
-    <title>Cat Café Lab · 猫咖工作台</title>
-    <!-- 内联 SVG 猫爪 favicon：零请求、零 404、离线可用 -->
+    <title>Delivery Lab · 协作交付台</title>
+    <!-- 内联 SVG 图标 favicon：零请求、零 404、离线可用 -->
     <link
       rel="icon"
       type="image/svg+xml"
@@ -22,13 +22,13 @@
     <a class="skip-link" href="#composer-input">跳到输入框</a>
 
     <main id="app" class="app-shell">
-      <!-- ── 左栏：招牌 / 猫猫名册 / 任务列表 ───────────────────────── -->
-      <aside class="panel panel--left" aria-label="猫咖招牌、猫猫名册与任务列表">
+      <!-- ── 左栏：招牌 / 成员名册 / 任务列表 ───────────────────────── -->
+      <aside class="panel panel--left" aria-label="交付台招牌、成员名册与任务列表">
         <header class="brand">
           <div class="brand-mark" id="brand-mark" aria-hidden="true"></div>
           <div class="brand-text">
-            <h1 class="brand-title">Cat Café <span>Lab</span></h1>
-            <p class="brand-sub">猫咖工作台 · 四只猫，一张桌子</p>
+            <h1 class="brand-title">Delivery <span>Lab</span></h1>
+            <p class="brand-sub">协作交付台 · 四个角色，一张工作台</p>
           </div>
           <div class="brand-pills">
             <span class="pill pill--mode" data-mode>演出模式</span>
@@ -86,7 +86,7 @@
 
         <section class="card card--roster" aria-labelledby="roster-title">
           <div class="card-head">
-            <h2 id="roster-title">猫猫名册</h2>
+            <h2 id="roster-title">成员名册</h2>
             <span class="count" data-roster-count>0 只</span>
             <span class="card-hint">点名字 @ 它</span>
           </div>
@@ -104,8 +104,8 @@
           <div id="task-list" class="task-list" data-testid="task-list"></div>
         </section>
         <p class="side-note">
-          <span aria-hidden="true">🐾</span>
-          不 @ 任何人时，宪宪会接住需求；@ 谁只唤醒谁。
+          <span aria-hidden="true">▸</span>
+          不 @ 任何人时，架构师会接住需求；@ 谁只唤醒谁。
         </p>
       </aside>
 
@@ -120,10 +120,10 @@
               title="切换房间"
               aria-haspopup="dialog"
             >
-              <span data-room-name>猫咖 · 客厅</span>
+              <span data-room-name>交付台 · 主工作区</span>
               <span class="room-chevron" aria-hidden="true">⌄</span>
             </button>
-            <p class="room-topic" data-room-topic>点「＋ 新任务」把需求交给猫猫，它们会在同一张桌子上做出来。</p>
+            <p class="room-topic" data-room-topic>点「＋ 新任务」把需求交给团队，他们会在同一张工作台上做出来。</p>
           </div>
           <div class="chat-head-status">
             <button
@@ -210,7 +210,7 @@
             class="mention-popup"
             id="mention-popup"
             role="listbox"
-            aria-label="选择要 @ 的猫"
+            aria-label="选择要 @ 的成员"
             hidden
           ></div>
 
@@ -226,7 +226,7 @@
               name="text"
               rows="1"
               maxlength="2000"
-              placeholder="跟猫猫说点什么… 输入 @ 唤醒某只猫，Enter 发送 / Shift+Enter 换行"
+              placeholder="说点什么… 输入 @ 唤醒某个成员，Enter 发送 / Shift+Enter 换行"
               data-testid="composer-input"
             ></textarea>
             <div class="composer-actions">
@@ -384,7 +384,7 @@
         <button type="button" class="tab is-active" data-action="tab" data-tab="chat">
           💬 聊天<span class="tab-dot" data-tab-dot hidden></span>
         </button>
-        <button type="button" class="tab" data-action="tab" data-tab="cats">🐱 猫猫</button>
+        <button type="button" class="tab" data-action="tab" data-tab="cats">👥 团队</button>
         <button type="button" class="tab" data-action="tab" data-tab="work">🧰 工作台</button>
       </nav>
     </main>
@@ -393,12 +393,12 @@
     <dialog id="new-task-modal" class="modal" aria-labelledby="new-task-title">
       <form id="new-task-form" class="modal-card" novalidate>
         <header class="modal-head">
-          <h2 id="new-task-title">给猫猫一个新任务</h2>
+          <h2 id="new-task-title">新建任务</h2>
           <button type="button" class="icon-btn" data-action="close-modal" aria-label="关闭">
             ✕
           </button>
         </header>
-        <p class="modal-sub">用一句话说清要做什么。宪宪会先接住，再把活拆给其他猫。</p>
+        <p class="modal-sub">用一句话说清要做什么。架构师会先接住，再把活拆给其他成员。</p>
         <p class="field-hint" id="new-task-room-hint">将在当前房间创建。</p>
         <label class="field">
           <span class="field-label">需求（至少 4 个字）</span>
@@ -440,7 +440,7 @@
         <footer class="modal-foot">
           <button type="button" class="btn btn--ghost" data-action="close-modal">取消</button>
           <button type="submit" class="btn btn--primary" id="create-task-btn" disabled>
-            让猫猫开工 🐾
+            开始交付
           </button>
         </footer>
       </form>
@@ -452,7 +452,7 @@
         <header class="modal-head settings-head">
           <div class="settings-head-text">
             <h2 id="settings-title">设置</h2>
-            <p class="settings-head-sub">模式、工具、LLM、猫猫与剧本、运行信息</p>
+            <p class="settings-head-sub">模式、工具、LLM、成员与剧本、运行信息</p>
           </div>
           <button type="button" class="icon-btn" data-action="close-settings" aria-label="关闭设置">
             ✕
@@ -488,7 +488,7 @@
           <fieldset class="settings-section" id="settings-tools-section">
             <legend class="settings-legend">工具执行</legend>
             <p class="settings-desc">
-              允许猫在沙盒工作区里读写文件、运行命令。关闭后猫只产出文字，不写文件、不跑命令。
+              允许成员在沙盒工作区里读写文件、运行命令。关闭后只产出文字，不写文件、不跑命令。
             </p>
             <label class="switch-row">
               <input
@@ -498,10 +498,10 @@
                 aria-describedby="settings-tools-hint"
               />
               <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
-              <span class="switch-text">允许猫执行沙盒工具</span>
+              <span class="switch-text">允许执行沙盒工具</span>
             </label>
             <span class="field-hint" id="settings-tools-hint">
-              开启：猫可以读/写工作区文件并运行命令；关闭：只产出文字。
+              开启：可以读/写工作区文件并运行命令；关闭：只产出文字。
             </span>
 
             <div class="field">
@@ -521,7 +521,7 @@
           <fieldset class="settings-section" id="settings-mcp-section">
             <legend class="settings-legend">MCP 工具</legend>
             <p class="settings-desc">
-              MCP server 是本地进程或 HTTP 服务。连接后它的工具会出现在猫的工具目录里；模型调用默认需要你审批。
+              MCP server 是本地进程或 HTTP 服务。连接后它的工具会出现在成员的工具目录里；模型调用默认需要你审批。
             </p>
 
             <div class="scenario-toolbar">
@@ -838,11 +838,11 @@
             </div>
           </fieldset>
 
-          <!-- 6. 猫猫与模型 -->
+          <!-- 6. 成员与模型 -->
           <fieldset class="settings-section" id="settings-cats-section">
-            <legend class="settings-legend">猫猫与模型</legend>
+            <legend class="settings-legend">成员与模型</legend>
             <p class="settings-desc">
-              真实模式下可以给每只猫单独指定模型和温度；留空则跟随全局。改完点行内「保存模型」。
+              真实模式下可以给每个成员单独指定模型和温度；留空则跟随全局。改完点行内「保存模型」。
             </p>
 
             <div class="model-profiles" id="model-profiles-section">
@@ -860,7 +860,7 @@
                 </button>
               </div>
               <p class="field-hint">
-                一键把四只猫配置成不同模型。应用会覆盖每只猫当前的模型/温度覆盖；「统一模型」会清空所有覆盖、跟随全局。
+                一键把四个成员配置成不同模型。应用会覆盖每个成员当前的模型/温度设置；「统一模型」会清空所有覆盖、跟随全局。
               </p>
               <div id="model-profile-list" class="model-profile-list">
                 <div class="empty"><span>读取模型档案…</span></div>
@@ -868,7 +868,7 @@
             </div>
 
             <div id="cat-model-list" class="cat-model-list">
-              <div class="empty"><span>正在读取猫猫…</span></div>
+              <div class="empty"><span>正在读取团队…</span></div>
             </div>
           </fieldset>
 
@@ -898,7 +898,7 @@
                 <span class="switch-text">流式输出</span>
               </label>
               <p class="field-hint" id="settings-streaming-hint">
-                开启后真实模式下猫的话会逐段出现；关闭则等整段说完再显示。演出模式不受影响。
+                开启后真实模式下成员的话会逐段出现；关闭则等整段说完再显示。演出模式不受影响。
               </p>
             </div>
           </fieldset>
@@ -984,7 +984,7 @@
             <legend class="settings-legend">数据</legend>
             <div class="settings-danger-row">
               <div>
-                <strong>重置猫咖</strong>
+                <strong>重置交付台</strong>
                 <p class="settings-desc">
                   会清空所有任务、消息、交接卡、产物与共享记忆，无法撤销。
                 </p>
@@ -995,7 +995,7 @@
                 data-action="reset-studio"
                 id="settings-reset-btn"
               >
-                重置猫咖
+                重置交付台
               </button>
             </div>
             <div class="danger-confirm" id="settings-reset-confirm" hidden>
@@ -1042,11 +1042,11 @@
     </dialog>
 
 
-    <!-- ── 猫猫档案弹窗 ───────────────────────────────────────────── -->
+    <!-- ── 团队档案弹窗 ───────────────────────────────────────────── -->
     <dialog id="cat-edit-modal" class="modal modal--cat" aria-labelledby="cat-edit-title">
       <form id="cat-edit-form" class="modal-card" novalidate>
         <header class="modal-head">
-          <h2 id="cat-edit-title">编辑猫猫档案</h2>
+          <h2 id="cat-edit-title">编辑团队档案</h2>
           <button type="button" class="icon-btn" data-action="close-cat-edit" aria-label="关闭">
             ✕
           </button>
@@ -1056,7 +1056,7 @@
           <span class="cat-edit-avatar" id="cat-edit-avatar" aria-hidden="true"></span>
           <div class="cat-edit-preview">
             <strong id="cat-edit-name-preview">宪宪</strong>
-            <span id="cat-edit-species">布偶猫 · 主架构师 / 主理猫</span>
+            <span id="cat-edit-discipline">架构师 · 需求把关与任务拆解</span>
             <span class="cat-edit-note">保存后名册、消息气泡与 @ 名字会立刻更新。</span>
           </div>
         </div>
@@ -1138,7 +1138,7 @@
     </dialog>
 
 
-    <!-- ── 猫猫工具与技能弹窗 ─────────────────────────────────────── -->
+    <!-- ── 团队工具与技能弹窗 ─────────────────────────────────────── -->
     <dialog id="cat-access-modal" class="modal modal--access" aria-labelledby="cat-access-title">
       <form id="cat-access-form" class="modal-card" novalidate>
         <header class="modal-head">
@@ -1147,7 +1147,7 @@
             ✕
           </button>
         </header>
-        <p class="modal-sub" id="cat-access-sub">配置这只猫能使用的工具和技能包。</p>
+        <p class="modal-sub" id="cat-access-sub">配置这个成员能使用的工具和技能包。</p>
 
         <div class="access-section">
           <div class="access-head">
@@ -1159,7 +1159,7 @@
             </span>
           </div>
           <p class="field-hint">
-            不勾选任何工具 = 这只猫没有工具权限。MCP 工具同样受权限控制。
+            不勾选任何工具 = 这个成员没有工具权限。MCP 工具同样受权限控制。
           </p>
           <div id="cat-access-tools" class="access-list">
             <div class="empty"><span>读取工具目录…</span></div>
@@ -1582,7 +1582,7 @@
             ✕
           </button>
         </header>
-        <p class="modal-sub">把新方向作为明确指令交给主理猫，任务会解除卡住并重新拆活。</p>
+        <p class="modal-sub">把新方向作为明确指令交给架构师，任务会解除卡住并重新拆活。</p>
         <label class="field">
           <span class="field-label">方向（可选，最多 500 字）</span>
           <textarea
@@ -1638,8 +1638,8 @@
         </header>
         <p class="modal-sub" id="model-profile-confirm-sub">确认应用这套模型分工？</p>
         <p class="model-profile-warning">
-          会覆盖四只猫当前的模型与温度设置，可能影响真实模式下的调用成本与速度。
-          「统一模型」会清空所有每猫覆盖，全部跟随全局模型。
+          会覆盖四个成员当前的模型与温度设置，可能影响真实模式下的调用成本与速度。
+          「统一模型」会清空所有按成员设置，全部跟随全局模型。
         </p>
         <p class="form-error" id="model-profile-confirm-error" role="alert" hidden></p>
         <footer class="modal-foot">

@@ -1,10 +1,10 @@
 /**
- * 演示场景：猫猫们的台词、交接卡、review 结论都在这里。
+ * 演示场景：成员们的台词、交接卡、review 结论都在这里。
  *
  * 约定：
  * - beats 按 (stage, cat) 播放，一个 beat 一个 turn；
  * - 同一 (stage, cat) 下连续的 handoff / artifact 会在一次 think 里一起交付
- *   （比如 planning 时宪宪一次发两张卡、working 时金渐层一次交「实现稿 + 交接卡」）；
+ *   （比如 planning 时林知远一次发两张卡、working 时陈实一次交「实现稿 + 交接卡」）；
  * - beat 上的 fault 是演示埋点，mock brain 会把它透传到对应的 handoff turn；
  * - 台词中文、克制（一条消息 1~4 句）；交接卡按 what / why / tradeoff /
  *   openQuestions / nextAction 五栏写满。
@@ -14,7 +14,7 @@ import type { Scenario } from "../domain/types.ts";
 
 // ───────────────────────── 工具节拍里的真实文件内容 ─────────────────────────
 // 沙盒里 test/remember.test.js、test/export.test.js 是固定的裁判；
-// 下面是金渐层每一版真正写进沙盒的文件内容。v1 都被测试抓出问题，v2 才通过。
+// 下面是陈实每一版真正写进沙盒的文件内容。v1 都被测试抓出问题，v2 才通过。
 
 const REMEMBER_V1 = [
   "const TOKENS = new Map();",
@@ -84,7 +84,7 @@ export const SCENARIOS: Scenario[] = [
     beats: [
       {
         stage: "intake",
-        cat: "xianxian",
+        cat: "linzhiyuan",
         turn: {
           kind: "message",
           text: "收到——{{brief}}。能做，但先钉两件事：token 存在哪、7 天到了谁负责清；再把活拆成设计和实现两张卡。",
@@ -95,20 +95,20 @@ export const SCENARIOS: Scenario[] = [
       // ── planning：先接住需求，再一次发两张五栏交接卡 ──
       {
         stage: "planning",
-        cat: "xianxian",
+        cat: "linzhiyuan",
         turn: {
           kind: "message",
-          text: "风险我摆桌上了，活拆两张卡：烁烁管勾选框的状态和文案，金渐层管后端 token。谁有异议，现在说。",
+          text: "风险我摆桌上了，活拆两张卡：周烁管勾选框的状态和文案，陈实管后端 token。谁有异议，现在说。",
           delayMs: 420,
         },
       },
       {
         stage: "planning",
-        cat: "xianxian",
+        cat: "linzhiyuan",
         turn: {
           kind: "handoff",
-          to: "shuoshuo",
-          text: "烁烁，先你这边。勾选框不是画个方块，它得说清楚「这台设备以后不用再登」。",
+          to: "zhoushuo",
+          text: "周烁，先你这边。勾选框不是画个方块，它得说清楚「这台设备以后不用再登」。",
           card: {
             what: "设计登录页「记住我」：默认态、勾选与取消的文案、首次登录和再次进入两种状态下的显示规则；交一张状态图和最终文案。",
             why: "7 天免登录是拿安全换方便，用户得一眼看懂自己在换什么；文案含糊会被当成默认勾选，投诉和误用都会来。",
@@ -126,11 +126,11 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "planning",
-        cat: "xianxian",
+        cat: "linzhiyuan",
         turn: {
           kind: "handoff",
-          to: "jinjianceng",
-          text: "金渐层，后端归你。先别急着写，把过期和吊销这两条想清楚再动手。",
+          to: "chenshi",
+          text: "陈实，后端归你。先别急着写，把过期和吊销这两条想清楚再动手。",
           card: {
             what: "实现 remember-me token 的签发、校验、过期与吊销：登录成功后按勾选状态决定是否下发长期凭证，校验通过就跳过登录；退出时要能吊销单台设备。",
             why: "不写过期的凭证等于永久通行证，不做吊销用户退出也停不掉；这两条是底线，不是优化项。",
@@ -141,7 +141,7 @@ export const SCENARIOS: Scenario[] = [
               "token 存数据库，还是签名 token 加黑名单？",
               "同一账号多设备登录要不要互踢？",
             ],
-            nextAction: "先出后端方案 + diff 骨架，完成后把交接卡 @ 砚砚 走 review，别直接合。",
+            nextAction: "先出后端方案 + diff 骨架，完成后把交接卡 @ 沈砚 走 review，别直接合。",
           },
           delayMs: 480,
         },
@@ -150,11 +150,11 @@ export const SCENARIOS: Scenario[] = [
       // ── working：设计稿 + 实现稿 ──
       {
         stage: "working",
-        cat: "shuoshuo",
+        cat: "zhoushuo",
         turn: {
           kind: "artifact",
-          text: "设计稿交了：状态图加三段文案。勾选这件事，说白了是把「我信这台设备」讲成人话。@宪宪 措辞你过一眼。",
-          mentions: ["xianxian"],
+          text: "设计稿交了：状态图加三段文案。勾选这件事，说白了是把「我信这台设备」讲成人话。@林知远 措辞你过一眼。",
+          mentions: ["linzhiyuan"],
           artifact: {
             kind: "design",
             title: "登录页 · 记住我 交互与文案 v1",
@@ -175,7 +175,7 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "working",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "message",
           text: "我先把 token 写出来，跑一遍测试；跑完再交卡。",
@@ -184,7 +184,7 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "working",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "tool",
           tool: "write_file",
@@ -196,7 +196,7 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "working",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "tool",
           tool: "run_command",
@@ -208,19 +208,19 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "working",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "message",
-          text: "测试没全过：签发和有效期都过了，但「过期后校验失败」那条挂了——过期校验我还没补。能跑，但我知道有个坑，先交出来让砚砚看。",
+          text: "测试没全过：签发和有效期都过了，但「过期后校验失败」那条挂了——过期校验我还没补。能跑，但我知道有个坑，先交出来让沈砚看。",
           delayMs: 420,
         },
       },
       {
         stage: "working",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "artifact",
-          text: "v1 的 diff 摘要贴这儿了，卡随后给砚砚。",
+          text: "v1 的 diff 摘要贴这儿了，卡随后给沈砚。",
           artifact: {
             kind: "patch",
             title: "remember-me 后端实现 v1",
@@ -238,11 +238,11 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "working",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "handoff",
-          to: "yanyan",
-          text: "砚砚，卡贴这儿了，过期和并发那两块重点帮我盯一下。",
+          to: "shenyan",
+          text: "沈砚，卡贴这儿了，过期和并发那两块重点帮我盯一下。",
           card: {
             what: "review remember-me 后端 v1：token 签发/校验/吊销链路、过期策略、同账号并发登录下的覆盖行为。",
             why: "这块写错就是长期凭证泄漏；我看不出自己的盲区，需要外部眼睛。",
@@ -252,14 +252,14 @@ export const SCENARIOS: Scenario[] = [
           },
           delayMs: 460,
         },
-        // 演示埋点：这张卡写了给砚砚，但没 @，消息不会投递 → 任务卡住，等「催一下」。
+        // 演示埋点：这张卡写了给沈砚，但没 @，消息不会投递 → 任务卡住，等「催一下」。
         fault: "missed_mention",
       },
 
-      // ── reviewing：砚砚先跑测试，再打回 ──
+      // ── reviewing：沈砚先跑测试，再打回 ──
       {
         stage: "reviewing",
-        cat: "yanyan",
+        cat: "shenyan",
         turn: {
           kind: "tool",
           tool: "run_command",
@@ -271,13 +271,13 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "reviewing",
-        cat: "yanyan",
+        cat: "shenyan",
         turn: {
           kind: "review",
           verdict: "request_changes",
           title: "review · remember-me v1：不通过",
           text: "先跑了测试，3 条挂了 1 条：「过期后校验失败」。第 1 条，过期时间只是写进了记录，校验时根本没比较；第 2 条，勾选框默认勾选、也没绑 label。先改，别合。",
-          mentions: ["jinjianceng"],
+          mentions: ["chenshi"],
           findings: [
             {
               severity: "blocker",
@@ -296,10 +296,10 @@ export const SCENARIOS: Scenario[] = [
         },
       },
 
-      // ── revising：金渐层改完再跑测试 ──
+      // ── revising：陈实改完再跑测试 ──
       {
         stage: "revising",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "tool",
           tool: "write_file",
@@ -311,7 +311,7 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "revising",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "tool",
           tool: "run_command",
@@ -323,7 +323,7 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "revising",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "artifact",
           text: "改完了。过期校验和删除逻辑都补上，测试全绿，这次自己先对着 review 意见走了一遍。",
@@ -344,17 +344,17 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "revising",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "handoff",
-          to: "yanyan",
-          text: "v2 交接，@砚砚 只改了你圈的那两条，其他没动，方便你比对。",
+          to: "shenyan",
+          text: "v2 交接，@沈砚 只改了你圈的那两条，其他没动，方便你比对。",
           card: {
             what: "review remember-me v2：只针对 v1 的 blocker 和 minor 改动（过期字段与校验、勾选框默认态与无障碍），其余链路保持不变。",
             why: "只动被点名的部分，review 面积小；扩大范围就要重跑一遍自测。",
             tradeoff: "固定 7 天过期简单、可预期；滑动续期体验更好，但会把「7 天」变成看不见的承诺，这版先不做。",
             openQuestions: ["多设备并存什么时候做？", "滑动续期要不要排进下一版？"],
-            nextAction: "确认 blocker 关掉、minor 收掉，我就等宪宪落决策。",
+            nextAction: "确认 blocker 关掉、minor 收掉，我就等林知远落决策。",
           },
           delayMs: 460,
         },
@@ -363,7 +363,7 @@ export const SCENARIOS: Scenario[] = [
       // ── reviewing：再跑一遍测试，通过 ──
       {
         stage: "reviewing",
-        cat: "yanyan",
+        cat: "shenyan",
         turn: {
           kind: "tool",
           tool: "run_command",
@@ -375,22 +375,22 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "reviewing",
-        cat: "yanyan",
+        cat: "shenyan",
         turn: {
           kind: "review",
           verdict: "approve",
           title: "review · remember-me v2：通过",
-          text: "又跑了一遍测试，3 条全过。第 1 条过期校验补上了，blocker 关掉；第 2 条默认不勾、label 也补了，minor 收掉。approve，剩下交给宪宪记。",
-          mentions: ["xianxian"],
+          text: "又跑了一遍测试，3 条全过。第 1 条过期校验补上了，blocker 关掉；第 2 条默认不勾、label 也补了，minor 收掉。approve，剩下交给林知远记。",
+          mentions: ["linzhiyuan"],
           findings: [],
           delayMs: 460,
         },
       },
 
-      // ── done：宪宪落决策 + 教训 ──
+      // ── done：林知远落决策 + 教训 ──
       {
         stage: "done",
-        cat: "xianxian",
+        cat: "linzhiyuan",
         turn: {
           kind: "decision",
           text: "收工。决策和教训各记一条进共享记忆，下次谁再提 remember-me 相关需求，直接接着往下走。",
@@ -433,7 +433,7 @@ export const SCENARIOS: Scenario[] = [
     beats: [
       {
         stage: "intake",
-        cat: "xianxian",
+        cat: "linzhiyuan",
         turn: {
           kind: "message",
           // 记忆复用：接着上次 remember-me 的决策往下走，而不是从零开始。
@@ -445,38 +445,38 @@ export const SCENARIOS: Scenario[] = [
       // ── planning：先接住需求（引用上次决策），再一次发两张卡 ──
       {
         stage: "planning",
-        cat: "xianxian",
+        cat: "linzhiyuan",
         turn: {
           kind: "message",
-          // 记忆复用：宪宪直接把上次 remember-me 的决策搬到这张桌上。
-          text: "接着上次的记忆：{{memory}}。这次导出沿用同一套权限边界，不新起一套。卡两张：烁烁做按钮和三态，金渐层做异步导出和权限。",
+          // 记忆复用：林知远直接把上次 remember-me 的决策搬到这张桌上。
+          text: "接着上次的记忆：{{memory}}。这次导出沿用同一套权限边界，不新起一套。卡两张：周烁做按钮和三态，陈实做异步导出和权限。",
           delayMs: 420,
         },
       },
       {
         stage: "planning",
-        cat: "xianxian",
+        cat: "linzhiyuan",
         turn: {
           kind: "handoff",
-          to: "shuoshuo",
-          text: "烁烁，导出按钮和进度得让人看见「它在跑」，不然用户会连点五次。",
+          to: "zhoushuo",
+          text: "周烁，导出按钮和进度得让人看见「它在跑」，不然用户会连点五次。",
           card: {
             what: "设计后台「导出 CSV」按钮与三种状态：空闲、导出中（排队 / 生成中）、失败可重试；给出按钮文案和失败提示。",
             why: "导出是慢操作，没反馈就会被重复点击，最后生成一堆重复任务；失败态不说人话，用户只能找客服。",
             tradeoff: "实时进度条更准，但要额外通道；先用轮询加阶段性文案（排队中 / 生成中 / 可下载），够用、实现轻。",
             openQuestions: ["导出中允许取消吗？", "完成后提示停留多久？", "移动端要不要支持导出？"],
-            nextAction: "出按钮和三态文案，@ 我确认后直接给金渐层用。",
+            nextAction: "出按钮和三态文案，@ 我确认后直接给陈实用。",
           },
           delayMs: 480,
         },
       },
       {
         stage: "planning",
-        cat: "xianxian",
+        cat: "linzhiyuan",
         turn: {
           kind: "handoff",
-          to: "jinjianceng",
-          text: "金渐层，导出归你。权限校验别只拦在前端，也别只拦在路由上。",
+          to: "chenshi",
+          text: "陈实，导出归你。权限校验别只拦在前端，也别只拦在路由上。",
           card: {
             what: "实现后台导出 CSV：创建异步导出任务、按管理员权限过滤数据、生成文件并给下载地址；非管理员只能导出自己可见的范围，越权直接 403。",
             why: "全量数据能绕过权限导出，等于把库复制一份；同步生成遇上大表会拖死请求，所以走异步任务。",
@@ -486,7 +486,7 @@ export const SCENARIOS: Scenario[] = [
               "导出列要不要允许用户自选？",
               "文件落本地盘还是对象存储？",
             ],
-            nextAction: "先出接口 + 权限校验骨架，完成后 @ 砚砚 review。",
+            nextAction: "先出接口 + 权限校验骨架，完成后 @ 沈砚 review。",
           },
           delayMs: 480,
         },
@@ -495,11 +495,11 @@ export const SCENARIOS: Scenario[] = [
       // ── working：设计三态 + 后端实现 ──
       {
         stage: "working",
-        cat: "shuoshuo",
+        cat: "zhoushuo",
         turn: {
           kind: "artifact",
-          text: "UI 稿给了：按钮加三态文案。导出的等待感要像等咖啡，别像等电梯。@宪宪 措辞你看下。",
-          mentions: ["xianxian"],
+          text: "UI 稿给了：按钮加三态文案。导出的等待感要像等咖啡，别像等电梯。@林知远 措辞你看下。",
+          mentions: ["linzhiyuan"],
           artifact: {
             kind: "design",
             title: "后台导出 · 按钮与三态 v1",
@@ -522,7 +522,7 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "working",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "message",
           text: "导出我先按最朴素的方式写一版，跑一遍测试再交。",
@@ -531,7 +531,7 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "working",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "tool",
           tool: "write_file",
@@ -543,7 +543,7 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "working",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "tool",
           tool: "run_command",
@@ -555,7 +555,7 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "working",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "message",
           text: "测试挂了：普通字段没问题，逗号、引号、换行全没转义，列都串了。能跑，但我知道有个坑，交 review。",
@@ -564,10 +564,10 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "working",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "artifact",
-          text: "后端 v1 的 diff 摘要贴这儿了，卡随后给砚砚。",
+          text: "后端 v1 的 diff 摘要贴这儿了，卡随后给沈砚。",
           artifact: {
             kind: "patch",
             title: "后台导出 CSV 实现 v1",
@@ -585,11 +585,11 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "working",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "handoff",
-          to: "yanyan",
-          text: "v1 交接，@砚砚 重点看权限判断和 CSV 生成这两段。",
+          to: "shenyan",
+          text: "v1 交接，@沈砚 重点看权限判断和 CSV 生成这两段。",
           card: {
             what: "review 导出 CSV v1：权限校验位置、分页读库、CSV 字段转义、下载链接有效期。",
             why: "一次全量导出等于给数据开一扇门；字段转义错了还会被 CSV 注入。",
@@ -601,10 +601,10 @@ export const SCENARIOS: Scenario[] = [
         },
       },
 
-      // ── reviewing：砚砚先跑测试，再打回 ──
+      // ── reviewing：沈砚先跑测试，再打回 ──
       {
         stage: "reviewing",
-        cat: "yanyan",
+        cat: "shenyan",
         turn: {
           kind: "tool",
           tool: "run_command",
@@ -616,13 +616,13 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "reviewing",
-        cat: "yanyan",
+        cat: "shenyan",
         turn: {
           kind: "review",
           verdict: "request_changes",
           title: "review · 导出 CSV v1：不通过",
           text: "测试先挂了 2 条：逗号、引号、换行都没转义，CSV 直接串列。另外第 1 条，权限只拦在路由上，worker 拿任务直接跑，校验形同虚设。改完再交。",
-          mentions: ["jinjianceng"],
+          mentions: ["chenshi"],
           findings: [
             {
               severity: "blocker",
@@ -644,7 +644,7 @@ export const SCENARIOS: Scenario[] = [
       // ── revising：改完再跑测试 ──
       {
         stage: "revising",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "tool",
           tool: "write_file",
@@ -656,7 +656,7 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "revising",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "tool",
           tool: "run_command",
@@ -668,7 +668,7 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "revising",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "artifact",
           text: "v2 改完：权限在 service 层再判一次，CSV 每个字段都按 RFC 4180 转义，测试全绿。这次我拿普通账号真跑了一遍。",
@@ -688,11 +688,11 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "revising",
-        cat: "jinjianceng",
+        cat: "chenshi",
         turn: {
           kind: "handoff",
-          to: "yanyan",
-          text: "v2 交接，@砚砚 只动权限校验和 CSV 转义，别的没碰。",
+          to: "shenyan",
+          text: "v2 交接，@沈砚 只动权限校验和 CSV 转义，别的没碰。",
           card: {
             what: "review 导出 CSV v2：service 层权限二次校验、worker 任务快照、CSV 转义与 BOM。",
             why: "只复验被点名的两处，范围小；下载链路没改，不用重看。",
@@ -707,7 +707,7 @@ export const SCENARIOS: Scenario[] = [
       // ── reviewing：再跑一遍测试，通过 ──
       {
         stage: "reviewing",
-        cat: "yanyan",
+        cat: "shenyan",
         turn: {
           kind: "tool",
           tool: "run_command",
@@ -719,22 +719,22 @@ export const SCENARIOS: Scenario[] = [
       },
       {
         stage: "reviewing",
-        cat: "yanyan",
+        cat: "shenyan",
         turn: {
           kind: "review",
           verdict: "approve",
           title: "review · 导出 CSV v2：通过",
-          text: "测试 3 条全过。权限在 service 层兜住了，CSV 转义和 BOM 也验过。放行，宪宪记一条。",
-          mentions: ["xianxian"],
+          text: "测试 3 条全过。权限在 service 层兜住了，CSV 转义和 BOM 也验过。放行，林知远记一条。",
+          mentions: ["linzhiyuan"],
           findings: [],
           delayMs: 460,
         },
       },
 
-      // ── done：宪宪落决策 + 教训 ──
+      // ── done：林知远落决策 + 教训 ──
       {
         stage: "done",
-        cat: "xianxian",
+        cat: "linzhiyuan",
         turn: {
           kind: "decision",
           text: "收工。这次落两条记忆：导出走异步，权限必须在 service 层再判一次。下次再提导出，直接接着走。",

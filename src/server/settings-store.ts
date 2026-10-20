@@ -13,7 +13,7 @@ import { createLlmBrain } from "../agents/llm-brain.ts";
 import { createCliBrain } from "../agents/cli-brain.ts";
 import type {
   BrainMode,
-  CatBrain,
+  AgentBrain,
   LlmSettings,
   LlmTestResult,
   PublicSettings,
@@ -29,10 +29,10 @@ const SPEED_FACTOR: Record<Speed, number> = { slow: 1.7, normal: 1, fast: 0.5 };
 const DEFAULT_VERSION = "0.1.0";
 
 /** 可替换 brain：driver 只持这个壳，设置面板换模式时原地换芯。 */
-export class SwitchableBrain implements CatBrain {
-  private current: CatBrain;
+export class SwitchableBrain implements AgentBrain {
+  private current: AgentBrain;
 
-  constructor(initial: CatBrain) {
+  constructor(initial: AgentBrain) {
     this.current = initial;
   }
 
@@ -40,11 +40,11 @@ export class SwitchableBrain implements CatBrain {
     return this.current.mode;
   }
 
-  set(brain: CatBrain): void {
+  set(brain: AgentBrain): void {
     this.current = brain;
   }
 
-  think(ctx: Parameters<CatBrain["think"]>[0]): ReturnType<CatBrain["think"]> {
+  think(ctx: Parameters<AgentBrain["think"]>[0]): ReturnType<AgentBrain["think"]> {
     return this.current.think(ctx);
   }
 }
@@ -67,7 +67,7 @@ interface PersistedSettings {
 
 export interface SettingsStoreOptions {
   studio: Studio;
-  mock: CatBrain;
+  mock: AgentBrain;
   switchable: SwitchableBrain;
   settings: StudioSettings;
   dataDirAbs: string;
@@ -92,7 +92,7 @@ export class SettingsStore implements SettingsApi {
   private keySource: "env" | "ui" | null;
 
   private readonly studio: Studio;
-  private readonly mock: CatBrain;
+  private readonly mock: AgentBrain;
   private readonly switchable: SwitchableBrain;
   private readonly stallMs: number;
   private readonly dataDirAbs: string;

@@ -87,12 +87,12 @@ describe("model profiles", () => {
     });
     assert.equal(res.status, 200);
     const cats = studio.snapshot().cats;
-    const xianxian = cats.find((cat) => cat.id === "xianxian");
-    const jinjianceng = cats.find((cat) => cat.id === "jinjianceng");
-    assert.ok(xianxian?.llmModel);
-    assert.ok(jinjianceng?.llmModel);
-    assert.notEqual(xianxian?.llmModel, jinjianceng?.llmModel, "混搭应产生不同模型");
-    assert.equal(jinjianceng?.llmTemperature, 0.5);
+    const linzhiyuan = cats.find((cat) => cat.id === "linzhiyuan");
+    const chenshi = cats.find((cat) => cat.id === "chenshi");
+    assert.ok(linzhiyuan?.llmModel);
+    assert.ok(chenshi?.llmModel);
+    assert.notEqual(linzhiyuan?.llmModel, chenshi?.llmModel, "混搭应产生不同模型");
+    assert.equal(chenshi?.llmTemperature, 0.5);
   });
 
   test("应用统一模型：清空所有覆盖", async () => {

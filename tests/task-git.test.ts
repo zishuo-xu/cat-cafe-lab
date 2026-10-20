@@ -18,7 +18,7 @@ function makeRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "catcafe-git-"));
   execFileSync("git", ["init", "-q", "-b", "main"], { cwd: dir });
   execFileSync("git", ["config", "user.email", "cat@example.com"], { cwd: dir });
-  execFileSync("git", ["config", "user.name", "Cat Café"], { cwd: dir });
+  execFileSync("git", ["config", "user.name", "Member Café"], { cwd: dir });
   writeFileSync(join(dir, "app.js"), "export const x = 1;\n", "utf8");
   execFileSync("git", ["add", "."], { cwd: dir });
   execFileSync("git", ["commit", "-q", "-m", "init"], { cwd: dir });

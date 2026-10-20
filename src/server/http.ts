@@ -8,7 +8,7 @@ import { extname, join, normalize, resolve } from "node:path";
 
 import type {
   ApprovalGate,
-  CatId,
+  MemberId,
   Driver,
   ToolRegistry,
   RoomId,
@@ -112,11 +112,11 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
 }
 
 /** 从文本里解析 @名字 / @id。 */
-export function parseMentions(text: string, studio: Studio, roomId: RoomId): CatId[] {
+export function parseMentions(text: string, studio: Studio, roomId: RoomId): MemberId[] {
   const room = studio.getRoom(roomId);
   if (!room) return [];
   const cats = studio.state.cats.filter((c) => room.catIds.includes(c.id));
-  const found = new Set<CatId>();
+  const found = new Set<MemberId>();
   const re = /@([^\s@，。！？,.!?、:：;；]+)/g;
   for (const match of text.matchAll(re)) {
     const token = match[1] ?? "";
@@ -761,7 +761,7 @@ export function createHttpServer(deps: HttpDeps): Server {
     }
 
     if (pathname === "/api/patrol" && method === "POST") {
-      // 手动让猫们看一眼现在有什么事（主动协作的"现在就看"按钮）。
+      // 手动让团队看一眼现在有什么事（主动协作的"现在就看"按钮）。
       await driver.patrol();
       json(res, 200, { ok: true });
       return;
@@ -901,7 +901,7 @@ export function createHttpServer(deps: HttpDeps): Server {
         const queue = approvals as ApprovalGate & {
           remember?: (id: string, value: typeof decision) => boolean;
         };
-        // remember=true：同一只猫 + 同一工具后续不再询问。
+        // remember=true：同一个成员 + 同一个工具后续不再询问。
         const handled =
           body.remember === true && queue.remember
             ? queue.remember(callId, decision)

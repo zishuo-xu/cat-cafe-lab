@@ -1,19 +1,19 @@
 /**
- * 确定性 mock brain：不调用任何模型，按场景 beats 播放猫猫的台词与动作。
+ * 确定性 mock brain：不调用任何模型，按场景 beats 播放成员的台词与动作。
  * T2 拥有此文件。
  *
  * 与 T1 driver 的调用契约：
- *   - intake（宪宪，task_created）：只回一条消息，不带 handoff，driver 会自动进 planning；
- *   - planning（宪宪）：一次返回「接住需求的消息 + 2 张 handoff（烁烁 / 金渐层）」；
- *   - working（烁烁 / 金渐层）：一次返回该猫的 artifact（金渐层是 patch + 给砚砚的 handoff）；
- *   - reviewing（砚砚）：按 ctx.artifacts 里的 patch 版本区分——只有 v1 时 request_changes，
+ *   - intake（林知远，task_created）：只回一条消息，不带 handoff，driver 会自动进 planning；
+ *   - planning（林知远）：一次返回「接住需求的消息 + 2 张 handoff（周烁 / 陈实）」；
+ *   - working（周烁 / 陈实）：一次返回该成员的 artifact（陈实是 patch + 给沈砚的 handoff）；
+ *   - reviewing（沈砚）：按 ctx.artifacts 里的 patch 版本区分——只有 v1 时 request_changes，
  *     v2 出现后 approve，绝不一次返回两个结论；
- *   - revising（金渐层）：patch v2 + 重新交接；
- *   - done（宪宪）：decision + memory[]；
- *   - nudge（宪宪，stage 不变）：说明卡点 + 补投漏 @ 的交接卡。
+ *   - revising（陈实）：patch v2 + 重新交接；
+ *   - done（林知远）：decision + memory[]；
+ *   - nudge（林知远，stage 不变）：说明卡点 + 补投漏 @ 的交接卡。
  *
  * 其他规则：
- *   - 用户 @ 某猫时按该猫口吻接话，引用用户原话；没任务时自然闲聊；
+ *   - 用户 @ 某个成员时按该成员口吻接话，引用用户原话；没任务时自然闲聊；
  *   - `ScenarioBeat.fault` 会透传到返回的 handoff turn（driver 只认 turn.fault）；
  *   - 模板占位符：{{brief}} / {{title}} / {{quote}} / {{memory}} /
  *     {{memoryDetail}} / {{catName}}。
@@ -21,9 +21,9 @@
 
 import type {
   Artifact,
-  CatBrain,
-  CatId,
-  CatTurn,
+  AgentBrain,
+  MemberId,
+  AgentTurn,
   MemoryEntry,
   Role,
   Scenario,
@@ -31,14 +31,14 @@ import type {
   TurnContext,
 } from "../domain/types.ts";
 
-/** 主理猫：负责在卡住时补投交接卡。 */
-const ARCHITECT_ID: CatId = "xianxian";
+/** 架构师：负责在卡住时补投交接卡。 */
+const ARCHITECT_ID: MemberId = "linzhiyuan";
 
 const CAT_NAMES: Record<string, string> = {
-  xianxian: "宪宪",
-  yanyan: "砚砚",
-  shuoshuo: "烁烁",
-  jinjianceng: "金渐层",
+  linzhiyuan: "林知远",
+  shenyan: "沈砚",
+  zhoushuo: "周烁",
+  chenshi: "陈实",
 };
 
 interface ChatLines {
@@ -53,25 +53,25 @@ interface ChatLines {
 }
 
 const CHAT_LINES: Record<string, ChatLines> = {
-  xianxian: {
+  linzhiyuan: {
     mentionTask: "你刚说「{{quote}}」。我先说结论：这条先挂在「{{title}}」下面，不改现在的主线，收尾我一起看。",
     mentionIdle: "「{{quote}}」收到。现在桌上没活，你要想让我正式接，就把需求丢进来。",
     hereTask: "我在。「{{title}}」还在走，你有话直接说，我先记着。",
     idle: "桌上现在没活。丢个需求进来，我先说结论再拆。",
   },
-  yanyan: {
+  shenyan: {
     mentionTask: "「{{quote}}」——先给证据：第 1 条，改哪一段；第 2 条，怎么验证。两条齐了我才看「{{title}}」。",
     mentionIdle: "「{{quote}}」先放这儿。没任务我不空口判断，有证据再 @ 我。",
     hereTask: "「{{title}}」还在我手上过。没编号的事别催，我一条条来。",
     idle: "没活我就先睡。有要 review 的再 @ 我，别让我猜。",
   },
-  shuoshuo: {
+  zhoushuo: {
     mentionTask: "你一说「{{quote}}」，我脑子里「{{title}}」那个画面就活了。给我半天，我画个小状态图。",
     mentionIdle: "「{{quote}}」——好，我有画面了。等有任务，我就把这个感觉画出来。",
     hereTask: "「{{title}}」的界面我盯着呢，别担心它不好看。",
     idle: "空房间最适合发呆。你要是想改登录页，那个勾选框我已经有画面了。",
   },
-  jinjianceng: {
+  chenshi: {
     mentionTask: "「{{quote}}」收到。能跑，但我知道有个坑——在「{{title}}」里我先按能跑的做，坑回头说。",
     mentionIdle: "「{{quote}}」收到。没活我先眯一会儿，有活直接派。",
     hereTask: "「{{title}}」在我手上，快完了。别催，催了容易省步骤。",
@@ -205,8 +205,8 @@ function selectBeats(ctx: TurnContext, scenario: Scenario): ScenarioBeat[] {
   return beats;
 }
 
-function materialize(beat: ScenarioBeat, vars: Record<string, string>): CatTurn {
-  const turn = substitute(beat.turn, vars) as CatTurn;
+function materialize(beat: ScenarioBeat, vars: Record<string, string>): AgentTurn {
+  const turn = substitute(beat.turn, vars) as AgentTurn;
   // beats 上的 fault 透传到 turn.handoff.fault：driver 只认这个字段。
   if (turn.kind === "handoff" && beat.fault === "missed_mention" && turn.fault === undefined) {
     return { ...turn, fault: "missed_mention" };
@@ -228,15 +228,15 @@ function findFaultBeat(scenario: Scenario | null): ScenarioBeat | null {
 // ───────────────────────── nudge（催一下） ─────────────────────────
 
 /**
- * nudge：driver 负责把漏掉的交接「补投递」给接收猫，mock brain 只负责说明卡点。
+ * nudge：driver 负责把漏掉的交接「补投递」给接收方，mock brain 只负责说明卡点。
  * 因此这里只回 message，绝不能再返回 handoff，否则会和 driver 的 deliverMissed 重复唤醒。
  */
 function nudgeTurns(
   ctx: TurnContext,
   scenario: Scenario | null,
   recovered: Set<string>,
-  nameOf: (id: CatId) => string,
-): CatTurn[] {
+  nameOf: (id: MemberId) => string,
+): AgentTurn[] {
   const task = ctx.task;
   if (!task) {
     const text =
@@ -254,7 +254,7 @@ function nudgeTurns(
       return [
         {
           kind: "message",
-          text: "已经补过一次了，@砚砚 那边应该接住了，再等等。别连着催，催急了容易漏看。",
+          text: "已经补过一次了，@沈砚 那边应该接住了，再等等。别连着催，催急了容易漏看。",
           delayMs: 360,
         },
       ];
@@ -263,7 +263,7 @@ function nudgeTurns(
 
     const handoff = faultBeat.turn.kind === "handoff" ? faultBeat.turn : null;
     const authorName = nameOf(faultBeat.cat);
-    const recipientName = handoff ? nameOf(handoff.to) : "接收猫";
+    const recipientName = handoff ? nameOf(handoff.to) : "接收方";
     return [
       {
         kind: "message",
@@ -278,7 +278,7 @@ function nudgeTurns(
     return [
       {
         kind: "message",
-        text: "催到我这儿了，但卡住的不是我这一步。宪宪应该会去补那张没 @ 到的卡。",
+        text: "催到我这儿了，但卡住的不是我这一步。林知远应该会去补那张没 @ 到的卡。",
         delayMs: 360,
       },
     ];
@@ -292,8 +292,8 @@ function nudgeTurns(
 
 // ───────────────────────── 闲聊 / @ 接话 ─────────────────────────
 
-function chatTurns(ctx: TurnContext, vars: Record<string, string>): CatTurn[] {
-  const lines = CHAT_LINES[ctx.cat.id] ?? CHAT_LINES.xianxian;
+function chatTurns(ctx: TurnContext, vars: Record<string, string>): AgentTurn[] {
+  const lines = CHAT_LINES[ctx.cat.id] ?? CHAT_LINES.linzhiyuan;
   const mentioned = (ctx.trigger.mentions ?? []).includes(ctx.cat.id);
   const hasTask = ctx.task !== null;
   const template = mentioned
@@ -310,12 +310,12 @@ function chatTurns(ctx: TurnContext, vars: Record<string, string>): CatTurn[] {
 // ───────────────────────── 工厂 ─────────────────────────
 
 export interface MockBrainDeps {
-  /** 取当前猫名的访问器；改名后 nudge 台词也能跟着变。 */
-  catName?: (id: CatId) => string;
+  /** 取当前成员名的访问器；改名后 nudge 台词也能跟着变。 */
+  catName?: (id: MemberId) => string;
 }
 
-export function createMockBrain(scenarios: Scenario[], deps: MockBrainDeps = {}): CatBrain {
-  const nameOf = (id: CatId): string => deps.catName?.(id) ?? CAT_NAMES[id] ?? id;
+export function createMockBrain(scenarios: Scenario[], deps: MockBrainDeps = {}): AgentBrain {
+  const nameOf = (id: MemberId): string => deps.catName?.(id) ?? CAT_NAMES[id] ?? id;
   /** 已经补投过漏 @ 交接卡的任务。 */
   const recovered = new Set<string>();
 
@@ -328,7 +328,7 @@ export function createMockBrain(scenarios: Scenario[], deps: MockBrainDeps = {})
 
   return {
     mode: "mock",
-    async think(ctx: TurnContext): Promise<CatTurn[]> {
+    async think(ctx: TurnContext): Promise<AgentTurn[]> {
       const scenario = resolveScenario(ctx);
       const vars = buildVars(ctx, scenario);
 

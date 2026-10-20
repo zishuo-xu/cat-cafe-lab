@@ -18,9 +18,9 @@ import { describe, test } from "node:test";
 import { CATS } from "../src/agents/personas.ts";
 import { createLlmBrain, parseTurns } from "../src/agents/llm-brain.ts";
 import type {
-  Cat,
-  CatBrain,
-  CatTurn,
+  Member,
+  AgentBrain,
+  AgentTurn,
   LlmSettings,
   Message,
   Role,
@@ -36,7 +36,7 @@ import { BUILTIN_TOOLS } from "../src/tools/builtin.ts";
 
 // ───────────────────────── 夹具 ─────────────────────────
 
-function catByRole(role: Role): Cat {
+function catByRole(role: Role): Member {
   const found = CATS.find((cat) => cat.role === role);
   if (!found) throw new Error(`personas 里缺少 role=${role} 的猫`);
   return found;
@@ -48,7 +48,7 @@ function makeContext(overrides: Partial<TurnContext> = {}): TurnContext {
   const cat = catByRole("architect");
   const room: Room = {
     id: "room_cafe",
-    name: "猫咖 · 客厅",
+    name: "交付台 · 主工作区",
     topic: "把需求丢进来，猫猫们会在同一张桌子上把它做出来。",
     catIds: CATS.map((c) => c.id),
     createdAt: Date.now(),
@@ -78,7 +78,7 @@ function makeContext(overrides: Partial<TurnContext> = {}): TurnContext {
       roomId: room.id,
       author: "system",
       kind: "system",
-      text: "☕ 猫咖开门了。",
+      text: "☕ 交付台开门了。",
       mentions: [],
       at: Date.now() - 2000,
     },
@@ -130,11 +130,11 @@ const SETTINGS: LlmSettings = {
   temperature: 0.7,
 };
 
-function makeFallback(): { brain: CatBrain; calls: () => number } {
+function makeFallback(): { brain: AgentBrain; calls: () => number } {
   let calls = 0;
-  const brain: CatBrain = {
+  const brain: AgentBrain = {
     mode: "mock",
-    async think(): Promise<CatTurn[]> {
+    async think(): Promise<AgentTurn[]> {
       calls += 1;
       return [{ kind: "message", text: "（fallback）兜底台词" }];
     },
@@ -249,12 +249,12 @@ const FIVE_COLUMN_CARD = {
 // ───────────────────────── 用例 ─────────────────────────
 
 describe("llm-brain · 正常解析", () => {
-  test("合法 JSON 数组被解析成 CatTurn[]，请求体带猫名与 brief", async () => {
+  test("合法 JSON 数组被解析成 AgentTurn[]，请求体带猫名与 brief", async () => {
     const content = JSON.stringify([
       { kind: "message", text: "我先说结论，再拆。这个需求有安全风险。" },
       {
         kind: "handoff",
-        to: "jinjianceng",
+        to: "chenshi",
         card: FIVE_COLUMN_CARD,
         text: "后端 token 交给你。",
       },
@@ -276,7 +276,7 @@ describe("llm-brain · 正常解析", () => {
         assert.equal(turns[0]?.kind, "message");
         assert.equal(turns[1]?.kind, "handoff");
         if (turns[1]?.kind === "handoff") {
-          assert.equal(turns[1].to, "jinjianceng");
+          assert.equal(turns[1].to, "chenshi");
           assert.deepEqual(turns[1].card, FIVE_COLUMN_CARD);
         }
         assert.equal(fallback.calls(), 0, "正常输出不应降级");
@@ -303,7 +303,7 @@ describe("llm-brain · 正常解析", () => {
         // 请求里必须带猫的人格与任务需求。
         const system = body.messages[0]?.content ?? "";
         const user = body.messages[1]?.content ?? "";
-        assert.match(system, /宪宪/);
+        assert.match(system, /林知远/);
         assert.match(user, /记住我/);
         assert.match(user, /task_created/);
         // brief 与共享记忆都要进 prompt。
@@ -317,9 +317,9 @@ describe("llm-brain · 正常解析", () => {
 
   test("未知 kind 与非法字段被丢弃，合法 turn 保留", async () => {
     const content = JSON.stringify([
-      { kind: "message", text: "收到。", mentions: ["shuoshuo", "ghost"] },
+      { kind: "message", text: "收到。", mentions: ["zhoushuo", "ghost"] },
       { kind: "dance", text: "跳个舞" },
-      { kind: "handoff", to: "xianxian", card: FIVE_COLUMN_CARD }, // 不能交给自己
+      { kind: "handoff", to: "linzhiyuan", card: FIVE_COLUMN_CARD }, // 不能交给自己
       { kind: "review", verdict: "maybe", title: "?", text: "?", findings: [] },
       { kind: "artifact", artifact: { kind: "patch", title: "v1", body: "diff" }, text: "给" },
     ]);
@@ -336,7 +336,7 @@ describe("llm-brain · 正常解析", () => {
         assert.equal(turns[0]?.kind, "message");
         if (turns[0]?.kind === "message") {
           // 不存在的猫 id 被过滤。
-          assert.deepEqual(turns[0].mentions, ["shuoshuo"]);
+          assert.deepEqual(turns[0].mentions, ["zhoushuo"]);
         }
         assert.equal(turns[1]?.kind, "artifact");
       },
@@ -498,7 +498,7 @@ describe("llm-brain · 结构校验（纯函数）", () => {
     const content = JSON.stringify([
       {
         kind: "handoff",
-        to: "jinjianceng",
+        to: "chenshi",
         card: { what: "做", why: "因为", tradeoff: "取舍" }, // 缺 openQuestions/nextAction
       },
     ]);
@@ -513,7 +513,7 @@ describe("llm-brain · 结构校验（纯函数）", () => {
         verdict: "request_changes",
         title: "打回",
         text: "有问题",
-        mentions: ["jinjianceng"],
+        mentions: ["chenshi"],
         findings: [
           { severity: "blocker", title: "token 没过期", detail: "应设 7 天" },
           { severity: "critical", title: "未知严重级别", detail: "应丢弃" },
@@ -565,14 +565,14 @@ describe("llm-brain · 每猫模型与温度", () => {
           { ...SETTINGS, baseUrl: fake.baseUrl },
           fallback.brain,
         );
-        const xianxian = catByRole("architect");
-        const yanyan = catByRole("reviewer");
+        const linzhiyuan = catByRole("architect");
+        const shenyan = catByRole("reviewer");
 
         await brain.think(
-          makeContext({ cat: { ...xianxian, llmModel: "model-architect" } }),
+          makeContext({ cat: { ...linzhiyuan, llmModel: "model-architect" } }),
         );
         await brain.think(
-          makeContext({ cat: { ...yanyan, llmModel: "model-reviewer" } }),
+          makeContext({ cat: { ...shenyan, llmModel: "model-reviewer" } }),
         );
 
         assert.equal(fallback.calls(), 0);
@@ -857,7 +857,7 @@ describe("llm-brain · 工具调用与 tool_result 回喂", () => {
         callId: "call_run_2",
         tool: "run_command",
         status: "rejected",
-        output: "铲屎官拒绝了这次命令",
+        output: "负责人拒绝了这次命令",
       },
     ];
 
@@ -883,7 +883,7 @@ describe("llm-brain · 工具调用与 tool_result 回喂", () => {
         assert.match(user, /console\.log\('hi'\)/);
         assert.match(user, /call_run_2/);
         assert.match(user, /status=rejected/);
-        assert.match(user, /铲屎官拒绝了这次命令/);
+        assert.match(user, /负责人拒绝了这次命令/);
       },
     );
   });
@@ -1142,10 +1142,10 @@ describe("llm-brain · 动态工具目录与技能注入", () => {
 
 describe("reasoning 型模型的 token 预算", () => {
   function makeThinkingCtx(): TurnContext {
-    const cat = CATS.find((c) => c.id === "xianxian")!;
+    const cat = CATS.find((c) => c.id === "linzhiyuan")!;
     return {
       cat,
-      room: { id: "room_cafe", name: "猫咖", topic: "", catIds: CATS.map((c) => c.id), createdAt: 0 },
+      room: { id: "room_cafe", name: "交付台", topic: "", catIds: CATS.map((c) => c.id), createdAt: 0 },
       task: null,
       trigger: { kind: "task_created", roomId: "room_cafe" },
       recentMessages: [],

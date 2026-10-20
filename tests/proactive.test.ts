@@ -6,14 +6,14 @@ import { describe, test } from "node:test";
 import { CATS, SCENARIOS } from "../src/agents/personas.ts";
 import { createMockBrain } from "../src/agents/mock-brain.ts";
 import { createDriver } from "../src/engine/driver.ts";
-import type { CatBrain, CatTurn, TurnContext } from "../src/domain/types.ts";
+import type { AgentBrain, AgentTurn, TurnContext } from "../src/domain/types.ts";
 import { Studio } from "../src/server/studio.ts";
 
 /** 只发一条消息就停：制造"任务还在进行中"的状态，便于测巡查。 */
-function stallingBrain(): CatBrain {
+function stallingBrain(): AgentBrain {
   return {
     mode: "mock",
-    async think(ctx): Promise<CatTurn[]> {
+    async think(ctx): Promise<AgentTurn[]> {
       if (ctx.trigger.kind === "proactive") return [{ kind: "silence", reason: "未指定" }];
       return [{ kind: "message", text: "我先看看" }];
     },
@@ -22,8 +22,8 @@ function stallingBrain(): CatBrain {
 
 /** 记录每次 think 的上下文，方便断言"谁被巡查唤醒了"。 */
 function recordingBrain(
-  inner: CatBrain,
-): { brain: CatBrain; calls: TurnContext[] } {
+  inner: AgentBrain,
+): { brain: AgentBrain; calls: TurnContext[] } {
   const calls: TurnContext[] = [];
   return {
     calls,
@@ -98,9 +98,9 @@ describe("主动巡查", () => {
 
   test("silence turn 不产生任何消息", async () => {
     const studio = new Studio({ cats: CATS, mode: "mock" });
-    const silentBrain: CatBrain = {
+    const silentBrain: AgentBrain = {
       mode: "mock",
-      async think(ctx): Promise<CatTurn[]> {
+      async think(ctx): Promise<AgentTurn[]> {
         // 巡查轮一律沉默；其他轮正常说话
         if (ctx.trigger.kind === "proactive") return [{ kind: "silence", reason: "没我什么事" }];
         return [{ kind: "message", text: "我在做活" }];
@@ -135,15 +135,15 @@ describe("主动巡查", () => {
 
   test("巡查轮不能推进阶段（handoff 被忽略）", async () => {
     const studio = new Studio({ cats: CATS, mode: "mock" });
-    const pushingBrain: CatBrain = {
+    const pushingBrain: AgentBrain = {
       mode: "mock",
-      async think(ctx): Promise<CatTurn[]> {
+      async think(ctx): Promise<AgentTurn[]> {
         if (ctx.trigger.kind === "proactive") {
           return [
             { kind: "message", text: "我提一句" },
             {
               kind: "handoff",
-              to: "jinjianceng",
+              to: "chenshi",
               card: { what: "越权交接", why: "x", tradeoff: "x", openQuestions: [], nextAction: "x" },
             },
           ];
@@ -236,7 +236,7 @@ describe("stall 误报防护", () => {
       });
       // 造一条"仍在进行"的模型调用
       const inflight = studio.startLlmCall({
-        catId: "jinjianceng",
+        catId: "chenshi",
         model: "slow-model",
         engine: "api",
         taskId: task.id,
@@ -389,7 +389,7 @@ describe("stall 判定：四种「在忙」都不该报卡住", () => {
       driver.submit({ type: "task_created", roomId: "room_cafe", taskId: task.id });
       await driver.whenIdle();
       const call = studio.addToolCall({
-        catId: "jinjianceng",
+        catId: "chenshi",
         tool: "run_command",
         args: { cmd: "node", args: ["--test"] },
         label: "跑测试",
@@ -413,7 +413,7 @@ describe("stall 判定：四种「在忙」都不该报卡住", () => {
       driver.submit({ type: "task_created", roomId: "room_cafe", taskId: task.id });
       await driver.whenIdle();
       const call = studio.addToolCall({
-        catId: "jinjianceng",
+        catId: "chenshi",
         tool: "run_command",
         args: { cmd: "node", args: ["--test"] },
         label: "跑测试",
@@ -438,7 +438,7 @@ describe("stall 判定：四种「在忙」都不该报卡住", () => {
       await driver.whenIdle();
 
       const call = studio.addToolCall({
-        catId: "jinjianceng",
+        catId: "chenshi",
         tool: "run_command",
         args: { cmd: "node", args: ["--test"] },
         label: "跑测试",

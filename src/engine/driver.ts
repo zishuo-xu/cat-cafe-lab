@@ -3,19 +3,19 @@
  *
  * 职责边界：
  *   - driver 只负责调度、路由、状态推进、落库；
- *   - 台词全部来自注入的 CatBrain（mock / llm），driver 不写死任何剧情文本。
+ *   - 台词全部来自注入的 AgentBrain（mock / llm），driver 不写死任何剧情文本。
  *
  * 关键约定：
  *   - 外部事件 submit() 不阻塞，进房间串行队列；whenIdle() 等整条链跑完。
  *   - 所有状态改动都走 Studio 的 mutator，不直接改字段。
  *   - 交接 turn 只路由给 handoff.to；用户消息只唤醒 mentions（无 @ 时 owner）。
  *   - handoff.fault === "missed_mention"：卡片 / 消息照写（mentions 仍写 [to]），
- *     但不唤醒接收猫、任务标 stalled；等 nudge 补投递后才进下一阶段。
+ *     但不唤醒接收方、任务标 stalled；等 nudge 补投递后才进下一阶段。
  *   - tool turn：走 studio.addToolCall → sandbox.execute → finishToolCall →
  *     appendMessage(kind:"tool")；不改阶段、不触发 handoff，失败也不抛异常。
  *   - 审批：仅 brain.mode === "llm" 且注入 approvals 时生效；pending → request →
  *     拒绝则不执行（rejected 也回喂），批准后 startToolCall 再执行。
- *   - ReAct：llm 模式下本轮有工具回执时，用 Trigger{kind:"tool_result"} 再问同一只猫，
+ *   - ReAct：llm 模式下本轮有工具回执时，用 Trigger{kind:"tool_result"} 再问同一个成员，
  *     最多 MAX_TOOL_ROUNDS 轮；回喂轮不改 stage。
  */
 
@@ -25,10 +25,10 @@ import type {
   ApprovalGate,
   Artifact,
   BrainReport,
-  Cat,
-  CatBrain,
-  CatId,
-  CatTurn,
+  Member,
+  AgentBrain,
+  MemberId,
+  AgentTurn,
   Driver,
   EngineEvent,
   Handoff,
@@ -63,7 +63,7 @@ import {
 } from "./stages.ts";
 
 const DEFAULT_STALL_MS = 12_000;
-/** 猫「开始打字 → 想好」的基础延迟。 */
+/** 「开始思考 → 出声」的基础延迟。 */
 const THINK_DELAY_MS = 600;
 /** 一个 turn 与下一个 turn 之间的默认间隔。 */
 const TURN_DELAY_MS = 220;
@@ -97,7 +97,7 @@ const MAX_CONSECUTIVE_TOOL_FAILURES = 3;
  */
 const MAX_REVISION_ROUNDS = 3;
 
-type TurnOf<K extends CatTurn["kind"]> = Extract<CatTurn, { kind: K }>;
+type TurnOf<K extends AgentTurn["kind"]> = Extract<AgentTurn, { kind: K }>;
 type HandoffTurn = TurnOf<"handoff">;
 type ToolTurn = TurnOf<"tool">;
 
@@ -266,10 +266,10 @@ type WakePurpose =
   | "nudge"
   | "chat";
 
-/** 一次待执行的「让某只猫想一轮」。 */
+/** 一次待执行的「让某个成员想一轮」。 */
 interface Wake {
   roomId: RoomId;
-  catId: CatId;
+  catId: MemberId;
   taskId?: TaskId;
   purpose: WakePurpose;
   trigger: Trigger;
@@ -278,8 +278,8 @@ interface Wake {
 /** 被漏 @ 卡住、等待 nudge 补投递的交接。 */
 interface MissedDelivery {
   handoffId: string;
-  from: CatId;
-  to: CatId;
+  from: MemberId;
+  to: MemberId;
   card: HandoffCard;
   targetStage: TaskStage;
   text?: string;
@@ -305,7 +305,7 @@ interface TaskRuntime {
 interface ReviewApplied {
   verdict: ReviewVerdict;
   findings: ReviewFinding[];
-  mentions: CatId[];
+  mentions: MemberId[];
   text: string;
   title: string;
 }
@@ -320,7 +320,7 @@ interface AppliedTurns {
 
 export function createDriver(deps: {
   studio: Studio;
-  brain: CatBrain;
+  brain: AgentBrain;
   wait?: (ms: number) => Promise<void>;
   stallMs?: number;
   /** 沙盒工具执行器；不传则 tool turn 只留说明消息（降级）。 */
@@ -436,7 +436,7 @@ export function createDriver(deps: {
         if (!room) return;
 
         // 房间里有活跃任务时，用户直接说话会被当成"对当前任务的补充"，
-        // 但实测这会让两条需求的内容混在一起，猫分不清在做什么。
+        // 但实测这会让两条需求的内容混在一起，成员分不清在做什么。
         // 所以：先明确告知，再决定是否照常放行（用户坚持要说话时不拦）。
         const activeTask = activeTaskIn(event.roomId);
         if (activeTask && !event.force) {
@@ -492,14 +492,14 @@ export function createDriver(deps: {
         }
 
         if (event.action === "close") {
-          studio.closeTaskWithReason(task.id, event.note?.trim() || "铲屎官选择收尾");
+          studio.closeTaskWithReason(task.id, event.note?.trim() || "负责人选择收尾");
           clearStall(task.id);
           return;
         }
 
         if (event.action === "pivot") {
-          // 换方案：解除卡住，把「换方案」作为一次明确的新指令交给主理猫，
-          // 由它重新拆活（必要时换一只猫 / 换一种工具策略）。
+          // 换方案：解除卡住，把「换方案」作为一次明确的新指令交给架构师，
+          // 由它重新拆活（必要时换一个成员 / 换一种工具策略）。
           if (task.status === "stalled") studio.setTaskStatus(task.id, "active");
           clearStall(task.id);
           const note = event.note?.trim();
@@ -571,7 +571,7 @@ export function createDriver(deps: {
     }
   }
 
-  // ── 处理一只猫的一轮 ──────────────────────────────────
+  // ── 处理一个成员的一轮 ──────────────────────────────────
 
   async function processWake(wake: Wake): Promise<void> {
     const room = studio.getRoom(wake.roomId);
@@ -599,7 +599,7 @@ export function createDriver(deps: {
       // 工具轮本身不推进 stage；回喂轮里的 handoff/review/decision 会在循环结束后
       // 由 afterTurns 统一按正常 turn 处理。
       for (;;) {
-        let turns: CatTurn[] = [];
+        let turns: AgentTurn[] = [];
         try {
           await wait(THINK_DELAY_MS);
           const call = studio.startLlmCall({
@@ -664,7 +664,7 @@ export function createDriver(deps: {
           consecutiveFailures >= MAX_CONSECUTIVE_TOOL_FAILURES
         ) {
           console.warn(
-            `[engine] 工具连续失败 ${consecutiveFailures} 次（猫=${cat.id}），停止回喂，让模型基于已有信息收尾`,
+            `[engine] 工具连续失败 ${consecutiveFailures} 次（成员=${cat.id}），停止回喂，让模型基于已有信息收尾`,
           );
         }
         if (!canReact) break;
@@ -685,13 +685,13 @@ export function createDriver(deps: {
     }
   }
 
-  // ── 把 CatTurn[] 落库 ─────────────────────────────────
+  // ── 把 AgentTurn[] 落库 ─────────────────────────────────
 
   async function applyTurns(
     room: Room,
-    cat: Cat,
+    cat: Member,
     task: Task | null,
-    turns: readonly CatTurn[],
+    turns: readonly AgentTurn[],
   ): Promise<AppliedTurns> {
     const applied: AppliedTurns = {
       handoffs: [],
@@ -933,7 +933,7 @@ export function createDriver(deps: {
 
   async function runToolTurn(
     room: Room,
-    cat: Cat,
+    cat: Member,
     task: Task | null,
     turn: ToolTurn,
   ): Promise<ToolRunResult | null> {
@@ -970,7 +970,7 @@ export function createDriver(deps: {
     const definition = tools?.get(turn.tool);
     const label = toolLabelFor(turn, definition);
 
-    // 3) 每猫权限：未授权工具不执行，error 记账并回喂给模型，流程继续。
+    // 3) 按成员权限：未授权工具不执行，error 记账并回喂给模型，流程继续。
     if (!toolAllowed(cat, turn.tool)) {
       const denied: ToolResult = {
         status: "error",
@@ -990,7 +990,7 @@ export function createDriver(deps: {
 
     const approval = approvalFor(turn.tool);
 
-    // 4a) 模型发起 + 命中审批策略：先挂 pending，等铲屎官决定。
+    // 4a) 模型发起 + 命中审批策略：先挂 pending，等负责人决定。
     if (approval) {
       const call = studio.addToolCall({
         catId: cat.id,
@@ -1028,7 +1028,7 @@ export function createDriver(deps: {
       if (!approved) {
         const rejected: ToolResult = {
           status: "rejected",
-          output: "铲屎官拒绝了这次执行",
+          output: "负责人拒绝了这次执行",
         };
         studio.finishToolCall(call.id, rejected);
         appendToolMessage(
@@ -1039,7 +1039,7 @@ export function createDriver(deps: {
           call.id,
           rejected,
           definition,
-          "铲屎官拒绝了这次执行，我换个办法。",
+          "负责人拒绝了这次执行，我换个办法。",
         );
         return toRunResult(call.id, turn.tool, rejected);
       }
@@ -1068,7 +1068,7 @@ export function createDriver(deps: {
 
   function appendToolMessage(
     room: Room,
-    cat: Cat,
+    cat: Member,
     task: Task | null,
     turn: ToolTurn,
     callId: string,
@@ -1090,13 +1090,13 @@ export function createDriver(deps: {
   // ── 一轮结束后的路由 / 状态推进 ───────────────────────
 
   /**
-   * 任务收尾时，给「参与过的每只猫」各记一条经历。
+   * 任务收尾时，给「参与过的每个成员」各记一条经历。
    *
-   * 参与判定：在该任务里发过消息 / 产物 / 交接 / 评审的猫。
-   * 摘要是从这只猫自己的产出里提取，不编造。
+   * 参与判定：在该任务里发过消息 / 产物 / 交接 / 评审的成员。
+   * 摘要是从这个成员自己的产出里提取，不编造。
    */
   function recordTaskEpisodes(task: Task, outcome: "done" | "abandoned"): void {
-    const involved = new Set<CatId>();
+    const involved = new Set<MemberId>();
     for (const message of studio.state.messages) {
       if (message.taskId === task.id && message.author !== "user" && message.author !== "system") {
         involved.add(message.author);
@@ -1134,7 +1134,7 @@ export function createDriver(deps: {
   function afterTurns(
     wake: Wake,
     room: Room,
-    cat: Cat,
+    cat: Member,
     task: Task,
     runtime: TaskRuntime,
     applied: AppliedTurns,
@@ -1165,7 +1165,7 @@ export function createDriver(deps: {
 
       case "planning": {
         // 交接已在 routeHandoffs 里投递；没交接就停在 planning，
-        // 由 stall watchdog 标「卡住了」，等铲屎官介入。
+        // 由 stall watchdog 标「卡住了」，等负责人介入。
         return;
       }
 
@@ -1199,7 +1199,7 @@ export function createDriver(deps: {
           roomId: room.id,
           taskId: task.id,
           text: applied.review.text,
-          fromCatId: cat.id,
+          fromMemberId: cat.id,
           review: {
             verdict: applied.review.verdict,
             findings: applied.review.findings,
@@ -1219,7 +1219,7 @@ export function createDriver(deps: {
               tags: ["review-loop", "process"],
               sourceTaskId: task.id,
             });
-            // 收尾不是"结束"，是"交货"。告诉铲屎官：拿到了什么、还差什么。
+            // 收尾不是"结束"，是"交货"。告诉负责人：拿到了什么、还差什么。
             const delivery = studio.deliverySummary(task.id);
             const artifactLine =
               delivery.artifacts.length > 0
@@ -1285,7 +1285,7 @@ export function createDriver(deps: {
 
       case "nudge": {
         // 催一下 = 恢复：先解除 stalled，architect 已说过恢复台词；
-        // 若有漏 @ 的交接，再补投递给接收猫。
+        // 若有漏 @ 的交接，再补投递给接收方。
         if (task.status === "stalled") studio.setTaskStatus(task.id, "active");
         if (!runtime.missed) return;
         const missed = runtime.missed;
@@ -1341,7 +1341,7 @@ export function createDriver(deps: {
             kind: "handoff",
             roomId: task.roomId,
             taskId: task.id,
-            fromCatId: handoff.from,
+            fromMemberId: handoff.from,
             handoff: turn.card,
             ...(turn.text ? { text: turn.text } : {}),
           },
@@ -1367,7 +1367,7 @@ export function createDriver(deps: {
           kind: "handoff",
           roomId: task.roomId,
           taskId: task.id,
-          fromCatId: handoff.from,
+          fromMemberId: handoff.from,
           handoff: turn.card,
           ...(turn.text ? { text: turn.text } : {}),
         },
@@ -1423,7 +1423,7 @@ export function createDriver(deps: {
       kind: "handoff",
       roomId: task.roomId,
       taskId: task.id,
-      fromCatId: missed.from,
+      fromMemberId: missed.from,
       handoff: missed.card,
       ...(missed.text ? { text: missed.text } : {}),
     };
@@ -1459,15 +1459,15 @@ export function createDriver(deps: {
     if (artifact) {
       trigger.text = artifact.title;
       trigger.artifact = artifact;
-      trigger.fromCatId = artifact.author;
+      trigger.fromMemberId = artifact.author;
     }
     return trigger;
   }
 
   // ── 阶段 / step / owner ───────────────────────────────
 
-  function beginStage(task: Task, stage: TaskStage, owner: CatId): void {
-    // 任务可能已经被「重置猫咖」删掉，而队列里还残留着旧 wake：
+  function beginStage(task: Task, stage: TaskStage, owner: MemberId): void {
+    // 任务可能已经被「重置交付台」删掉，而队列里还残留着旧 wake：
     // 这种情况安静跳过，不要让一个已删除的任务把整条队列打断。
     if (!studio.getTask(task.id)) return;
     if (task.stage === stage) return;
@@ -1486,20 +1486,20 @@ export function createDriver(deps: {
   // ── 主动巡查 ──────────────────────────────────────────
 
   /**
-   * 主动协作：让「没被 @ 的猫」也有机会说话。
+   * 主动协作：让「没被 @ 的成员」也有机会说话。
    *
    * 设计要点（为什么不是简单的定时器）：
-   * 1. 只在有活跃任务的房间里巡查——房间里没活时让猫说话等于噪音；
-   * 2. 每轮只挑一只猫，且**不是当前 owner**（owner 本来就在动）；
-   * 3. 给猫一个明确的「你可以不说话」的出口（silence turn），
+   * 1. 只在有活跃任务的房间里巡查——房间里没活时让成员说话等于噪音；
+   * 2. 每轮只挑一个成员，且**不是当前 owner**（owner 本来就在动）；
+   * 3. 给成员一个明确的「你可以不说话」的出口（silence turn），
    *    这样"沉默"也是可审计的决策，而不是模型随口附和；
    * 4. 巡查产生的消息必须带 trigger.kind = "proactive"，便于前端和 trace 区分。
    */
   let patrolTimer: ReturnType<typeof setInterval> | null = null;
   let patrolIntervalMs = 60_000;
   let patrolling = false;
-  /** 每只猫上次巡查的时间，避免同一只猫连续被点名。 */
-  const lastPatrolAt = new Map<CatId, number>();
+  /** 每个成员上次巡查的时间，避免同一个成员连续被点名。 */
+  const lastPatrolAt = new Map<MemberId, number>();
 
   function setProactive(enabled: boolean, intervalMs?: number): void {
     if (intervalMs && intervalMs > 0) patrolIntervalMs = intervalMs;
@@ -1514,14 +1514,14 @@ export function createDriver(deps: {
     patrolTimer.unref?.();
   }
 
-  /** 手动触发一次巡查（测试 / 调试 / 「让猫们看看现在有什么事」按钮）。 */
+  /** 手动触发一次巡查（测试 / 调试 / 「让团队看看现在有什么事」按钮）。 */
   async function patrol(): Promise<void> {
     // 只负责把巡查任务排进队列，不等待执行完成：
     // 任务还在跑时，巡查本来就该排在它后面，等它跑完 API 才返回会让前端以为卡死。
     await patrolOnce();
   }
 
-  /** 挑一个「有活跃任务的房间 + 一只最该说话的猫」，让它判断要不要插话。 */
+  /** 挑一个「有活跃任务的房间 + 一个最该说话的成员」，让它判断要不要插话。 */
   async function patrolOnce(): Promise<void> {
     if (patrolling) return;
     patrolling = true;
@@ -1558,8 +1558,8 @@ export function createDriver(deps: {
     }
   }
 
-  /** 挑巡查猫：非 owner、最近没巡查过、优先 reviewer（它有质疑职责）。 */
-  function pickPatrolCat(task: Task, room: Room): Cat | null {
+  /** 挑巡查成员：非 owner、最近没巡查过、优先 reviewer（它有质疑职责）。 */
+  function pickPatrolCat(task: Task, room: Room): Member | null {
     const now = Date.now();
     const candidates = studio.state.cats
       .filter((cat) => room.catIds.includes(cat.id))
@@ -1567,7 +1567,7 @@ export function createDriver(deps: {
       .filter((cat) => now - (lastPatrolAt.get(cat.id) ?? 0) >= patrolIntervalMs)
       // reviewer 优先：它的职责就是挑问题
       .sort((a, b) => {
-        const rank = (cat: Cat): number => (cat.role === "reviewer" ? 0 : cat.role === "architect" ? 1 : 2);
+        const rank = (cat: Member): number => (cat.role === "reviewer" ? 0 : cat.role === "architect" ? 1 : 2);
         return rank(a) - rank(b);
       });
     return candidates[0] ?? null;
@@ -1581,7 +1581,7 @@ export function createDriver(deps: {
    * 返回忙碌原因；返回 null 表示确实没有任何进展 → 可以判卡住。
    *
    * 为什么需要这么多条件：真实用户场景里，"慢"的形态很多——
-   * 模型在想、工具在跑、等铲屎官批、巡查在排队、别的任务占着房间队列。
+   * 模型在想、工具在跑、等负责人批、巡查在排队、别的任务占着房间队列。
    * 少排除任何一条，用户都会看到假的"卡住了"并去干预正常流程。
    */
   function busyReason(taskId: TaskId, roomId: RoomId): string | null {
@@ -1600,7 +1600,7 @@ export function createDriver(deps: {
     );
     if (toolRunning) return "工具执行中";
 
-    // 4) 有工具在等铲屎官批准（人可能在开会，不该算猫卡住）。
+    // 4) 有工具在等负责人批准（人可能在开会，不该算成员卡住）。
     const toolPending = studio.state.toolCalls.some(
       (call) =>
         call.taskId === taskId &&
@@ -1679,11 +1679,11 @@ export function createDriver(deps: {
   }
 
   function buildContext(
-    cat: Cat,
+    cat: Member,
     room: Room,
     task: Task | null,
     trigger: Trigger,
-    onDelta?: (update: { catId: CatId; roomId: RoomId; text: string }) => void,
+    onDelta?: (update: { catId: MemberId; roomId: RoomId; text: string }) => void,
   ): TurnContext {
     return {
       cat,
@@ -1709,24 +1709,24 @@ export function createDriver(deps: {
   }
 
   /** 可用工具：注册表全集按 cat.tools 过滤（undefined = 全部，[] = 一个都没有）。 */
-  function availableToolsFor(cat: Cat): ToolDefinition[] {
+  function availableToolsFor(cat: Member): ToolDefinition[] {
     const all = tools?.list() ?? [];
     if (!cat.tools) return all;
     const allowed = new Set(cat.tools);
     return all.filter((definition) => allowed.has(definition.name));
   }
 
-  /** 每猫工具权限：undefined = 全部允许；数组（含空数组）= 白名单。 */
-  function toolAllowed(cat: Cat, tool: ToolName): boolean {
+  /** 按成员工具权限：undefined = 全部允许；数组（含空数组）= 白名单。 */
+  function toolAllowed(cat: Member, tool: ToolName): boolean {
     if (!cat.tools) return true;
     return cat.tools.includes(tool);
   }
 
   /**
-   * 每猫技能包：内置技能表 skillsForCat() 为主；
+   * 按成员技能包：内置技能表 skillsForCat() 为主；
    * 注入了 resolveSkill 时，再用它补 cat.skills 里的自定义技能。
    */
-  function resolveSkillsForCat(cat: Cat): Skill[] {
+  function resolveSkillsForCat(cat: Member): Skill[] {
     const builtin = skillsForCat(cat);
     if (!resolveSkill) return builtin;
     const skills = [...builtin];
@@ -1764,8 +1764,8 @@ export function createDriver(deps: {
     return null;
   }
 
-  function roomCats(room: Room): Cat[] {
-    const cats: Cat[] = [];
+  function roomCats(room: Room): Member[] {
+    const cats: Member[] = [];
     for (const id of room.catIds) {
       const cat = studio.getCat(id);
       if (cat) cats.push(cat);

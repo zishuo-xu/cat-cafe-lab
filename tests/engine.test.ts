@@ -10,9 +10,9 @@ import { CATS, SCENARIOS } from "../src/agents/personas.ts";
 import type {
   ApprovalGate,
   BrainMode,
-  CatBrain,
-  CatId,
-  CatTurn,
+  AgentBrain,
+  MemberId,
+  AgentTurn,
   HandoffCard,
   SandboxRunner,
   Skill,
@@ -50,13 +50,13 @@ interface CallRecord extends TurnContext {
   stageAtCall: TaskStage | null;
 }
 
-interface ScriptedBrain extends CatBrain {
+interface ScriptedBrain extends AgentBrain {
   calls: CallRecord[];
-  callsFor(catId: CatId, stage?: TaskStage): CallRecord[];
+  callsFor(catId: MemberId, stage?: TaskStage): CallRecord[];
 }
 
 function scriptedBrain(
-  handler: (ctx: TurnContext) => CatTurn[],
+  handler: (ctx: TurnContext) => AgentTurn[],
   mode: BrainMode = "mock",
 ): ScriptedBrain {
   const calls: CallRecord[] = [];
@@ -81,7 +81,7 @@ function makeStudio(): Studio {
 
 /** 构造带猫档案覆盖（tools / skills）的 Studio，覆盖 tools: undefined 表示「全部允许」。 */
 function makeStudioWith(
-  overrides: Record<CatId, { tools?: string[]; skills?: string[] }>,
+  overrides: Record<MemberId, { tools?: string[]; skills?: string[] }>,
 ): Studio {
   return new Studio({
     cats: CATS.map((cat) => ({ ...cat, ...(overrides[cat.id] ?? {}) })),
@@ -91,7 +91,7 @@ function makeStudioWith(
 
 function makeDriver(
   studio: Studio,
-  brain: CatBrain,
+  brain: AgentBrain,
   extra: {
     sandbox?: SandboxRunner;
     toolsEnabled?: () => boolean;
@@ -178,7 +178,7 @@ interface FakeApprovalRequest {
   mode: ToolApprovalMode;
   tool: ToolName;
   label: string;
-  catId: CatId;
+  catId: MemberId;
 }
 
 interface FakeApprovals extends ApprovalGate {
@@ -221,7 +221,7 @@ function card(what: string): HandoffCard {
   };
 }
 
-const message = (text: string, mentions?: CatId[]): CatTurn => ({
+const message = (text: string, mentions?: MemberId[]): AgentTurn => ({
   kind: "message",
   text,
   ...(mentions ? { mentions } : {}),
@@ -238,7 +238,7 @@ function demoBrain(options: { fault?: boolean } = {}): ScriptedBrain {
     const stage = ctx.task?.stage ?? null;
     const cat = ctx.cat.id;
 
-    if (cat === "xianxian") {
+    if (cat === "linzhiyuan") {
       if (ctx.trigger.kind === "nudge") {
         return [message("我查一下——刚才那次交接没递到，我补一下。")];
       }
@@ -249,15 +249,15 @@ function demoBrain(options: { fault?: boolean } = {}): ScriptedBrain {
         return [
           {
             kind: "handoff",
-            to: "shuoshuo",
+            to: "zhoushuo",
             card: card("设计勾选框状态与文案"),
-            text: "@烁烁 交互交给你。",
+            text: "@周烁 交互交给你。",
           },
           {
             kind: "handoff",
-            to: "jinjianceng",
+            to: "chenshi",
             card: card("实现后端 remember-me token"),
-            text: "@金渐层 后端交给你。",
+            text: "@陈实 后端交给你。",
           },
         ];
       }
@@ -290,7 +290,7 @@ function demoBrain(options: { fault?: boolean } = {}): ScriptedBrain {
       return [];
     }
 
-    if (cat === "shuoshuo" && stage === "working") {
+    if (cat === "zhoushuo" && stage === "working") {
       return [
         {
           kind: "artifact",
@@ -300,13 +300,13 @@ function demoBrain(options: { fault?: boolean } = {}): ScriptedBrain {
             body: "三态：未勾选 / 勾选 / 禁用。",
           },
           text: "交互稿在这，勾选框得会呼吸。",
-          mentions: ["xianxian"],
+          mentions: ["linzhiyuan"],
         },
       ];
     }
 
-    if (cat === "jinjianceng" && stage === "working") {
-      const turns: CatTurn[] = [
+    if (cat === "chenshi" && stage === "working") {
+      const turns: AgentTurn[] = [
         {
           kind: "artifact",
           artifact: { kind: "patch", title: "remember-me token v1", body: "新增 token 字段与校验。" },
@@ -314,16 +314,16 @@ function demoBrain(options: { fault?: boolean } = {}): ScriptedBrain {
         },
         {
           kind: "handoff",
-          to: "yanyan",
+          to: "shenyan",
           card: card("review v1 实现"),
-          text: "@砚砚 麻烦看下 v1。",
+          text: "@沈砚 麻烦看下 v1。",
           ...(options.fault ? { fault: "missed_mention" as const } : {}),
         },
       ];
       return turns;
     }
 
-    if (cat === "jinjianceng" && stage === "revising") {
+    if (cat === "chenshi" && stage === "revising") {
       return [
         {
           kind: "artifact",
@@ -336,14 +336,14 @@ function demoBrain(options: { fault?: boolean } = {}): ScriptedBrain {
         },
         {
           kind: "handoff",
-          to: "yanyan",
+          to: "shenyan",
           card: card("review v2 实现"),
-          text: "@砚砚 再过一遍。",
+          text: "@沈砚 再过一遍。",
         },
       ];
     }
 
-    if (cat === "yanyan" && stage === "reviewing") {
+    if (cat === "shenyan" && stage === "reviewing") {
       if (reviewCalls === 0) {
         reviewCalls += 1;
         return [
@@ -360,7 +360,7 @@ function demoBrain(options: { fault?: boolean } = {}): ScriptedBrain {
               },
             ],
             text: "第 1 条是 blocker：token 没设置过期时间；第 2 条 minor。",
-            mentions: ["jinjianceng"],
+            mentions: ["chenshi"],
           },
           {
             kind: "memory",
@@ -382,7 +382,7 @@ function demoBrain(options: { fault?: boolean } = {}): ScriptedBrain {
           title: "v2 review",
           findings: [],
           text: "v2 通过。",
-          mentions: ["jinjianceng"],
+          mentions: ["chenshi"],
         },
       ];
     }
@@ -393,15 +393,15 @@ function demoBrain(options: { fault?: boolean } = {}): ScriptedBrain {
 
 // ───────────────────────── 1. task_created 分发 ─────────────────────────
 
-test("task_created：architect 先说话，planning 把交接分发给烁烁与金渐层", async () => {
+test("task_created：architect 先说话，planning 把交接分发给周烁与陈实", async () => {
   const studio = makeStudio();
   const brain = scriptedBrain((ctx) => {
     const stage = ctx.task?.stage ?? null;
-    if (ctx.cat.id === "xianxian" && stage === "intake") return [message("我先接住这个需求。")];
-    if (ctx.cat.id === "xianxian" && stage === "planning") {
+    if (ctx.cat.id === "linzhiyuan" && stage === "intake") return [message("我先接住这个需求。")];
+    if (ctx.cat.id === "linzhiyuan" && stage === "planning") {
       return [
-        { kind: "handoff", to: "shuoshuo", card: card("设计勾选框"), text: "@烁烁 设计交给你。" },
-        { kind: "handoff", to: "jinjianceng", card: card("实现 token"), text: "@金渐层 实现交给你。" },
+        { kind: "handoff", to: "zhoushuo", card: card("设计勾选框"), text: "@周烁 设计交给你。" },
+        { kind: "handoff", to: "chenshi", card: card("实现 token"), text: "@陈实 实现交给你。" },
       ];
     }
     return [];
@@ -414,7 +414,7 @@ test("task_created：architect 先说话，planning 把交接分发给烁烁与�
 
   const intakeCall = brain.calls[0];
   assert.ok(intakeCall);
-  assert.equal(intakeCall.cat.id, "xianxian");
+  assert.equal(intakeCall.cat.id, "linzhiyuan");
   assert.equal(intakeCall.stageAtCall, "intake");
   assert.equal(intakeCall.trigger.kind, "task_created");
   assert.equal(intakeCall.scenario?.id, SCENARIO_ID);
@@ -422,12 +422,12 @@ test("task_created：architect 先说话，planning 把交接分发给烁烁与�
   const messages = taskMessages(studio, task.id);
   const first = messages[0];
   assert.ok(first);
-  assert.equal(first.author, "xianxian");
+  assert.equal(first.author, "linzhiyuan");
   assert.equal(first.kind, "chat");
 
   const handoffs = studio.state.handoffs.filter((h) => h.taskId === task.id);
-  assert.deepEqual(handoffs.map((h) => h.from), ["xianxian", "xianxian"]);
-  assert.deepEqual(handoffs.map((h) => h.to), ["shuoshuo", "jinjianceng"]);
+  assert.deepEqual(handoffs.map((h) => h.from), ["linzhiyuan", "linzhiyuan"]);
+  assert.deepEqual(handoffs.map((h) => h.to), ["zhoushuo", "chenshi"]);
   for (const handoff of handoffs) {
     assert.ok(handoff.card.what.length > 0);
     assert.ok(handoff.card.why.length > 0);
@@ -440,24 +440,24 @@ test("task_created：architect 先说话，planning 把交接分发给烁烁与�
   assert.equal(handoffMessages.length, 2);
   assert.deepEqual(
     handoffMessages.map((m) => m.mentions),
-    [["shuoshuo"], ["jinjianceng"]],
+    [["zhoushuo"], ["chenshi"]],
   );
   for (const m of handoffMessages) assert.ok(m.handoffId);
 
   // 交接只唤醒接收者。
-  assert.equal(brain.callsFor("shuoshuo", "working").length, 1);
-  assert.equal(brain.callsFor("jinjianceng", "working").length, 1);
-  assert.equal(brain.callsFor("shuoshuo", "working")[0]?.trigger.kind, "handoff");
-  assert.equal(brain.callsFor("jinjianceng", "working")[0]?.trigger.kind, "handoff");
+  assert.equal(brain.callsFor("zhoushuo", "working").length, 1);
+  assert.equal(brain.callsFor("chenshi", "working").length, 1);
+  assert.equal(brain.callsFor("zhoushuo", "working")[0]?.trigger.kind, "handoff");
+  assert.equal(brain.callsFor("chenshi", "working")[0]?.trigger.kind, "handoff");
 
-  // working 全部跑完后自动进入 reviewing，只有砚砚被唤醒。
-  const reviewerCalls = brain.callsFor("yanyan");
+  // working 全部跑完后自动进入 reviewing，只有沈砚被唤醒。
+  const reviewerCalls = brain.callsFor("shenyan");
   assert.equal(reviewerCalls.length, 1);
   assert.equal(reviewerCalls[0]?.stageAtCall, "reviewing");
   assert.equal(reviewerCalls[0]?.trigger.kind, "artifact");
 
   assert.equal(task.stage, "reviewing");
-  assert.equal(task.owner, "yanyan");
+  assert.equal(task.owner, "shenyan");
   assert.deepEqual(
     task.steps.map((step) => `${step.stage}:${step.status}`),
     ["intake:done", "planning:done", "working:done", "reviewing:active"],
@@ -472,46 +472,46 @@ test("@mention：只唤醒被点名的猫；无 @ 时回落到 task owner / arch
   const brain = scriptedBrain((ctx) => [message(`${ctx.cat.name}在。`, ctx.trigger.mentions)]);
   const driver = makeDriver(studio, brain);
 
-  // 没有任务 + 显式 @：只有烁烁醒。
+  // 没有任务 + 显式 @：只有周烁醒。
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@烁烁 顺便看看移动端",
-    mentions: ["shuoshuo"],
+    text: "@周烁 顺便看看移动端",
+    mentions: ["zhoushuo"],
   });
   await driver.whenIdle();
   assert.deepEqual(
     brain.calls.map((call) => call.cat.id),
-    ["shuoshuo"],
+    ["zhoushuo"],
   );
-  assert.equal(studio.state.messages.at(-1)?.author, "shuoshuo");
+  assert.equal(studio.state.messages.at(-1)?.author, "zhoushuo");
 
-  // 没有任务 + 没有 @：宪宪作为主理猫接话。
+  // 没有任务 + 没有 @：林知远作为主理猫接话。
   driver.submit({ type: "user_message", roomId: ROOM_ID, text: "大家看看", mentions: [] });
   await driver.whenIdle();
   assert.deepEqual(
     brain.calls.map((call) => call.cat.id),
-    ["shuoshuo", "xianxian"],
+    ["zhoushuo", "linzhiyuan"],
   );
 
   // 有任务 + 没有 @：唤醒 task.owner。
   const task = newTask(studio);
-  studio.updateTaskStage(task.id, "working", "jinjianceng");
+  studio.updateTaskStage(task.id, "working", "chenshi");
   driver.submit({ type: "user_message", roomId: ROOM_ID, text: "进度怎么样", mentions: [] });
   await driver.whenIdle();
-  assert.equal(brain.calls.at(-1)?.cat.id, "jinjianceng");
+  assert.equal(brain.calls.at(-1)?.cat.id, "chenshi");
   assert.equal(brain.calls.at(-1)?.task?.id, task.id);
 
-  // @ 优先于 owner：owner 是金渐层，但 @ 的是砚砚。
+  // @ 优先于 owner：owner 是陈实，但 @ 的是沈砚。
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@砚砚 看下这个",
-    mentions: ["yanyan"],
+    text: "@沈砚 看下这个",
+    mentions: ["shenyan"],
   });
   await driver.whenIdle();
-  assert.equal(brain.calls.at(-1)?.cat.id, "yanyan");
-  assert.equal(brain.calls.filter((call) => call.cat.id === "jinjianceng").length, 1);
+  assert.equal(brain.calls.at(-1)?.cat.id, "shenyan");
+  assert.equal(brain.calls.filter((call) => call.cat.id === "chenshi").length, 1);
   assert.equal(studio.state.typing[ROOM_ID], null);
 });
 
@@ -529,24 +529,24 @@ test("missed_mention：写卡不唤醒、任务 stalled；nudge 补投递并恢�
   // 被漏 @ 卡住：停在 planning，没人自动推进到 reviewing。
   assert.equal(task.status, "stalled");
   assert.equal(task.stage, "working");
-  assert.equal(task.owner, "shuoshuo");
+  assert.equal(task.owner, "zhoushuo");
 
   const faulted = studio.state.handoffs
     .filter((handoff) => handoff.taskId === task.id)
-    .find((handoff) => handoff.to === "yanyan");
+    .find((handoff) => handoff.to === "shenyan");
   assert.ok(faulted);
   const faultedMessage = studio.state.messages.find((m) => m.handoffId === faulted.id);
   assert.ok(faultedMessage);
   assert.equal(faultedMessage.kind, "handoff");
-  // 本意是给它：mentions 仍写 [yanyan]，但没唤醒。
-  assert.deepEqual(faultedMessage.mentions, ["yanyan"]);
+  // 本意是给它：mentions 仍写 [shenyan]，但没唤醒。
+  assert.deepEqual(faultedMessage.mentions, ["shenyan"]);
 
-  assert.equal(brain.callsFor("yanyan").length, 0);
+  assert.equal(brain.callsFor("shenyan").length, 0);
   assert.equal(
     task.steps.some((step) => step.stage === "reviewing"),
     false,
   );
-  assert.equal(brain.callsFor("jinjianceng", "working").length, 1);
+  assert.equal(brain.callsFor("chenshi", "working").length, 1);
 
   // 催一下：architect 先恢复，再补投递。
   driver.submit({ type: "nudge", taskId: task.id });
@@ -554,20 +554,20 @@ test("missed_mention：写卡不唤醒、任务 stalled；nudge 补投递并恢�
 
   assert.equal(task.status, "done");
   assert.equal(task.stage, "done");
-  assert.equal(task.owner, "xianxian");
+  assert.equal(task.owner, "linzhiyuan");
   assert.equal(typeof task.doneAt, "number");
 
   const nudgeCall = brain.calls.find((call) => call.trigger.kind === "nudge");
   assert.ok(nudgeCall);
-  assert.equal(nudgeCall.cat.id, "xianxian");
+  assert.equal(nudgeCall.cat.id, "linzhiyuan");
 
-  // 补投递：砚砚拿着原来那张卡进来，然后正常 review → revise → approve。
-  const firstReview = brain.callsFor("yanyan")[0];
+  // 补投递：沈砚拿着原来那张卡进来，然后正常 review → revise → approve。
+  const firstReview = brain.callsFor("shenyan")[0];
   assert.ok(firstReview);
   assert.equal(firstReview.trigger.kind, "handoff");
   assert.equal(firstReview.trigger.handoff?.what, "review v1 实现");
-  assert.equal(brain.callsFor("yanyan").length, 2);
-  assert.equal(brain.callsFor("jinjianceng", "revising").length, 1);
+  assert.equal(brain.callsFor("shenyan").length, 2);
+  assert.equal(brain.callsFor("chenshi", "revising").length, 1);
 
   assert.equal(task.steps.filter((step) => step.stage === "revising").length, 1);
   assert.equal(task.steps.filter((step) => step.stage === "reviewing").length, 2);
@@ -588,17 +588,17 @@ test("review request_changes 触发 revising 并回到 implementer，v2 之后�
   assert.deepEqual(
     task.steps.map((step) => `${step.stage}:${step.owner}:${step.status}`),
     [
-      "intake:xianxian:done",
-      "planning:xianxian:done",
-      "working:shuoshuo:done",
-      "reviewing:yanyan:done",
-      "revising:jinjianceng:done",
-      "reviewing:yanyan:done",
-      "done:xianxian:done",
+      "intake:linzhiyuan:done",
+      "planning:linzhiyuan:done",
+      "working:zhoushuo:done",
+      "reviewing:shenyan:done",
+      "revising:chenshi:done",
+      "reviewing:shenyan:done",
+      "done:linzhiyuan:done",
     ],
   );
 
-  const reviseCall = brain.callsFor("jinjianceng", "revising")[0];
+  const reviseCall = brain.callsFor("chenshi", "revising")[0];
   assert.ok(reviseCall);
   assert.equal(reviseCall.trigger.kind, "review_result");
   assert.equal(reviseCall.trigger.review?.verdict, "request_changes");
@@ -607,7 +607,7 @@ test("review request_changes 触发 revising 并回到 implementer，v2 之后�
     ["blocker", "minor"],
   );
 
-  const reviewCalls = brain.callsFor("yanyan", "reviewing");
+  const reviewCalls = brain.callsFor("shenyan", "reviewing");
   assert.equal(reviewCalls.length, 2);
   assert.equal(reviewCalls[0]?.trigger.kind, "handoff");
   assert.equal(reviewCalls[0]?.trigger.handoff?.what, "review v1 实现");
@@ -631,24 +631,24 @@ test("approve 后由 architect 在 done 阶段落 decision，任务完成", asyn
 
   const doneCall = brain.calls.find((call) => call.stageAtCall === "done");
   assert.ok(doneCall);
-  assert.equal(doneCall.cat.id, "xianxian");
+  assert.equal(doneCall.cat.id, "linzhiyuan");
   assert.equal(doneCall.trigger.kind, "review_result");
   assert.equal(doneCall.trigger.review?.verdict, "approve");
 
   assert.equal(task.status, "done");
   assert.equal(task.stage, "done");
-  assert.equal(task.owner, "xianxian");
+  assert.equal(task.owner, "linzhiyuan");
   assert.equal(typeof task.doneAt, "number");
 
   const decisionArtifact = studio.state.artifacts.find(
     (artifact) => artifact.taskId === task.id && artifact.kind === "decision",
   );
   assert.ok(decisionArtifact);
-  assert.equal(decisionArtifact.author, "xianxian");
+  assert.equal(decisionArtifact.author, "linzhiyuan");
 
   const decisionMessage = taskMessages(studio, task.id).find((m) => m.kind === "decision");
   assert.ok(decisionMessage);
-  assert.equal(decisionMessage.author, "xianxian");
+  assert.equal(decisionMessage.author, "linzhiyuan");
   assert.equal(decisionMessage.artifactId, decisionArtifact.id);
 });
 
@@ -699,7 +699,7 @@ test("落库：review/decision/artifact/memory 与五栏交接卡格式正确", 
   assert.equal(reviewMessages.length, 2);
   for (const m of reviewMessages) {
     assert.ok(m.artifactId);
-    assert.deepEqual(m.mentions, ["jinjianceng"]);
+    assert.deepEqual(m.mentions, ["chenshi"]);
     assert.ok(
       studio.state.artifacts.some(
         (artifact) => artifact.id === m.artifactId && artifact.kind === "review",
@@ -752,11 +752,11 @@ test("同一轮返回多个 review turn 时只取第一个，不会跳过 revise
     const stage = ctx.task?.stage ?? null;
     const cat = ctx.cat.id;
 
-    if (cat === "xianxian" && stage === "intake") return [message("接住。")];
-    if (cat === "xianxian" && stage === "planning") {
-      return [{ kind: "handoff", to: "jinjianceng", card: card("实现"), text: "交给实现。" }];
+    if (cat === "linzhiyuan" && stage === "intake") return [message("接住。")];
+    if (cat === "linzhiyuan" && stage === "planning") {
+      return [{ kind: "handoff", to: "chenshi", card: card("实现"), text: "交给实现。" }];
     }
-    if (cat === "xianxian" && stage === "done") {
+    if (cat === "linzhiyuan" && stage === "done") {
       return [
         {
           kind: "decision",
@@ -766,7 +766,7 @@ test("同一轮返回多个 review turn 时只取第一个，不会跳过 revise
         },
       ];
     }
-    if (cat === "jinjianceng" && stage === "working") {
+    if (cat === "chenshi" && stage === "working") {
       return [
         {
           kind: "artifact",
@@ -775,17 +775,17 @@ test("同一轮返回多个 review turn 时只取第一个，不会跳过 revise
         },
       ];
     }
-    if (cat === "jinjianceng" && stage === "revising") {
+    if (cat === "chenshi" && stage === "revising") {
       return [
         {
           kind: "artifact",
           artifact: { kind: "patch", title: "v2", body: "第二版" },
           text: "v2",
         },
-        { kind: "handoff", to: "yanyan", card: card("review v2"), text: "再过一遍。" },
+        { kind: "handoff", to: "shenyan", card: card("review v2"), text: "再过一遍。" },
       ];
     }
-    if (cat === "yanyan" && stage === "reviewing") {
+    if (cat === "shenyan" && stage === "reviewing") {
       reviewRound += 1;
       if (reviewRound === 1) {
         return [
@@ -795,7 +795,7 @@ test("同一轮返回多个 review turn 时只取第一个，不会跳过 revise
             title: "r1",
             findings: [{ severity: "blocker", title: "问题", detail: "细节" }],
             text: "打回。",
-            mentions: ["jinjianceng"],
+            mentions: ["chenshi"],
           },
           { kind: "review", verdict: "approve", title: "r2", findings: [], text: "通过。" },
         ];
@@ -825,10 +825,10 @@ test("同一轮返回多个 review turn 时只取第一个，不会跳过 revise
 
 test("每房间串行队列：submit 立即返回，多事件也不会让两只猫同时 think", async () => {
   const studio = makeStudio();
-  const calls: CatId[] = [];
+  const calls: MemberId[] = [];
   let active = 0;
   let maxActive = 0;
-  const brain: CatBrain = {
+  const brain: AgentBrain = {
     mode: "mock",
     async think(ctx) {
       active += 1;
@@ -851,28 +851,28 @@ test("每房间串行队列：submit 立即返回，多事件也不会让两只�
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@烁烁 看下",
-    mentions: ["shuoshuo"],
+    text: "@周烁 看下",
+    mentions: ["zhoushuo"],
   });
   // submit 不阻塞：同步返回，此时队列还没开跑。
   assert.deepEqual(calls, []);
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@砚砚 看下",
-    mentions: ["yanyan"],
+    text: "@沈砚 看下",
+    mentions: ["shenyan"],
   });
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@金渐层 看下",
-    mentions: ["jinjianceng"],
+    text: "@陈实 看下",
+    mentions: ["chenshi"],
   });
 
   await driver.whenIdle();
   assert.equal(maxActive, 1);
   // 同房间严格按提交顺序串行。
-  assert.deepEqual(calls, ["shuoshuo", "yanyan", "jinjianceng"]);
+  assert.deepEqual(calls, ["zhoushuo", "shenyan", "chenshi"]);
 });
 
 // ───────────────────────── 9. 场景数据 ─────────────────────────
@@ -899,34 +899,34 @@ test("TurnContext.scenario 来自 SCENARIOS，按 task.scenarioId 注入", async
 // ───────────────────────── 10. mentions 纯函数 ─────────────────────────
 
 test("mentions：@名字 / @id 解析、去重与投递规则", () => {
-  assert.deepEqual(parseMentions("@烁烁 顺便看看移动端，@jinjianceng 也来", CATS), [
-    "shuoshuo",
-    "jinjianceng",
+  assert.deepEqual(parseMentions("@周烁 顺便看看移动端，@chenshi 也来", CATS), [
+    "zhoushuo",
+    "chenshi",
   ]);
-  assert.deepEqual(parseMentions("@宪宪 @宪宪 重复点名", CATS), ["xianxian"]);
+  assert.deepEqual(parseMentions("@林知远 @林知远 重复点名", CATS), ["linzhiyuan"]);
   assert.deepEqual(parseMentions("这里没有 at，只有 email@example", CATS), []);
   assert.deepEqual(parseMentions("@不存在的猫", CATS), []);
 
   assert.deepEqual(normalizeMentions([], CATS), []);
-  assert.deepEqual(normalizeMentions(["shuoshuo", "unknown", "shuoshuo"], CATS), [
-    "shuoshuo",
+  assert.deepEqual(normalizeMentions(["zhoushuo", "unknown", "zhoushuo"], CATS), [
+    "zhoushuo",
   ]);
-  assert.deepEqual(handoffMentions("yanyan"), ["yanyan"]);
+  assert.deepEqual(handoffMentions("shenyan"), ["shenyan"]);
 
   const studio = makeStudio();
   // 无任务、无 @ → architect。
-  assert.deepEqual(routeUserMessage(CATS, null, []), ["xianxian"]);
+  assert.deepEqual(routeUserMessage(CATS, null, []), ["linzhiyuan"]);
   // 无任务但有 @ → 只投给被 @ 的猫。
-  assert.deepEqual(routeUserMessage(CATS, null, ["shuoshuo", "yanyan"]), [
-    "shuoshuo",
-    "yanyan",
+  assert.deepEqual(routeUserMessage(CATS, null, ["zhoushuo", "shenyan"]), [
+    "zhoushuo",
+    "shenyan",
   ]);
   // 有任务、无 @ → task.owner。
   const task = newTask(studio);
-  studio.updateTaskStage(task.id, "reviewing", "yanyan");
-  assert.deepEqual(routeUserMessage(CATS, task, []), ["yanyan"]);
+  studio.updateTaskStage(task.id, "reviewing", "shenyan");
+  assert.deepEqual(routeUserMessage(CATS, task, []), ["shenyan"]);
   // @ 优先于 owner。
-  assert.deepEqual(routeUserMessage(CATS, task, ["shuoshuo"]), ["shuoshuo"]);
+  assert.deepEqual(routeUserMessage(CATS, task, ["zhoushuo"]), ["zhoushuo"]);
 });
 
 // ───────────────────────── 11. nudge 恢复 watchdog 卡住 ─────────────────────────
@@ -954,8 +954,8 @@ test("nudge：watchdog 标 stalled 的任务在 architect 恢复后回到 active
 function toolTurn(
   tool: ToolName,
   input: Record<string, unknown>,
-  extra: { label?: string; text?: string; mentions?: CatId[] } = {},
-): CatTurn {
+  extra: { label?: string; text?: string; mentions?: MemberId[] } = {},
+): AgentTurn {
   return { kind: "tool", tool, input, ...extra };
 }
 
@@ -967,20 +967,20 @@ test("tool turn：ToolCall running → ok，落 kind=tool 消息，stage 不变"
     return { status: "ok", exitCode: 0, output: `executed ${tool}` };
   });
   const brain = scriptedBrain((ctx) => {
-    if (ctx.cat.id === "jinjianceng" && ctx.trigger.kind === "user_message") {
+    if (ctx.cat.id === "chenshi" && ctx.trigger.kind === "user_message") {
       return [toolTurn("run_command", { cmd: "node", args: ["--test", "test/remember.test.js"] })];
     }
     return [];
   });
   const driver = makeDriver(studio, brain, { sandbox });
   const task = newTask(studio);
-  studio.updateTaskStage(task.id, "working", "jinjianceng");
+  studio.updateTaskStage(task.id, "working", "chenshi");
 
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
     text: "跑一下测试",
-    mentions: ["jinjianceng"],
+    mentions: ["chenshi"],
   });
   await driver.whenIdle();
 
@@ -996,7 +996,7 @@ test("tool turn：ToolCall running → ok，落 kind=tool 消息，stage 不变"
 
   const call = studio.state.toolCalls.at(-1);
   assert.ok(call);
-  assert.equal(call.catId, "jinjianceng");
+  assert.equal(call.catId, "chenshi");
   assert.equal(call.taskId, task.id);
   assert.equal(call.status, "ok");
   assert.equal(call.exitCode, 0);
@@ -1005,14 +1005,14 @@ test("tool turn：ToolCall running → ok，落 kind=tool 消息，stage 不变"
 
   const toolMessage = studio.state.messages.find((m) => m.kind === "tool");
   assert.ok(toolMessage);
-  assert.equal(toolMessage.author, "jinjianceng");
+  assert.equal(toolMessage.author, "chenshi");
   assert.equal(toolMessage.toolCallId, call.id);
   assert.equal(toolMessage.taskId, task.id);
   assert.equal(toolMessage.text, "跑了 node，退出码 0");
 
   // 工具不改变阶段 / owner。
   assert.equal(task.stage, "working");
-  assert.equal(task.owner, "jinjianceng");
+  assert.equal(task.owner, "chenshi");
   assert.equal(studio.state.typing[ROOM_ID], null);
 });
 
@@ -1031,13 +1031,13 @@ test("toolsEnabled() === false：不执行工具、不产生 ToolCall，只发�
   );
   const driver = makeDriver(studio, brain, { sandbox, toolsEnabled: () => false });
   const task = newTask(studio);
-  studio.updateTaskStage(task.id, "working", "jinjianceng");
+  studio.updateTaskStage(task.id, "working", "chenshi");
 
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
     text: "改一下 remember.js",
-    mentions: ["jinjianceng"],
+    mentions: ["chenshi"],
   });
   await driver.whenIdle();
 
@@ -1047,7 +1047,7 @@ test("toolsEnabled() === false：不执行工具、不产生 ToolCall，只发�
   const messages = studio.state.messages.filter((m) => m.taskId === task.id);
   const explain = messages.find((m) => m.kind === "chat" && m.text.includes("工具执行被关掉了"));
   assert.ok(explain);
-  assert.equal(explain.author, "jinjianceng");
+  assert.equal(explain.author, "chenshi");
   // 后续 turn 仍然照常执行。
   assert.ok(messages.some((m) => m.text === "先写方案。"));
   assert.equal(task.stage, "working");
@@ -1064,11 +1064,11 @@ test("sandbox 返回 error：ToolCall 标 error，后续 artifact/review/decisio
   }));
   const brain = scriptedBrain((ctx) => {
     const stage = ctx.task?.stage ?? null;
-    if (ctx.cat.id === "xianxian" && stage === "intake") return [message("接住。")];
-    if (ctx.cat.id === "xianxian" && stage === "planning") {
-      return [{ kind: "handoff", to: "jinjianceng", card: card("实现 token"), text: "交给实现。" }];
+    if (ctx.cat.id === "linzhiyuan" && stage === "intake") return [message("接住。")];
+    if (ctx.cat.id === "linzhiyuan" && stage === "planning") {
+      return [{ kind: "handoff", to: "chenshi", card: card("实现 token"), text: "交给实现。" }];
     }
-    if (ctx.cat.id === "jinjianceng" && stage === "working") {
+    if (ctx.cat.id === "chenshi" && stage === "working") {
       return [
         toolTurn("run_command", { cmd: "node", args: ["--test"] }),
         {
@@ -1076,10 +1076,10 @@ test("sandbox 返回 error：ToolCall 标 error，后续 artifact/review/decisio
           artifact: { kind: "patch", title: "v1", body: "先交一版" },
           text: "测试挂了，但我先把改动交出来。",
         },
-        { kind: "handoff", to: "yanyan", card: card("review v1"), text: "@砚砚 看下。" },
+        { kind: "handoff", to: "shenyan", card: card("review v1"), text: "@沈砚 看下。" },
       ];
     }
-    if (ctx.cat.id === "yanyan" && stage === "reviewing") {
+    if (ctx.cat.id === "shenyan" && stage === "reviewing") {
       return [
         {
           kind: "review",
@@ -1087,11 +1087,11 @@ test("sandbox 返回 error：ToolCall 标 error，后续 artifact/review/decisio
           title: "review v1",
           findings: [],
           text: "先过，测试的事后面再说。",
-          mentions: ["jinjianceng"],
+          mentions: ["chenshi"],
         },
       ];
     }
-    if (ctx.cat.id === "xianxian" && stage === "done") {
+    if (ctx.cat.id === "linzhiyuan" && stage === "done") {
       return [
         {
           kind: "decision",
@@ -1156,8 +1156,8 @@ test("tool 默认 label：write_file / read_file / list_files / run_command", as
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@金渐层 去沙盒里看看",
-    mentions: ["jinjianceng"],
+    text: "@陈实 去沙盒里看看",
+    mentions: ["chenshi"],
   });
   await driver.whenIdle();
 
@@ -1196,13 +1196,13 @@ test("没有 sandbox：不执行工具、不发 ToolCall，只发说明消息并
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@金渐层 跑个测试",
-    mentions: ["jinjianceng"],
+    text: "@陈实 跑个测试",
+    mentions: ["chenshi"],
   });
   await driver.whenIdle();
 
   assert.equal(studio.state.toolCalls.length, 0);
-  const messages = studio.state.messages.filter((m) => m.author === "jinjianceng");
+  const messages = studio.state.messages.filter((m) => m.author === "chenshi");
   assert.ok(messages.some((m) => m.kind === "chat" && m.text.includes("没接沙盒")));
   assert.ok(messages.some((m) => m.text === "沙盒没接上，我先把方案写出来。"));
 });
@@ -1234,13 +1234,13 @@ test("审批：llm + commands 下 run_command 先 pending，批准后执行变 o
     approvalMode: () => "commands",
   });
   const task = newTask(studio);
-  studio.updateTaskStage(task.id, "working", "jinjianceng");
+  studio.updateTaskStage(task.id, "working", "chenshi");
 
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
     text: "跑个测试",
-    mentions: ["jinjianceng"],
+    mentions: ["chenshi"],
   });
   await driver.whenIdle();
 
@@ -1254,7 +1254,7 @@ test("审批：llm + commands 下 run_command 先 pending，批准后执行变 o
   assert.equal(approvals.requests[0]?.callId, call.id);
   assert.equal(approvals.requests[0]?.mode, "commands");
   assert.equal(approvals.requests[0]?.tool, "run_command");
-  assert.equal(approvals.requests[0]?.catId, "jinjianceng");
+  assert.equal(approvals.requests[0]?.catId, "chenshi");
   assert.equal(approvals.requests[0]?.label, "运行 node --test");
   assert.equal(sandbox.calls.length, 1);
   assert.equal(call.status, "ok");
@@ -1304,13 +1304,13 @@ test("审批：拒绝时不执行 sandbox，ToolCall=rejected 且 rejected 计�
     approvalMode: () => "commands",
   });
   const task = newTask(studio);
-  studio.updateTaskStage(task.id, "working", "jinjianceng");
+  studio.updateTaskStage(task.id, "working", "chenshi");
 
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
     text: "跑个测试",
-    mentions: ["jinjianceng"],
+    mentions: ["chenshi"],
   });
   await driver.whenIdle();
 
@@ -1321,13 +1321,13 @@ test("审批：拒绝时不执行 sandbox，ToolCall=rejected 且 rejected 计�
   assert.ok(call);
   assert.equal(call.status, "rejected");
   assert.equal(call.exitCode, undefined);
-  assert.equal(call.output, "铲屎官拒绝了这次执行");
+  assert.equal(call.output, "负责人拒绝了这次执行");
 
   const toolMessages = studio.state.messages.filter((m) => m.kind === "tool");
   assert.equal(toolMessages.length, 2);
   assert.equal(toolMessages[0]?.text, "等你批准：运行 node --test");
   assert.equal(toolMessages[1]?.toolCallId, call.id);
-  assert.equal(toolMessages[1]?.text, "铲屎官拒绝了这次执行，我换个办法。");
+  assert.equal(toolMessages[1]?.text, "负责人拒绝了这次执行，我换个办法。");
 
   assert.equal(brain.calls.length, 2);
   const second = brain.calls[1];
@@ -1335,7 +1335,7 @@ test("审批：拒绝时不执行 sandbox，ToolCall=rejected 且 rejected 计�
   assert.equal(second.trigger.kind, "tool_result");
   assert.equal(second.trigger.toolResults?.[0]?.callId, call.id);
   assert.equal(second.trigger.toolResults?.[0]?.status, "rejected");
-  assert.equal(second.trigger.toolResults?.[0]?.output, "铲屎官拒绝了这次执行");
+  assert.equal(second.trigger.toolResults?.[0]?.output, "负责人拒绝了这次执行");
   assert.ok(studio.state.messages.some((m) => m.text === "那我先写方案。"));
   assert.equal(task.stage, "working");
 });
@@ -1363,8 +1363,8 @@ test("审批只对 llm 生效：mode=auto 与 mock 剧本都不进审批、直�
     driver.submit({
       type: "user_message",
       roomId: ROOM_ID,
-      text: "@金渐层 跑一下",
-      mentions: ["jinjianceng"],
+      text: "@陈实 跑一下",
+      mentions: ["chenshi"],
     });
     await driver.whenIdle();
     assert.equal(approvals.requests.length, 0);
@@ -1390,8 +1390,8 @@ test("审批只对 llm 生效：mode=auto 与 mock 剧本都不进审批、直�
     driver.submit({
       type: "user_message",
       roomId: ROOM_ID,
-      text: "@金渐层 跑一下",
-      mentions: ["jinjianceng"],
+      text: "@陈实 跑一下",
+      mentions: ["chenshi"],
     });
     await driver.whenIdle();
     assert.equal(approvals.requests.length, 0);
@@ -1406,16 +1406,16 @@ test("回喂循环：tool_result 轮的 message + handoff 按正常 turn 处理�
   const studio = makeStudio();
   const sandbox = fakeSandbox();
   const brain = scriptedBrain((ctx) => {
-    if (ctx.cat.id !== "xianxian") return [];
+    if (ctx.cat.id !== "linzhiyuan") return [];
     if (ctx.trigger.kind === "user_message") return [toolTurn("list_files", {})];
     if (ctx.trigger.kind === "tool_result") {
       return [
-        message("看完了，交给金渐层。"),
+        message("看完了，交给陈实。"),
         {
           kind: "handoff",
-          to: "jinjianceng",
+          to: "chenshi",
           card: card("实现 remember-me"),
-          text: "@金渐层 交给你。",
+          text: "@陈实 交给你。",
         },
       ];
     }
@@ -1427,12 +1427,12 @@ test("回喂循环：tool_result 轮的 message + handoff 按正常 turn 处理�
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@宪宪 先看看沙盒里有什么",
-    mentions: ["xianxian"],
+    text: "@林知远 先看看沙盒里有什么",
+    mentions: ["linzhiyuan"],
   });
   await driver.whenIdle();
 
-  const xianCalls = brain.callsFor("xianxian");
+  const xianCalls = brain.callsFor("linzhiyuan");
   assert.equal(xianCalls.length, 2);
   assert.equal(xianCalls[0]?.trigger.kind, "user_message");
   assert.equal(xianCalls[1]?.trigger.kind, "tool_result");
@@ -1442,9 +1442,9 @@ test("回喂循环：tool_result 轮的 message + handoff 按正常 turn 处理�
 
   const handoffs = studio.state.handoffs.filter((handoff) => handoff.taskId === task.id);
   assert.equal(handoffs.length, 1);
-  assert.equal(handoffs[0]?.from, "xianxian");
-  assert.equal(handoffs[0]?.to, "jinjianceng");
-  assert.ok(studio.state.messages.some((m) => m.text === "看完了，交给金渐层。"));
+  assert.equal(handoffs[0]?.from, "linzhiyuan");
+  assert.equal(handoffs[0]?.to, "chenshi");
+  assert.ok(studio.state.messages.some((m) => m.text === "看完了，交给陈实。"));
   assert.ok(
     studio.state.messages.some(
       (m) => m.kind === "handoff" && m.handoffId === handoffs[0]?.id,
@@ -1472,12 +1472,12 @@ test("回喂循环上限 3：brain 每轮都给工具时最多 4 次 think / 4 �
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@烁烁 一直看",
-    mentions: ["shuoshuo"],
+    text: "@周烁 一直看",
+    mentions: ["zhoushuo"],
   });
   await driver.whenIdle();
 
-  const shuoCalls = brain.callsFor("shuoshuo");
+  const shuoCalls = brain.callsFor("zhoushuo");
   assert.equal(shuoCalls.length, 4, "首轮 + 3 次回喂");
   assert.equal(shuoCalls[0]?.trigger.kind, "user_message");
   assert.deepEqual(
@@ -1513,8 +1513,8 @@ test("recentToolResults：最近已结束回执按时间正序、字段完整且
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@烁烁 看看沙盒",
-    mentions: ["shuoshuo"],
+    text: "@周烁 看看沙盒",
+    mentions: ["zhoushuo"],
   });
   await driver.whenIdle();
 
@@ -1553,8 +1553,8 @@ test("审批策略：commands 只批 run_command，all 连 write_file 也批", a
     driver.submit({
       type: "user_message",
       roomId: ROOM_ID,
-      text: "@金渐层 改文件",
-      mentions: ["jinjianceng"],
+      text: "@陈实 改文件",
+      mentions: ["chenshi"],
     });
     await driver.whenIdle();
     return { approvals, sandbox, studio };
@@ -1579,7 +1579,7 @@ test("审批策略：commands 只批 run_command，all 连 write_file 也批", a
 
 test("工具注册表：MCP needs_approval 工具在 commands 下审批，批准后走 registry.execute", async () => {
   const studio = makeStudioWith({
-    jinjianceng: {
+    chenshi: {
       tools: ["read_file", "write_file", "list_files", "run_command", "mcp.weather"],
     },
   });
@@ -1604,8 +1604,8 @@ test("工具注册表：MCP needs_approval 工具在 commands 下审批，批准
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@金渐层 查下天气",
-    mentions: ["jinjianceng"],
+    text: "@陈实 查下天气",
+    mentions: ["chenshi"],
   });
   await driver.whenIdle();
 
@@ -1637,7 +1637,7 @@ test("工具注册表：MCP needs_approval 工具在 commands 下审批，批准
 });
 
 test("执行优先走工具注册表：同时传 tools 与 sandbox 时内置工具也走 registry", async () => {
-  const studio = makeStudioWith({ jinjianceng: { tools: ["read_file"] } });
+  const studio = makeStudioWith({ chenshi: { tools: ["read_file"] } });
   const registry = fakeRegistry([READ_FILE_DEF], () => ({
     status: "ok",
     output: "from registry",
@@ -1653,8 +1653,8 @@ test("执行优先走工具注册表：同时传 tools 与 sandbox 时内置工�
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@金渐层 读一下",
-    mentions: ["jinjianceng"],
+    text: "@陈实 读一下",
+    mentions: ["chenshi"],
   });
   await driver.whenIdle();
 
@@ -1667,7 +1667,7 @@ test("执行优先走工具注册表：同时传 tools 与 sandbox 时内置工�
 // ───────────────────────── 25. 每猫工具权限 ─────────────────────────
 
 test("cat.tools 权限：允许的工具执行，未授权的不执行、error 记账并回喂", async () => {
-  const studio = makeStudioWith({ jinjianceng: { tools: ["read_file"] } });
+  const studio = makeStudioWith({ chenshi: { tools: ["read_file"] } });
   const sandbox = fakeSandbox((tool) => ({ status: "ok", output: `ran ${String(tool)}` }));
   const brain = scriptedBrain((ctx) => {
     if (ctx.trigger.kind === "user_message") {
@@ -1685,8 +1685,8 @@ test("cat.tools 权限：允许的工具执行，未授权的不执行、error �
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@金渐层 跑测试然后读代码",
-    mentions: ["jinjianceng"],
+    text: "@陈实 跑测试然后读代码",
+    mentions: ["chenshi"],
   });
   await driver.whenIdle();
 
@@ -1698,24 +1698,24 @@ test("cat.tools 权限：允许的工具执行，未授权的不执行、error �
   assert.equal(calls.length, 2);
   assert.equal(calls[0]?.tool, "run_command");
   assert.equal(calls[0]?.status, "error");
-  assert.equal(calls[0]?.output, "金渐层 没有权限使用 run_command");
+  assert.equal(calls[0]?.output, "陈实 没有权限使用 run_command");
   assert.equal(calls[1]?.status, "ok");
 
   const deniedMessage = studio.state.messages.find((m) => m.toolCallId === calls[0]?.id);
   assert.ok(deniedMessage);
-  assert.equal(deniedMessage.text, "金渐层 没有权限使用 run_command");
+  assert.equal(deniedMessage.text, "陈实 没有权限使用 run_command");
 
   // 回喂给模型的 toolResults 里也带这条 error。
   assert.equal(brain.calls.length, 2);
   const fedBack = brain.calls[1]?.trigger.toolResults ?? [];
   assert.equal(fedBack.length, 2);
   assert.equal(fedBack[0]?.status, "error");
-  assert.equal(fedBack[0]?.output, "金渐层 没有权限使用 run_command");
+  assert.equal(fedBack[0]?.output, "陈实 没有权限使用 run_command");
   assert.ok(studio.state.messages.some((m) => m.text === "看到了。"));
 });
 
 test("cat.tools 空数组：没有任何工具权限（mock 剧本同样受限）", async () => {
-  const studio = makeStudioWith({ jinjianceng: { tools: [] } });
+  const studio = makeStudioWith({ chenshi: { tools: [] } });
   const sandbox = fakeSandbox();
   const brain = scriptedBrain((ctx) =>
     ctx.trigger.kind === "user_message"
@@ -1727,8 +1727,8 @@ test("cat.tools 空数组：没有任何工具权限（mock 剧本同样受限�
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@金渐层 读一下",
-    mentions: ["jinjianceng"],
+    text: "@陈实 读一下",
+    mentions: ["chenshi"],
   });
   await driver.whenIdle();
 
@@ -1736,9 +1736,9 @@ test("cat.tools 空数组：没有任何工具权限（mock 剧本同样受限�
   const call = studio.state.toolCalls.at(-1);
   assert.ok(call);
   assert.equal(call.status, "error");
-  assert.equal(call.output, "金渐层 没有权限使用 read_file");
+  assert.equal(call.output, "陈实 没有权限使用 read_file");
   assert.ok(
-    studio.state.messages.some((m) => m.text === "金渐层 没有权限使用 read_file"),
+    studio.state.messages.some((m) => m.text === "陈实 没有权限使用 read_file"),
   );
   assert.ok(studio.state.messages.some((m) => m.text === "先写方案。"));
 });
@@ -1747,9 +1747,9 @@ test("cat.tools 空数组：没有任何工具权限（mock 剧本同样受限�
 
 test("TurnContext.availableTools / skills：按每猫权限与技能配置注入", async () => {
   const studio = makeStudioWith({
-    jinjianceng: { tools: ["read_file", "mcp.weather"], skills: ["tdd", "architecture"] },
-    yanyan: { tools: [] },
-    shuoshuo: { tools: undefined, skills: undefined },
+    chenshi: { tools: ["read_file", "mcp.weather"], skills: ["tdd", "architecture"] },
+    shenyan: { tools: [] },
+    zhoushuo: { tools: undefined, skills: undefined },
   });
   const registry = fakeRegistry([READ_FILE_DEF, MCP_WEATHER_DEF]);
   const brain = scriptedBrain(() => []);
@@ -1758,15 +1758,15 @@ test("TurnContext.availableTools / skills：按每猫权限与技能配置注入
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@金渐层 @宪宪 @烁烁 @砚砚 集合",
-    mentions: ["jinjianceng", "xianxian", "shuoshuo", "yanyan"],
+    text: "@陈实 @林知远 @周烁 @沈砚 集合",
+    mentions: ["chenshi", "linzhiyuan", "zhoushuo", "shenyan"],
   });
   await driver.whenIdle();
 
   const byCat = new Map(brain.calls.map((call) => [call.cat.id, call]));
   assert.equal(byCat.size, 4);
 
-  const implementer = byCat.get("jinjianceng");
+  const implementer = byCat.get("chenshi");
   assert.deepEqual(
     implementer?.availableTools.map((definition) => definition.name),
     ["read_file", "mcp.weather"],
@@ -1777,8 +1777,8 @@ test("TurnContext.availableTools / skills：按每猫权限与技能配置注入
   );
   assert.ok((implementer?.skills[0]?.prompt.length ?? 0) > 0);
 
-  // 宪宪在 CATS 里是 read_file/list_files 白名单；假注册表里只有 read_file。
-  const architect = byCat.get("xianxian");
+  // 林知远在 CATS 里是 read_file/list_files 白名单；假注册表里只有 read_file。
+  const architect = byCat.get("linzhiyuan");
   assert.deepEqual(
     architect?.availableTools.map((definition) => definition.name),
     ["read_file"],
@@ -1789,7 +1789,7 @@ test("TurnContext.availableTools / skills：按每猫权限与技能配置注入
   );
 
   // skills undefined → skillsForCat 用角色默认。
-  const designer = byCat.get("shuoshuo");
+  const designer = byCat.get("zhoushuo");
   assert.deepEqual(
     designer?.availableTools.map((definition) => definition.name),
     ["read_file", "mcp.weather"],
@@ -1800,7 +1800,7 @@ test("TurnContext.availableTools / skills：按每猫权限与技能配置注入
   );
 
   // tools: [] → 一个可用工具都没有。
-  const reviewer = byCat.get("yanyan");
+  const reviewer = byCat.get("shenyan");
   assert.deepEqual(reviewer?.availableTools, []);
   assert.deepEqual(
     reviewer?.skills.map((skill) => skill.id),
@@ -1812,7 +1812,7 @@ test("TurnContext.availableTools / skills：按每猫权限与技能配置注入
 
 test("resolveSkill：cat.skills 里的自定义技能会被解析进 TurnContext.skills", async () => {
   const studio = makeStudioWith({
-    jinjianceng: { tools: ["read_file"], skills: ["custom-deploy"] },
+    chenshi: { tools: ["read_file"], skills: ["custom-deploy"] },
   });
   const registry = fakeRegistry([READ_FILE_DEF]);
   const brain = scriptedBrain(() => []);
@@ -1830,8 +1830,8 @@ test("resolveSkill：cat.skills 里的自定义技能会被解析进 TurnContext
   driver.submit({
     type: "user_message",
     roomId: ROOM_ID,
-    text: "@金渐层 看看技能",
-    mentions: ["jinjianceng"],
+    text: "@陈实 看看技能",
+    mentions: ["chenshi"],
   });
   await driver.whenIdle();
 
@@ -1899,7 +1899,7 @@ describe("评审拉锯保护", () => {
           return [
             {
               kind: "handoff" as const,
-              to: "jinjianceng",
+              to: "chenshi",
               card: {
                 what: "实现",
                 why: "拆活",
@@ -1915,11 +1915,11 @@ describe("评审拉锯保护", () => {
             {
               kind: "artifact" as const,
               artifact: { kind: "patch" as const, title: "实现稿", body: "diff" },
-              mentions: ["yanyan"],
+              mentions: ["shenyan"],
             },
             {
               kind: "handoff" as const,
-              to: "yanyan",
+              to: "shenyan",
               card: {
                 what: "评审",
                 why: "交叉评审",
@@ -1939,7 +1939,7 @@ describe("评审拉锯保护", () => {
               title: "还要改",
               findings: [{ severity: "blocker" as const, title: "问题", detail: "细节" }],
               text: "继续改",
-              mentions: ["jinjianceng"],
+              mentions: ["chenshi"],
             },
           ];
         }
@@ -2051,8 +2051,8 @@ describe("工具并行执行", () => {
         return { status: "ok" as const, output: "ok" };
       },
     };
-    // 金渐层有 write_file 权限；宪宪没有，用金渐层验证顺序。
-    const implementer = CATS.find((cat) => cat.id === "jinjianceng")!;
+    // 陈实有 write_file 权限；林知远没有，用陈实验证顺序。
+    const implementer = CATS.find((cat) => cat.id === "chenshi")!;
     let calls = 0;
     const brain = {
       mode: "mock" as const,
@@ -2080,14 +2080,14 @@ describe("工具并行执行", () => {
         brief: "读写交错",
         scenarioId: "export_csv",
       });
-      // 直接把 owner 换成金渐层，让第一轮由它执行。
+      // 直接把 owner 换成陈实，让第一轮由它执行。
       studio.updateTaskStage(task.id, "working", implementer.id);
       studio.setTyping("room_cafe", null);
-      // 直接驱动一次 worker wake：用 nudge 会走 architect，这里改成用 user_message @ 金渐层。
+      // 直接驱动一次 worker wake：用 nudge 会走 architect，这里改成用 user_message @ 陈实。
       driver.submit({
         type: "user_message",
         roomId: "room_cafe",
-        text: "@金渐层 动手",
+        text: "@陈实 动手",
         mentions: [implementer.id],
       });
       await driver.whenIdle();
@@ -2105,14 +2105,14 @@ describe("任务收尾后的防护", () => {
     let calls = 0;
     const brain = {
       mode: "mock" as const,
-      async think(): Promise<CatTurn[]> {
+      async think(): Promise<AgentTurn[]> {
         calls += 1;
         if (calls === 1) {
           return [
             { kind: "message", text: "开工" },
             {
               kind: "handoff",
-              to: "jinjianceng",
+              to: "chenshi",
               card: { what: "实现", why: "拆活", tradeoff: "x", openQuestions: [], nextAction: "做" },
             },
           ];
@@ -2122,7 +2122,7 @@ describe("任务收尾后的防护", () => {
             { kind: "message", text: "再派一次" },
             {
               kind: "handoff",
-              to: "shuoshuo",
+              to: "zhoushuo",
               card: { what: "越界", why: "x", tradeoff: "x", openQuestions: [], nextAction: "x" },
             },
           ];
@@ -2146,7 +2146,7 @@ describe("任务收尾后的防护", () => {
       driver.submit({ type: "task_created", roomId: "room_cafe", taskId: task.id });
       await driver.whenIdle();
       studio.setTaskStatus(task.id, "done");
-      studio.updateTaskStage(task.id, "done", "xianxian");
+      studio.updateTaskStage(task.id, "done", "linzhiyuan");
 
       const stageBefore = studio.getTask(task.id)?.stage;
       const stepsBefore = studio.getTask(task.id)?.steps.length ?? 0;
@@ -2154,8 +2154,8 @@ describe("任务收尾后的防护", () => {
       driver.submit({
         type: "user_message",
         roomId: "room_cafe",
-        text: "@宪宪 再说两句",
-        mentions: ["xianxian"],
+        text: "@林知远 再说两句",
+        mentions: ["linzhiyuan"],
       });
       await driver.whenIdle();
 

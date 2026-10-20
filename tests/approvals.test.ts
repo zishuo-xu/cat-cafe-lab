@@ -1,4 +1,4 @@
-/** 铲屎官审批：队列语义 + HTTP approve/reject 契约。 */
+/** 负责人审批：队列语义 + HTTP approve/reject 契约。 */
 
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
@@ -22,7 +22,7 @@ describe("ApprovalQueue", () => {
       mode: "commands",
       tool: "run_command",
       label: "运行 node --test",
-      catId: "jinjianceng",
+      catId: "chenshi",
     });
     assert.equal(queue.list().length, 1);
     assert.equal(queue.list()[0]?.callId, "call_1");
@@ -35,8 +35,8 @@ describe("ApprovalQueue", () => {
 
   test("rejectAll 把所有悬挂审批按拒绝收口", async () => {
     const queue = new ApprovalQueue();
-    const a = queue.request({ callId: "a", mode: "all", tool: "write_file", label: "写", catId: "xianxian" });
-    const b = queue.request({ callId: "b", mode: "commands", tool: "run_command", label: "跑", catId: "yanyan" });
+    const a = queue.request({ callId: "a", mode: "all", tool: "write_file", label: "写", catId: "linzhiyuan" });
+    const b = queue.request({ callId: "b", mode: "commands", tool: "run_command", label: "跑", catId: "shenyan" });
     queue.rejectAll();
     assert.deepEqual(await Promise.all([a, b]), ["rejected", "rejected"]);
     assert.equal(queue.list().length, 0);
@@ -95,7 +95,7 @@ describe("HTTP /api/tool-calls", () => {
       mode: "commands",
       tool: "run_command",
       label: "跑测试",
-      catId: "jinjianceng",
+      catId: "chenshi",
     });
     const res = await fetch(`${base}/api/tool-calls/call_http/approve`, { method: "POST" });
     assert.equal(res.status, 200);
@@ -110,7 +110,7 @@ describe("HTTP /api/tool-calls", () => {
       mode: "all",
       tool: "write_file",
       label: "写文件",
-      catId: "xianxian",
+      catId: "linzhiyuan",
     });
     const res = await fetch(`${base}/api/tool-calls/call_reject/reject`, { method: "POST" });
     assert.equal(res.status, 200);
@@ -126,7 +126,7 @@ describe("HTTP /api/tool-calls", () => {
       mode: "commands",
       tool: "run_command",
       label: "跑测试",
-      catId: "yanyan",
+      catId: "shenyan",
     });
     const res = await fetch(`${base}/api/approvals`);
     assert.equal(res.status, 200);
@@ -141,7 +141,7 @@ describe("HTTP /api/tool-calls", () => {
       mode: "commands",
       tool: "run_command",
       label: "跑测试",
-      catId: "jinjianceng",
+      catId: "chenshi",
     });
     const res = await fetch(`${base}/api/tool-calls/call_remember/approve`, {
       method: "POST",
@@ -159,7 +159,7 @@ describe("HTTP /api/tool-calls", () => {
       mode: "commands",
       tool: "run_command",
       label: "再跑",
-      catId: "jinjianceng",
+      catId: "chenshi",
     });
     assert.equal(await next, "approved");
     const list = await fetch(`${base}/api/approvals`);
@@ -185,7 +185,7 @@ describe("审批记忆与超时", () => {
       mode: "commands",
       tool: "run_command",
       label: "跑测试",
-      catId: "jinjianceng",
+      catId: "chenshi",
     });
     assert.equal(queue.remember("c1", "approved"), true);
     assert.equal(await first, "approved");
@@ -197,7 +197,7 @@ describe("审批记忆与超时", () => {
       mode: "commands",
       tool: "run_command",
       label: "再跑一次",
-      catId: "jinjianceng",
+      catId: "chenshi",
     });
     assert.equal(second, "approved");
     assert.equal(queue.list().length, 0);
@@ -207,8 +207,8 @@ describe("审批记忆与超时", () => {
       callId: "c3",
       mode: "commands",
       tool: "run_command",
-      label: "砚砚跑",
-      catId: "yanyan",
+      label: "沈砚跑",
+      catId: "shenyan",
     });
     assert.equal(queue.list().length, 1);
     queue.resolve("c3", "rejected");
@@ -217,11 +217,11 @@ describe("审批记忆与超时", () => {
 
   test("clearRemembered 后重新询问", async () => {
     const queue = new ApprovalQueue();
-    const first = queue.request({ callId: "a", mode: "commands", tool: "run_command", label: "x", catId: "xianxian" });
+    const first = queue.request({ callId: "a", mode: "commands", tool: "run_command", label: "x", catId: "linzhiyuan" });
     queue.remember("a", "rejected");
     assert.equal(await first, "rejected");
     queue.clearRemembered();
-    const pending = queue.request({ callId: "b", mode: "commands", tool: "run_command", label: "y", catId: "xianxian" });
+    const pending = queue.request({ callId: "b", mode: "commands", tool: "run_command", label: "y", catId: "linzhiyuan" });
     assert.equal(queue.list().length, 1);
     queue.resolve("b", "approved");
     assert.equal(await pending, "approved");

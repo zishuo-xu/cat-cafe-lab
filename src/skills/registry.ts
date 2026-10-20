@@ -1,6 +1,6 @@
 /** 技能包：注入真实模式 system prompt 的方法论。T2 负责润色内容。 */
 
-import type { Cat, Role, Skill } from "../domain/types.ts";
+import type { Member, Role, Skill } from "../domain/types.ts";
 
 export const BUILTIN_SKILLS: Skill[] = [
   {
@@ -9,7 +9,7 @@ export const BUILTIN_SKILLS: Skill[] = [
     description: "接需求时先钉边界与风险，再拆活。",
     prompt: `【技能：架构拆解】
 - 先复述需求并给结论，再把 1–2 个会返工的风险（安全、兼容、回滚）摆到桌上；
-- 活拆到「一只猫能独立完成并自测」的粒度，写清依赖顺序和谁在等谁；
+- 活拆到「一个成员能独立完成并自测」的粒度，写清依赖顺序和谁在等谁；
 - 交接卡必须写取舍与被否掉的方案；未决问题列出来，不替下游拍板。`,
   },
   {
@@ -41,7 +41,7 @@ export const BUILTIN_SKILLS: Skill[] = [
   },
 ];
 
-/** 角色默认技能：猫没有显式配置 skills 时用这套。 */
+/** 角色默认技能：成员没有显式配置 skills 时用这套。 */
 const SKILLS_BY_ROLE: Record<Role, string[]> = {
   architect: ["architecture"],
   reviewer: ["review-checklist"],
@@ -58,12 +58,12 @@ export function getSkill(id: string): Skill | undefined {
 }
 
 /**
- * 解析一只猫实际挂载的技能包：
+ * 解析一个成员实际挂载的技能包：
  * - `cat.skills` 优先（用户/档案里配过就用它）；
  * - 没配或配了空数组时，回落到角色默认；
  * - 未知 id 直接忽略、重复 id 去重，坏配置不会把 system prompt 带崩。
  */
-export function skillsForCat(cat: Cat): Skill[] {
+export function skillsForCat(cat: Member): Skill[] {
   const ids = cat.skills && cat.skills.length > 0 ? cat.skills : SKILLS_BY_ROLE[cat.role];
   const skills: Skill[] = [];
   const seen = new Set<string>();

@@ -8,8 +8,8 @@ import { createLlmBrain } from "../src/agents/llm-brain.ts";
 import { CATS } from "../src/agents/personas.ts";
 import { createDriver } from "../src/engine/driver.ts";
 import type {
-  CatBrain,
-  CatTurn,
+  AgentBrain,
+  AgentTurn,
   DeltaUpdate,
   LlmSettings,
   StudioState,
@@ -25,10 +25,10 @@ const SETTINGS: LlmSettings = {
   temperature: 0.7,
 };
 
-function makeFallback(): CatBrain {
+function makeFallback(): AgentBrain {
   return {
     mode: "mock",
-    async think(): Promise<CatTurn[]> {
+    async think(): Promise<AgentTurn[]> {
       return [{ kind: "message", text: "（fallback）" }];
     },
   };
@@ -38,7 +38,7 @@ function makeContext(onDelta?: (update: DeltaUpdate) => void): TurnContext {
   const cat = CATS.find((item) => item.role === "architect")!;
   const room = {
     id: "room_cafe",
-    name: "猫咖",
+    name: "交付台",
     topic: "",
     catIds: CATS.map((item) => item.id),
     createdAt: 0,
@@ -151,13 +151,13 @@ describe("草稿状态（Studio）", () => {
     const studio = new Studio({ cats: CATS, mode: "mock" });
     try {
       let seq = studio.snapshot().seq;
-      studio.setDraft("room_cafe", { catId: "xianxian", text: "我先说" });
+      studio.setDraft("room_cafe", { catId: "linzhiyuan", text: "我先说" });
       const afterFirst = studio.snapshot();
       assert.equal(afterFirst.drafts["room_cafe"]?.text, "我先说");
       assert.ok(afterFirst.seq > seq);
 
       seq = afterFirst.seq;
-      studio.setDraft("room_cafe", { catId: "xianxian", text: "我先说" });
+      studio.setDraft("room_cafe", { catId: "linzhiyuan", text: "我先说" });
       assert.equal(studio.snapshot().seq, seq, "文本没变不应触发推送");
 
       studio.setDraft("room_cafe", null);
@@ -170,9 +170,9 @@ describe("草稿状态（Studio）", () => {
   test("driver 每轮结束后清空草稿", async () => {
     const studio = new Studio({ cats: CATS, mode: "mock" });
     let sawDraft = false;
-    const brain: CatBrain = {
+    const brain: AgentBrain = {
       mode: "llm",
-      async think(ctx): Promise<CatTurn[]> {
+      async think(ctx): Promise<AgentTurn[]> {
         ctx.onDelta?.({ catId: ctx.cat.id, roomId: ctx.room.id, text: "正在打字…" });
         assert.ok(studio.snapshot().drafts[ctx.room.id], "回调期间应有草稿");
         sawDraft = true;

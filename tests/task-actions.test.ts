@@ -1,4 +1,4 @@
-/** 失败恢复：continue / pivot / close 三种铲屎官动作。 */
+/** 失败恢复：continue / pivot / close 三种负责人动作。 */
 
 import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";

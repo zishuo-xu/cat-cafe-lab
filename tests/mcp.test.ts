@@ -480,7 +480,7 @@ describe("HTTP /api/mcp /api/tools /api/skills", () => {
   });
 
   test("给猫设置工具/技能权限", async () => {
-    const res = await fetch(`${base}/api/cats/yanyan`, {
+    const res = await fetch(`${base}/api/cats/shenyan`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ tools: ["read_file"], skills: ["review-checklist"] }),
@@ -490,7 +490,7 @@ describe("HTTP /api/mcp /api/tools /api/skills", () => {
     assert.deepEqual(cat.tools, ["read_file"]);
     assert.deepEqual(cat.skills, ["review-checklist"]);
 
-    const bad = await fetch(`${base}/api/cats/yanyan`, {
+    const bad = await fetch(`${base}/api/cats/shenyan`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ tools: [42] }),

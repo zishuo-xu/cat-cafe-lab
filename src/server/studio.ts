@@ -17,8 +17,8 @@ import type {
   Artifact,
   ArtifactKind,
   BrainMode,
-  Cat,
-  CatId,
+  Member,
+  MemberId,
   Handoff,
   HandoffCard,
   MemoryEntry,
@@ -28,8 +28,8 @@ import type {
   Room,
   RoomId,
   StudioState,
-  CatEpisode,
-  CatSession,
+  MemberEpisode,
+  MemberSession,
   LlmCall,
   Task,
   TaskStage,
@@ -42,7 +42,7 @@ import type {
 const MAX_MESSAGES = 1500;
 
 export interface StudioOptions {
-  cats: Cat[];
+  cats: Member[];
   mode: BrainMode;
   dataDir?: string;
 }
@@ -52,7 +52,7 @@ export interface AppendMessageInput {
   author: Message["author"];
   kind: MessageKind;
   text: string;
-  mentions?: CatId[];
+  mentions?: MemberId[];
   taskId?: Task["id"];
   handoffId?: Handoff["id"];
   artifactId?: Artifact["id"];
@@ -67,7 +67,7 @@ export interface CreateTaskInput {
   title?: string;
 }
 
-/** 猫猫档案可编辑字段；id / role / avatar / species 不可改。 */
+/** 成员档案可编辑字段；id / role / avatar / discipline 不可改。 */
 export interface CatPatch {
   name?: string;
   title?: string;
@@ -89,11 +89,11 @@ function now(): number {
   return Date.now();
 }
 
-function freshState(cats: Cat[], mode: BrainMode): StudioState {
+function freshState(cats: Member[], mode: BrainMode): StudioState {
   const room: Room = {
     id: "room_cafe",
-    name: "猫咖 · 客厅",
-    topic: "把需求丢进来，猫猫们会在同一张桌子上把它做出来。",
+    name: "交付台 · 主工作区",
+    topic: "把需求丢进来，成员们会在同一张桌子上把它做出来。",
     catIds: cats.map((c) => c.id),
     workspaceId: DEFAULT_WORKSPACE_ID,
     createdAt: now(),
@@ -151,7 +151,7 @@ export class Studio {
     return this.state;
   }
 
-  getCat(id: CatId): Cat | undefined {
+  getCat(id: MemberId): Member | undefined {
     return this.state.cats.find((c) => c.id === id);
   }
 
@@ -248,7 +248,7 @@ export class Studio {
     return task;
   }
 
-  updateTaskStage(taskId: Task["id"], stage: TaskStage, owner: CatId): Task {
+  updateTaskStage(taskId: Task["id"], stage: TaskStage, owner: MemberId): Task {
     const task = this.requireTask(taskId);
     task.stage = stage;
     task.owner = owner;
@@ -354,7 +354,7 @@ export class Studio {
       roomId: task.roomId,
       author: "system",
       kind: "system",
-      text: `铲屎官选择收尾：${reason}`,
+      text: `负责人选择收尾：${reason}`,
       taskId: task.id,
     });
     this.finishStep(task.id, task.stage);
@@ -362,7 +362,7 @@ export class Studio {
     this.setTaskStatus(task.id, "done");
     this.addMemory({
       kind: "lesson",
-      title: `任务「${task.title}」由铲屎官提前收尾`,
+      title: `任务「${task.title}」由负责人提前收尾`,
       body: reason,
       tags: ["manual-close", "process"],
       sourceTaskId: task.id,
@@ -379,7 +379,7 @@ export class Studio {
     return task;
   }
 
-  addStep(taskId: Task["id"], input: { stage: TaskStage; owner: CatId }): TaskStep {
+  addStep(taskId: Task["id"], input: { stage: TaskStage; owner: MemberId }): TaskStep {
     const task = this.requireTask(taskId);
     const step: TaskStep = {
       id: ids.step(),
@@ -410,8 +410,8 @@ export class Studio {
 
   addHandoff(input: {
     taskId: Task["id"];
-    from: CatId;
-    to: CatId;
+    from: MemberId;
+    to: MemberId;
     card: HandoffCard;
   }): Handoff {
     this.requireTask(input.taskId);
@@ -434,7 +434,7 @@ export class Studio {
     kind: ArtifactKind;
     title: string;
     body: string;
-    author: CatId;
+    author: MemberId;
   }): Artifact {
     this.requireTask(input.taskId);
     const sameKind = this.state.artifacts.filter(
@@ -479,7 +479,7 @@ export class Studio {
 
   /** 模型调用：开始时落一条记录，结束时补齐。 */
   startLlmCall(input: {
-    catId: CatId;
+    catId: MemberId;
     model: string;
     engine: "api" | "cli";
     taskId?: Task["id"];
@@ -516,7 +516,7 @@ export class Studio {
 
   /** 沙盒工具调用：先落一条 running，执行完再 finish。 */
   addToolCall(input: {
-    catId: CatId;
+    catId: MemberId;
     tool: ToolCall["tool"];
     args: Record<string, unknown>;
     label: string;
@@ -565,28 +565,28 @@ export class Studio {
     return call;
   }
 
-  // ── 写：每猫会话 ──────────────────────────────────────
+  // ── 写：每成员会话 ──────────────────────────────────────
 
-  /** 取某只猫的会话（没有则创建一个空的）。 */
-  sessionFor(catId: CatId): CatSession {
+  /** 取某个成员的会话（没有则创建一个空的）。 */
+  sessionFor(catId: MemberId): MemberSession {
     const existing = this.state.catSessions[catId];
     if (existing) return existing;
-    const created: CatSession = { catId, episodes: [], lessons: [], updatedAt: now() };
+    const created: MemberSession = { catId, episodes: [], lessons: [], updatedAt: now() };
     this.state.catSessions[catId] = created;
     return created;
   }
 
   /**
-   * 记录一只猫在某任务里的经历（任务结束时调用）。
+   * 记录一个成员在某任务里的经历（任务结束时调用）。
    * 只保留最近 8 条，避免 prompt 无限膨胀。
    */
   recordEpisode(input: {
-    catId: CatId;
+    catId: MemberId;
     taskId: Task["id"];
     title: string;
     summary: string;
     outcome: "done" | "abandoned" | "open";
-  }): CatEpisode {
+  }): MemberEpisode {
     const session = this.sessionFor(input.catId);
     const episode = {
       taskId: input.taskId,
@@ -603,8 +603,8 @@ export class Studio {
     return episode;
   }
 
-  /** 把一条教训挂到具体某只猫名下。 */
-  attachLesson(catId: CatId, entry: MemoryEntry): void {
+  /** 把一条教训挂到具体某个成员名下。 */
+  attachLesson(catId: MemberId, entry: MemoryEntry): void {
     const session = this.sessionFor(catId);
     session.lessons = [entry, ...session.lessons.filter((e) => e.id !== entry.id)].slice(0, 12);
     session.updatedAt = now();
@@ -613,8 +613,8 @@ export class Studio {
 
   // ── 写：易变状态 ──────────────────────────────────────
 
-  /** 流式草稿：猫正在说的话。传 null 清空。 */
-  setDraft(roomId: RoomId, draft: { catId: CatId; text: string } | null): void {
+  /** 流式草稿：成员正在说的话。传 null 清空。 */
+  setDraft(roomId: RoomId, draft: { catId: MemberId; text: string } | null): void {
     const current = this.state.drafts[roomId];
     if (!draft) {
       if (!current) return;
@@ -628,7 +628,7 @@ export class Studio {
     this.notify();
   }
 
-  setTyping(roomId: RoomId, catId: CatId | null): void {
+  setTyping(roomId: RoomId, catId: MemberId | null): void {
     if (!this.state.typing[roomId] && !catId) return;
     if (this.state.typing[roomId] === catId) return;
     this.state.typing[roomId] = catId;
@@ -690,7 +690,7 @@ export class Studio {
       (task) => task.roomId === roomId && (task.status === "active" || task.status === "stalled"),
     );
     if (active.length > 0) {
-      throw new Error(`这个房间还有 ${active.length} 个进行中的任务，先等它们结束或重置猫咖`);
+      throw new Error(`这个房间还有 ${active.length} 个进行中的任务，先等它们结束或重置交付台`);
     }
     const taskIds = new Set(this.state.tasks.filter((task) => task.roomId === roomId).map((task) => task.id));
     const removed = {
@@ -729,20 +729,20 @@ export class Studio {
   }
 
   /**
-   * 编辑猫猫档案（名字 / 称号 / 性格 / 口头禅 / 招呼语 / 主题色）与真实模式模型覆盖。
+   * 编辑成员档案（名字 / 称号 / 性格 / 口头禅 / 招呼语 / 主题色）与真实模式模型覆盖。
    * id、角色、头像、品种不可改。改名后 @ 解析会自动用新名字。
    */
-  updateCat(catId: CatId, patch: CatPatch): Cat {
+  updateCat(catId: MemberId, patch: CatPatch): Member {
     const index = this.state.cats.findIndex((c) => c.id === catId);
     const current = this.state.cats[index];
     if (index < 0 || !current) throw new Error(`cat not found: ${catId}`);
-    const next: Cat = { ...current };
+    const next: Member = { ...current };
 
     if (patch.name !== undefined) {
       const name = patch.name.trim();
       if (name.length < 1 || name.length > 8) throw new Error("名字需要 1–8 个字符");
       if (this.state.cats.some((c) => c.id !== catId && c.name === name)) {
-        throw new Error(`名字「${name}」已经被其他猫用了`);
+        throw new Error(`名字「${name}」已经被其他成员用了`);
       }
       next.name = name;
     }
@@ -875,7 +875,7 @@ export class Studio {
       roomId: room.id,
       author: "system",
       kind: "system",
-      text: "☕ 猫咖开门了。把需求丢进来，或者 @ 一只猫聊两句。",
+      text: "☕ 交付台开门了。把需求丢进来，或者 @ 一个成员聊两句。",
       mentions: [],
       at: this.roomGreetingsAt,
     });
@@ -908,18 +908,18 @@ export class Studio {
       this.state.handoffs = (parsed.handoffs ?? []) as Handoff[];
       this.state.artifacts = (parsed.artifacts ?? []) as Artifact[];
       this.state.memory = (parsed.memory ?? []) as MemoryEntry[];
-      this.state.catSessions = (parsed.catSessions ?? {}) as Record<string, CatSession>;
+      this.state.catSessions = (parsed.catSessions ?? {}) as Record<string, MemberSession>;
       this.state.llmCalls = (parsed.llmCalls ?? []) as LlmCall[];
       this.state.toolCalls = (parsed.toolCalls ?? []) as ToolCall[];
-      this.state.typing = (parsed.typing ?? {}) as Record<RoomId, CatId | null>;
+      this.state.typing = (parsed.typing ?? {}) as Record<RoomId, MemberId | null>;
       // 草稿是瞬态：重启后不恢复（否则会留下永远不消失的半截气泡）。
       this.state.drafts = {};
 
-      // 猫猫档案：以代码里的 CATS 为底，只接受安全的字段覆盖。
+      // 成员档案：以代码里的 CATS 为底，只接受安全的字段覆盖。
       const baseCats = this.state.cats;
       const savedCats = Array.isArray(parsed.cats) ? (parsed.cats as unknown[]) : [];
       if (savedCats.length > 0) {
-        const overrides = new Map<string, Partial<Cat>>();
+        const overrides = new Map<string, Partial<Member>>();
         for (const raw of savedCats) {
           if (!raw || typeof raw !== "object") continue;
           const record = raw as Record<string, unknown>;
@@ -993,8 +993,8 @@ export class Studio {
 }
 
 /** 从存档里只挑安全、合法的档案字段，其余丢弃。 */
-function sanitizeCatOverrides(record: Record<string, unknown>): Partial<Cat> {
-  const patch: Partial<Cat> = {};
+function sanitizeCatOverrides(record: Record<string, unknown>): Partial<Member> {
+  const patch: Partial<Member> = {};
   const takeText = (
     key: "name" | "title" | "persona" | "catchphrase" | "greeting",
     max: number,

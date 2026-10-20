@@ -33,10 +33,10 @@ describe("Studio", () => {
       roomId: "room_cafe",
       author: "user",
       kind: "chat",
-      text: "@烁烁 @不存在的猫",
-      mentions: ["shuoshuo", "ghost"],
+      text: "@周烁 @不存在的猫",
+      mentions: ["zhoushuo", "ghost"],
     });
-    assert.deepEqual(message.mentions, ["shuoshuo"]);
+    assert.deepEqual(message.mentions, ["zhoushuo"]);
     studio.close();
   });
 
@@ -49,7 +49,7 @@ describe("Studio", () => {
     });
     assert.equal(task.stage, "intake");
     assert.equal(task.status, "active");
-    assert.equal(task.owner, "xianxian");
+    assert.equal(task.owner, "linzhiyuan");
     assert.ok(task.title.endsWith("…"));
     studio.close();
   });
@@ -150,11 +150,11 @@ describe("HTTP", () => {
     const res = await fetch(`${base}/api/rooms/room_cafe/messages`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text: "@砚砚 帮忙看下" }),
+      body: JSON.stringify({ text: "@沈砚 帮忙看下" }),
     });
     assert.equal(res.status, 201);
     const message = (await res.json()) as { mentions: string[]; author: string };
-    assert.deepEqual(message.mentions, ["yanyan"]);
+    assert.deepEqual(message.mentions, ["shenyan"]);
     assert.equal(message.author, "user");
     assert.equal(driver.events.at(-1)?.type, "user_message");
   });
@@ -176,7 +176,7 @@ describe("HTTP", () => {
   test("静态首页与路径穿越防护", async () => {
     const home = await fetch(`${base}/`);
     assert.equal(home.status, 200);
-    assert.match(await home.text(), /Cat Café Lab/);
+    assert.match(await home.text(), /Delivery Lab/);
 
     const traversal = await fetch(`${base}/..%2f..%2fpackage.json`);
     assert.notEqual(traversal.status, 200);
@@ -270,7 +270,7 @@ describe("HTTP 错误码规范", () => {
       brief: "占着房间的任务",
       scenarioId: "export_csv",
     });
-    studio.updateTaskStage(task.id, "planning", "xianxian");
+    studio.updateTaskStage(task.id, "planning", "linzhiyuan");
 
     const res = await fetch(`${base}/api/tasks`, {
       method: "POST",

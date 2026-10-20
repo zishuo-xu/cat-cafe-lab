@@ -235,8 +235,8 @@ describe("集成 · 完整协作链路（mock 模式）", () => {
 
     // 先把设计和实现两张卡发出去，才有后面的评审链。
     const targets = new Set(handoffs.map((handoff) => handoff.to));
-    assert.ok(targets.has("shuoshuo"), "应有一张给烁烁的设计交接卡");
-    assert.ok(targets.has("jinjianceng"), "应有一张给金渐层的实现交接卡");
+    assert.ok(targets.has("zhoushuo"), "应有一张给周烁的设计交接卡");
+    assert.ok(targets.has("chenshi"), "应有一张给陈实的实现交接卡");
   });
 
   test("review 打回后产生了 v2 patch", () => {
@@ -271,12 +271,12 @@ describe("集成 · 完整协作链路（mock 模式）", () => {
     );
     // patch 作者是实现猫，review 作者是 reviewer（跨猫互审）。
     assert.ok(
-      patches.every((patch) => patch.author === "jinjianceng"),
-      "实现稿应由金渐层产出",
+      patches.every((patch) => patch.author === "chenshi"),
+      "实现稿应由陈实产出",
     );
     assert.ok(
-      reviewArtifacts.every((artifact) => artifact.author === "yanyan"),
-      "review 应由砚砚产出",
+      reviewArtifacts.every((artifact) => artifact.author === "shenyan"),
+      "review 应由沈砚产出",
     );
   });
 

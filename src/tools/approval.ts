@@ -1,5 +1,5 @@
 /**
- * 铲屎官审批队列。
+ * 负责人审批队列。
  *
  * driver 在执行"模型主动发起的工具调用"前会 request()，HTTP 层收到按钮点击后 resolve()。
  * 队列只存在内存里：进程重启后悬挂的审批随任务一起作废（不会误放行）。
@@ -7,7 +7,7 @@
 
 import type {
   ApprovalGate,
-  CatId,
+  MemberId,
   ToolApprovalDecision,
   ToolApprovalMode,
   ToolName,
@@ -15,7 +15,7 @@ import type {
 
 export interface PendingApproval {
   callId: string;
-  catId: CatId;
+  catId: MemberId;
   tool: ToolName;
   label: string;
   mode: ToolApprovalMode;
@@ -30,13 +30,13 @@ interface Entry extends PendingApproval {
 const APPROVAL_TIMEOUT_MS = 5 * 60 * 1000;
 
 export interface ApprovalRememberScope {
-  catId: CatId;
+  catId: MemberId;
   tool: ToolName;
 }
 
 export class ApprovalQueue implements ApprovalGate {
   private readonly entries = new Map<string, Entry>();
-  /** 记住的选择：同一只猫 + 同一工具，本进程内直接放行/拒绝，不再问。 */
+  /** 记住的选择：同一个成员 + 同一个工具，本进程内直接放行/拒绝，不再问。 */
   private readonly remembered = new Map<string, ToolApprovalDecision>();
   /** 超时处理回调（HTTP 层可用来在 UI 上提示）。 */
   onTimeout?: (callId: string) => void;
@@ -46,7 +46,7 @@ export class ApprovalQueue implements ApprovalGate {
     mode: ToolApprovalMode;
     tool: ToolName;
     label: string;
-    catId: CatId;
+    catId: MemberId;
   }): Promise<ToolApprovalDecision> {
     const key = rememberKey(input.catId, input.tool);
     const remembered = this.remembered.get(key);
@@ -116,6 +116,6 @@ export class ApprovalQueue implements ApprovalGate {
 }
 
 
-function rememberKey(catId: CatId, tool: ToolName): string {
+function rememberKey(catId: MemberId, tool: ToolName): string {
   return `${catId}:${tool}`;
 }

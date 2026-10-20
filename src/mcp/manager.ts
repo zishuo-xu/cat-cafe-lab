@@ -392,7 +392,7 @@ function generateId(name: string, existing: McpServerConfig[]): string {
   return id;
 }
 
-/** 给 driver 用的工具目录快照（按猫权限过滤）。 */
+/** 给 driver 用的工具目录快照（按成员权限过滤）。 */
 export function filterToolsForCat(
   tools: ToolDefinition[],
   allowed: string[] | undefined,

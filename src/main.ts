@@ -1,4 +1,4 @@
-/** 入口：组装 Studio / Brain / Driver / 设置 / HTTP，启动猫咖。 */
+/** 入口：组装 Studio / Brain / Driver / 设置 / HTTP，启动交付台。 */
 
 import { resolve } from "node:path";
 
@@ -99,8 +99,8 @@ server.listen(settings.port, "127.0.0.1", () => {
       ? `真实模式（${publicSettings.llm.model}）`
       : "演出模式（无需 key）";
   console.log("");
-  console.log("  🐾 Cat Café Lab · 猫咖工作台");
-  console.log(`  ${CATS.map((c) => `${c.name}(${c.species})`).join("  ")}`);
+  console.log("  🐾 Delivery Lab · 协作交付台");
+  console.log(`  ${CATS.map((c) => `${c.name}(${c.discipline})`).join("  ")}`);
   console.log(`  http://127.0.0.1:${settings.port}`);
   console.log(`  mode: ${modeText} · data: ${dataDir}`);
   const mcpTools = registry.list().filter((tool) => tool.source === "mcp").length;
@@ -117,7 +117,7 @@ server.listen(settings.port, "127.0.0.1", () => {
 });
 
 function shutdown(): void {
-  console.log("\n  猫猫下班了，喵。");
+  console.log("\n  本次协作结束。");
   server.close();
   void mcp.close();
   workspaces.close();

@@ -1,5 +1,5 @@
 /**
- * Cat Café Lab · 前端主程序
+ * Delivery Lab · 前端主程序
  *
  * - 零框架 / 零构建 / 原生 ESM
  * - 初始化 GET /api/state，之后靠 SSE /api/events 收全量快照（{seq, state}）
@@ -112,7 +112,7 @@ const app = {
   stallMs: FALLBACK_STALL_MS,
   /** 全局 LLM 模型名（来自 /api/settings），用于「跟随全局」标签。 */
   globalModel: "",
-  /** /api/tools 工具目录（用于来源徽标与每猫权限）。 */
+  /** /api/tools 工具目录（用于来源徽标与按成员权限）。 */
   toolCatalog: [],
   /** /api/skills 技能目录。 */
   skillCatalog: [],
@@ -133,7 +133,7 @@ const settingsState = {
   clearKeyRequested: false,
 };
 
-/** 猫猫档案编辑对话框状态。 */
+/** 团队档案编辑对话框状态。 */
 const catEditState = { catId: null, saving: false, accent: "#D9A066" };
 
 /** 剧本库 / 新任务场景选择的临时状态。 */
@@ -331,7 +331,7 @@ const mcpState = {
   deleteConfirmId: "",
 };
 
-/** 每猫工具权限 / 技能弹窗状态。 */
+/** 按成员工具权限 / 技能弹窗状态。 */
 const catAccessState = {
   catId: null,
   tools: [],
@@ -503,7 +503,7 @@ function currentDraft() {
 const DEFAULT_WORKSPACE_ID = "ws_sandbox";
 const DEFAULT_WORKSPACE = {
   id: DEFAULT_WORKSPACE_ID,
-  name: "猫咖沙盒",
+  name: "交付台沙盒",
   root: "",
   policy: "read-write",
   kind: "sandbox",
@@ -540,12 +540,12 @@ function workspaceRoomBadge(room) {
   const workspace = workspaceById(room.workspaceId ?? DEFAULT_WORKSPACE_ID);
   if (!workspace) {
     if (workspaceState.available === false) return { text: "工作区未就绪", policy: "read-only" };
-    return { text: "猫咖沙盒", policy: "read-write" };
+    return { text: "交付台沙盒", policy: "read-write" };
   }
   return {
     text:
       workspace.kind === "sandbox"
-        ? "猫咖沙盒"
+        ? "交付台沙盒"
         : `${workspace.name} · ${workspacePolicyLabel(workspace.policy)}`,
     policy: workspace.policy,
   };
@@ -558,7 +558,7 @@ function roomTasks() {
   return room ? tasks.filter((task) => task.roomId === room.id) : tasks;
 }
 
-/** 最后一个未完成的任务（猫猫「工作中」状态以此为准）。 */
+/** 最后一个未完成的任务（团队「工作中」状态以此为准）。 */
 function latestActiveTask() {
   const tasks = roomTasks();
   for (let index = tasks.length - 1; index >= 0; index -= 1) {
@@ -993,7 +993,7 @@ function cacheDom() {
   els.catEditForm = $("#cat-edit-form");
   els.catEditAvatar = $("#cat-edit-avatar");
   els.catEditNamePreview = $("#cat-edit-name-preview");
-  els.catEditSpecies = $("#cat-edit-species");
+  els.catEditSpecies = $("#cat-edit-discipline");
   els.catName = $("#cat-name");
   els.catTitle = $("#cat-title");
   els.catPersona = $("#cat-persona");
@@ -1229,7 +1229,7 @@ function paintChrome() {
   if (els.roomTopic && room) els.roomTopic.textContent = room.topic;
 }
 
-// ── 左栏：猫猫名册 ──────────────────────────────────────────────────────
+// ── 左栏：成员名册 ──────────────────────────────────────────────────────
 
 function renderRoster() {
   const host = els.roster;
@@ -1240,7 +1240,7 @@ function renderRoster() {
   if (!cats.length) {
     if (app.sig.roster === "empty") return;
     app.sig.roster = "empty";
-    host.replaceChildren(h("div", { class: "empty", text: "猫猫还没到店，稍等刷新。" }));
+    host.replaceChildren(h("div", { class: "empty", text: "团队还没到店，稍等刷新。" }));
     return;
   }
 
@@ -1273,10 +1273,10 @@ function renderRoster() {
       status === "talking"
         ? "说话中"
         : status === "typing"
-          ? "打字中"
+          ? "工作中"
           : status === "working"
             ? `工作中 · ${STAGE_LABEL.get(workTask?.stage) ?? "进行中"}`
-            : "睡觉中";
+            : "空闲";
     const mood = status === "sleeping" ? "sleep" : status === "typing" || status === "talking" ? "typing" : "idle";
 
     return h(
@@ -1289,7 +1289,7 @@ function renderRoster() {
         "data-cat-id": cat.id,
         style: `--accent:${safeCss(cat.accent)}`,
         title: `${cat.persona} 口头禅：「${cat.catchphrase}」`,
-        "aria-label": `插入 @${cat.name}，${cat.species}，当前${stageText}`,
+        "aria-label": `插入 @${cat.name}，${cat.discipline}，当前${stageText}`,
       },
       h(
         "span",
@@ -1305,7 +1305,7 @@ function renderRoster() {
           { class: "cat-name" },
           cat.name,
           status === "working" ? h("i", { class: "cat-working-dot", "aria-hidden": "true" }) : null,
-          h("span", { class: "cat-species", text: cat.species }),
+          h("span", { class: "cat-discipline", text: cat.discipline }),
         ),
         h(
           "span",
@@ -1374,7 +1374,7 @@ function renderTasks() {
         "div",
         { class: "empty" },
         h("strong", { text: "还没有任务" }),
-        h("span", { text: "点上面的「＋ 新任务」开工；下面的输入框是用来跟猫猫聊天的。" }),
+        h("span", { text: "点上面的「＋ 新任务」开工；下面的输入框是用来跟团队聊天的。" }),
       ),
     );
     return;
@@ -1540,7 +1540,7 @@ function recoveryPanelNode(task, info) {
           disabled: saving,
         },
         h("span", { text: "换个方案" }),
-        h("small", { text: "把新方向告诉猫" }),
+        h("small", { text: "把新方向告诉团队" }),
       ),
       h(
         "button",
@@ -1601,7 +1601,7 @@ function renderProgress() {
         "div",
         { class: "empty" },
         h("strong", { text: "还没有任务" }),
-        h("span", { text: "提一个需求，四只猫会在这张桌子上开工。" }),
+        h("span", { text: "提一个需求，团队会在这张工作台上开工。" }),
         h("button", {
           type: "button",
           class: "btn btn--tiny btn--primary",
@@ -1690,7 +1690,7 @@ function renderProgress() {
           "data-action": "nudge",
           "data-task-id": task.id,
           hidden: !stalled || Boolean(recovery) || pendingApprovalCount > 0,
-          text: "🐾 催一下",
+          text: "↻ 催一下",
         }),
       ),
     ),
@@ -1719,7 +1719,7 @@ function renderHandoffs() {
   app.sig.handoffs = key;
 
   if (!task) {
-    host.replaceChildren(emptyNote("有任务后，猫猫的结构化交接卡会出现在这里。"));
+    host.replaceChildren(emptyNote("有任务后，团队的结构化交接卡会出现在这里。"));
     return;
   }
   if (!handoffs.length) {
@@ -1772,7 +1772,7 @@ function renderMemory() {
 
   if (!memories.length) {
     host.replaceChildren(
-      emptyNote("猫猫还没把决定写进共享记忆。任务完成后，宪宪会把决策和教训记在这里。"),
+      emptyNote("还没有决策被写进共享记忆。任务完成后，架构师会把决策和教训记在这里。"),
     );
     return;
   }
@@ -1813,7 +1813,7 @@ function memoryNode(entry) {
     h(
       "div",
       { class: "memory-source" },
-      sourceTask ? `来自：${sourceTask.title}` : "来自：猫咖协作",
+      sourceTask ? `来自：${sourceTask.title}` : "来自：交付台协作",
       h("span", { text: ` · ${fmtTime(entry.createdAt)}` }),
     ),
   );
@@ -1849,7 +1849,7 @@ function handoffCardNode(handoff) {
           ? h("span", {
               class: "mini-avatar",
               html: avatarSvg(from, { size: 22 }),
-              title: `${from.name} · ${from.species}`,
+              title: `${from.name} · ${from.discipline}`,
             })
           : null,
         h("span", { text: from?.name ?? "未知" }),
@@ -1858,7 +1858,7 @@ function handoffCardNode(handoff) {
           ? h("span", {
               class: "mini-avatar",
               html: avatarSvg(to, { size: 22 }),
-              title: `${to.name} · ${to.species}`,
+              title: `${to.name} · ${to.discipline}`,
             })
           : null,
         h("span", { text: to?.name ?? "未知" }),
@@ -1881,7 +1881,7 @@ function handoffCardNode(handoff) {
           { class: "handoff-warning" },
           h("span", { "aria-hidden": "true", text: "⚠" }),
           h("span", {
-            text: `这张卡缺「${missing.join("、")}」——接收猫会先追问再开工。`,
+            text: `这张卡缺「${missing.join("、")}」——接收方会先追问再开工。`,
           }),
         )
       : null,
@@ -1899,7 +1899,7 @@ function handoffFieldNode(field, card, missingLabels) {
 
   const valueHost = h("div", { class: "hc-val" });
   if (missing) {
-    valueHost.appendChild(h("span", { class: "hc-missing", text: "空着 · 接收猫会追问" }));
+    valueHost.appendChild(h("span", { class: "hc-missing", text: "空着 · 接收方会追问" }));
   } else {
     const value = card?.[field.key];
     if (Array.isArray(value)) {
@@ -2107,7 +2107,7 @@ function draftBubbleNode(draft) {
     style: `--accent:${safeCss(cat.accent ?? "#D9A066")}`,
     role: "status",
     "aria-live": "polite",
-    "aria-label": `${cat.name ?? "猫猫"}正在输入`,
+    "aria-label": `${cat.name ?? "团队"}正在输入`,
     "data-draft": "true",
   });
   node.appendChild(
@@ -2122,7 +2122,7 @@ function draftBubbleNode(draft) {
     h(
       "header",
       { class: "msg-head" },
-      h("span", { class: "msg-author", text: cat.name ?? "猫猫" }),
+      h("span", { class: "msg-author", text: cat.name ?? "团队" }),
       h("span", {
         class: "msg-role",
         text: String(cat.title ?? "").split(" / ")[0],
@@ -2229,7 +2229,7 @@ function renderTimeline() {
       host.querySelector(".timeline-empty")?.remove();
     } else if (!host.querySelector(".timeline-empty")) {
       host.replaceChildren(
-        h("div", { class: "timeline-empty", text: "房间很安静。提一个需求，或者 @ 一只猫聊两句。" }),
+        h("div", { class: "timeline-empty", text: "房间很安静。提一个需求，或者 @ 某个成员聊两句。" }),
       );
     }
     timeline.ids = [];
@@ -2380,7 +2380,7 @@ function messageNode(message, animate) {
 }
 
 function messageHead(message, cat, isUser) {
-  const name = isUser ? "铲屎官" : (cat?.name ?? "猫猫");
+  const name = isUser ? "负责人" : (cat?.name ?? "团队");
   const author = isUser
     ? h("span", { class: "msg-author", text: name })
     : h("button", {
@@ -2409,7 +2409,7 @@ function messageHead(message, cat, isUser) {
 function mentionsRow(message) {
   const ids = message.mentions ?? [];
   if (!ids.length) return null;
-  const row = h("div", { class: "msg-mentions", "aria-label": "被 @ 的猫" });
+  const row = h("div", { class: "msg-mentions", "aria-label": "被 @ 的成员" });
   let count = 0;
   for (const id of ids) {
     const cat = catById(id);
@@ -2598,9 +2598,9 @@ function updateStallUi() {
       task.status === "done"
         ? recovery?.mode === "review-loop"
           ? "任务已被强制收尾，可以继续试试或收尾。"
-          : "任务已完成，猫猫去晒太阳了。"
+          : "任务已完成，团队去晒太阳了。"
         : pendingApprovalCount > 0
-          ? "等待你批准工具调用中，批准后猫才会继续。"
+          ? "等待你批准工具调用中，批准后才会继续。"
           : stalled
             ? hardStalled
               ? "任务卡住了，可以继续试试或换个方案。"
@@ -3179,7 +3179,7 @@ function onGlobalClick(event) {
     case "room-busy-ack":
       // 用户确认"这是补充给当前任务的"：之后发送带上 force，不再提醒。
       app.forceNextMessage = true;
-      toast("好，这条会当作当前任务的补充 🐾");
+      toast("好，这条会当作当前任务的补充");
       els.input?.focus();
       break;
     case "focus-needs-me":
@@ -3535,7 +3535,7 @@ async function sendMessage() {
   const text = els.input.value.trim();
   if (!text) return;
 
-  // 真实用户最常见的错误：把一整段需求粘进聊天框，以为猫会开工。
+  // 真实用户最常见的错误：把一整段需求粘进聊天框，以为团队会开工。
   // 聊天不会创建任务，所以这里先问一次；只有用户明确选"就聊两句"才放行。
   if (looksLikeTaskBrief(text) && !app.briefHintAllowed) {
     showBriefHint(text);
@@ -3596,11 +3596,11 @@ function showBriefHint(text) {
   dialog.innerHTML = `
     <div class="confirm-card">
       <h2>这看起来是一个需求</h2>
-      <p>聊天框里的内容只会让猫"聊两句"，<strong>不会开工做任务</strong>。</p>
-      <p>要把它交给四只猫正式做吗？会创建任务并进入接单 → 规划 → 实现 → 评审的流程。</p>
+      <p>聊天框里的内容只会让成员「聊两句」，<strong>不会开工做任务</strong>。</p>
+      <p>要把它交给团队正式做吗？会创建任务并进入接单 → 规划 → 实现 → 评审的流程。</p>
       <footer>
         <button type="button" data-choice="chat">就聊两句</button>
-        <button type="button" class="primary" data-choice="task">开任务 🐾</button>
+        <button type="button" class="primary" data-choice="task">开任务</button>
       </footer>
     </div>`;
   document.body.append(dialog);
@@ -3636,7 +3636,7 @@ async function nudgeTask(taskId) {
       method: "POST",
     });
     if (!response.ok) throw new Error(await readApiError(response));
-    toast("已经敲了敲桌子：催一下 🐾");
+    toast("已经敲了敲桌子：催一下 ");
   } catch (error) {
     toast(`催一下失败：${error.message}`, "error");
   } finally {
@@ -3701,7 +3701,7 @@ function refreshMentionPopup() {
     return (
       cat.name.toLowerCase().includes(lower) ||
       cat.id.toLowerCase().includes(lower) ||
-      String(cat.species ?? "").includes(prefix)
+      String(cat.discipline ?? "").includes(prefix)
     );
   });
   if (!cats.length) {
@@ -3748,7 +3748,7 @@ function renderMentionPopup() {
           "span",
           {},
           h("span", { class: "mention-item-name", text: cat.name }),
-          h("span", { class: "mention-item-sub", text: `${cat.species} · ${cat.title}` }),
+          h("span", { class: "mention-item-sub", text: `${cat.discipline} · ${cat.title}` }),
         ),
         h("span", { class: "mention-item-hint", text: index === app.mention.index ? "Enter ↵" : "" }),
       ),
@@ -3892,7 +3892,7 @@ function updateCreateState() {
   if (!els.createBtn || !els.brief) return;
   const length = els.brief.value.trim().length;
   els.createBtn.disabled = app.creating || length < 4;
-  els.createBtn.textContent = app.creating ? "正在召唤猫猫…" : "让猫猫开工 🐾";
+  els.createBtn.textContent = app.creating ? "正在召唤团队…" : "开始交付";
 }
 
 function showFormError(message) {
@@ -3911,7 +3911,7 @@ async function createTask() {
   if (app.creating || !els.brief) return;
   const brief = els.brief.value.trim();
   if (brief.length < 4) {
-    showFormError("至少写 4 个字，猫猫才看得懂。");
+    showFormError("至少写 4 个字，团队才看得懂。");
     return;
   }
 
@@ -3936,7 +3936,7 @@ async function createTask() {
     renderWorkspace();
     updateStallUi();
     setTab("chat");
-    toast("新任务已开工，宪宪先接单 🐾");
+    toast("新任务已开工，林知远先接单 ");
     els.input?.focus();
   } catch (error) {
     showFormError(`创建失败：${error.message}`);
@@ -4065,7 +4065,7 @@ function resetSettingsForm() {
   }
   if (els.settingsStreamingHint) {
     els.settingsStreamingHint.textContent =
-      "开启后真实模式下猫的话会逐段出现；关闭则等整段说完再显示。演出模式不受影响。";
+      "开启后真实模式下成员的话会逐段出现；关闭则等整段说完再显示。演出模式不受影响。";
     delete els.settingsStreamingHint.dataset.missing;
   }
   if (els.settingsBaseUrl) els.settingsBaseUrl.value = "";
@@ -4102,7 +4102,7 @@ function fillSettingsForm(data) {
   if (els.settingsStreamingHint) {
     if (streamingAvailable) {
       els.settingsStreamingHint.textContent =
-        "开启后真实模式下猫的话会逐段出现；关闭则等整段说完再显示。演出模式不受影响。";
+        "开启后真实模式下成员的话会逐段出现；关闭则等整段说完再显示。演出模式不受影响。";
       delete els.settingsStreamingHint.dataset.missing;
     } else {
       els.settingsStreamingHint.textContent =
@@ -4332,7 +4332,7 @@ function updateSettingsButtons() {
   if (els.settingsConfirmReset) els.settingsConfirmReset.disabled = settingsState.resetting;
   if (els.settingsResetBtn) {
     els.settingsResetBtn.disabled = settingsState.resetting;
-    els.settingsResetBtn.textContent = settingsState.resetting ? "重置中…" : "重置猫咖";
+    els.settingsResetBtn.textContent = settingsState.resetting ? "重置中…" : "重置交付台";
   }
   if (els.settingsForm) {
     els.settingsForm.setAttribute("aria-busy", settingsState.loading ? "true" : "false");
@@ -4526,7 +4526,7 @@ async function resetStudio() {
     void refreshHealth();
     setSettingsResetConfirm(false);
     closeSettings();
-    toast("猫咖已重置，任务、消息、产物与记忆已清空");
+    toast("交付台已重置，任务、消息、产物与记忆已清空");
   } catch (error) {
     setSettingsResetConfirm(false);
     showSettingsError(`重置失败：${error.message}`);
@@ -4537,7 +4537,7 @@ async function resetStudio() {
 }
 
 
-// ── 设置 · 猫猫与模型 / 猫猫档案 ────────────────────────────────────────
+// ── 设置 · 成员与模型 / 团队档案 ────────────────────────────────────────
 
 // ── 任务轨迹面板 ───────────────────────────────────────────────────────
 
@@ -4567,7 +4567,7 @@ function traceNumber(value) {
 
 function traceActorName(actor, actorName) {
   if (actorName) return actorName;
-  if (actor === "user") return "铲屎官";
+  if (actor === "user") return "负责人";
   if (actor === "system") return "系统";
   return catById(actor)?.name ?? actor ?? "未知";
 }
@@ -5053,7 +5053,7 @@ function renderModelProfiles() {
         "div",
         { class: "empty" },
         h("strong", { text: "模型档案服务未就绪" }),
-        h("span", { text: modelProfileState.error || "接口 404/503；每猫手动模型配置仍可用。" }),
+        h("span", { text: modelProfileState.error || "接口 404/503；按成员手动模型配置仍可用。" }),
         h("button", {
           type: "button",
           class: "btn btn--ghost btn--tiny",
@@ -5088,9 +5088,9 @@ function modelProfileCard(profile) {
       h(
         "span",
         { class: "model-profile-map-item" },
-        h("strong", { text: "四只猫" }),
+        h("strong", { text: "四个成员" }),
         document.createTextNode(" → "),
-        h("code", { text: "跟随全局模型", title: "清空所有每猫覆盖" }),
+        h("code", { text: "跟随全局模型", title: "清空所有按成员设置" }),
       ),
     );
   } else {
@@ -5138,7 +5138,7 @@ function modelProfileCard(profile) {
       { class: "model-profile-actions" },
       h("span", {
         class: "model-profile-badge",
-        text: `${cats.length} 只猫`,
+        text: `${cats.length} 个成员`,
       }),
       h("button", {
         type: "button",
@@ -5248,7 +5248,7 @@ function renderCatModelList() {
   if (!host) return;
   const cats = app.state?.cats ?? [];
   if (!cats.length) {
-    host.replaceChildren(emptyNote("猫猫还没到店，稍后刷新。"));
+    host.replaceChildren(emptyNote("团队还没到店，稍后刷新。"));
     return;
   }
   host.replaceChildren(...cats.map((cat) => catModelRow(cat)));
@@ -5293,7 +5293,7 @@ function catModelRow(cat) {
             text: effectiveBadge,
           }),
         ),
-        h("span", { text: `${cat.species} · ${cat.title}` }),
+        h("span", { text: `${cat.discipline} · ${cat.title}` }),
       ),
       h("button", {
         type: "button",
@@ -5428,7 +5428,7 @@ async function putCat(catId, patch) {
   return response.json();
 }
 
-/** 同步服务端返回的 Cat（名字/颜色立即反映到名册与消息）。 */
+/** 同步服务端返回的 Member（名字/颜色立即反映到名册与消息）。 */
 function applyUpdatedCat(updated) {
   if (!updated || typeof updated !== "object") return;
   const cats = app.state?.cats ?? [];
@@ -5442,7 +5442,7 @@ function applyUpdatedCat(updated) {
   void refreshState().catch(() => {});
 }
 
-// —— 猫猫档案对话框 ——
+// —— 团队档案对话框 ——
 
 const ACCENT_PRESETS = [
   "#7C9EB2",
@@ -5520,7 +5520,7 @@ function pickCatAccent(accent) {
 function updateCatEditPreview() {
   const cat = catById(catEditState.catId);
   if (!cat) return;
-  const name = els.catName?.value.trim() || cat.name || "猫猫";
+  const name = els.catName?.value.trim() || cat.name || "团队";
   const title = els.catTitle?.value.trim() || cat.title || "";
   const accent = els.catAccent?.value || catEditState.accent;
   catEditState.accent = toColorInputValue(accent);
@@ -5532,7 +5532,7 @@ function updateCatEditPreview() {
     );
   }
   if (els.catEditNamePreview) els.catEditNamePreview.textContent = name;
-  if (els.catEditSpecies) els.catEditSpecies.textContent = `${cat.species} · ${title}`;
+  if (els.catEditSpecies) els.catEditSpecies.textContent = `${cat.discipline} · ${title}`;
 }
 
 function onCatEditInput(event) {
@@ -6121,7 +6121,7 @@ function toolCardNode(call, message) {
       h("span", {
         class: "tool-approval-hint",
         "data-role": "approval-hint",
-        text: "等待你批准中，批准后猫才会继续；期间任务不会判定卡住。",
+        text: "等待你批准中，批准后才会继续；期间任务不会判定卡住。",
       }),
       h("button", {
         type: "button",
@@ -6162,7 +6162,7 @@ function toolCardNode(call, message) {
       h("span", {
         class: "tool-approval-note",
         "data-role": "approval-note",
-        text: "记住后同一只猫的同类工具调用自动放行，重启服务后失效。",
+        text: "记住后同一只成员的同类工具调用自动放行，重启服务后失效。",
       }),
       h("span", {
         class: "tool-approval-error",
@@ -6175,7 +6175,7 @@ function toolCardNode(call, message) {
       "div",
       { class: "tool-rejected-note", "data-role": "rejected-note", hidden: true },
       h("span", { "aria-hidden": "true", text: "🚫" }),
-      h("span", { text: "铲屎官拒绝了这次执行。" }),
+      h("span", { text: "负责人拒绝了这次执行。" }),
     ),
     h(
       "div",
@@ -6341,10 +6341,10 @@ function updateToolApprovalUi(card) {
     else if (expired) hint.textContent = "已超过 5 分钟，服务端会按拒绝处理；等待任务状态更新…";
     else if (rememberedSent === "approved") hint.textContent = "已批准并记住：同类工具后续自动放行。";
     else if (rememberedSent === "rejected") hint.textContent = "已拒绝并记住：同类工具后续自动拒绝。";
-    else if (sent === "approved") hint.textContent = "已批准，等待猫继续…";
+    else if (sent === "approved") hint.textContent = "已批准，等待继续…";
     else if (sent === "rejected") hint.textContent = "已拒绝，等待状态更新…";
     else if (deciding) hint.textContent = "处理中…";
-    else hint.textContent = "等待你批准中，批准后猫才会继续；期间任务不会判定卡住。";
+    else hint.textContent = "等待你批准中，批准后才会继续；期间任务不会判定卡住。";
   }
 }
 
@@ -6415,7 +6415,7 @@ function updateNeedsMe() {
   for (const node of els.needsNodes ?? []) node.hidden = count === 0;
   for (const node of els.needsCounts ?? []) node.textContent = String(count);
   const room = currentRoom();
-  const base = room ? `${room.name} · Cat Café Lab` : "Cat Café Lab · 猫咖工作台";
+  const base = room ? `${room.name} · Delivery Lab` : "Delivery Lab · 协作交付台";
   document.title = count > 0 ? `(${count}) ${base}` : base;
 }
 
@@ -6519,7 +6519,7 @@ async function decideToolCall(callId, decision, trigger, options = {}) {
       const call = toolCallById(callId);
       const cat = catById(call?.catId);
       toast(
-        `已记住：${cat?.name ?? "这只猫"} + ${call?.tool ?? "该工具"}，后续同类调用不再询问`,
+        `已记住：${cat?.name ?? "这个成员"} + ${call?.tool ?? "该工具"}，后续同类调用不再询问`,
       );
     }
     void loadApprovals();
@@ -6566,8 +6566,8 @@ async function submitTaskAction(taskId, action, note) {
       throw new Error("任务恢复服务未就绪（接口 404/503）");
     }
     if (!response.ok) throw new Error(await readApiError(response));
-    if (action === "continue") toast("已让猫继续试试，再给它一次机会");
-    else if (action === "pivot") toast("已换个方案，猫会按新方向继续");
+    if (action === "continue") toast("已恢复推进，再给它一次机会");
+    else if (action === "pivot") toast("已换个方案，成员会按新方向继续");
     else toast("已收尾，并记了一条 manual-close 教训");
     window.setTimeout(() => {
       void refreshState().catch(() => {});
@@ -6718,7 +6718,7 @@ function syntheticToolMessageNode(call) {
     h(
       "header",
       { class: "msg-head" },
-      h("span", { class: "msg-author", text: cat?.name ?? "猫猫" }),
+      h("span", { class: "msg-author", text: cat?.name ?? "团队" }),
       h("span", { class: "msg-role", text: "工具" }),
       h("time", {
         class: "msg-time",
@@ -6919,7 +6919,7 @@ function renderSandbox() {
     host.replaceChildren(
       emptyNote(
         isSandbox
-          ? "沙盒还是空的。猫猫写文件后会出现在这里。"
+          ? "沙盒还是空的。团队写文件后会出现在这里。"
           : "这个工作区还没有文件。",
       ),
     );
@@ -7081,8 +7081,8 @@ function updateToolsHint() {
     return;
   }
   els.settingsToolsHint.textContent = checked
-    ? "开启：猫可以读/写工作区文件并运行命令；关闭：只产出文字。"
-    : "已关闭：猫不会写文件或运行命令，只会产出文字。";
+    ? "开启：可以读/写工作区文件并运行命令；关闭：只产出文字。"
+    : "已关闭：不会写文件或运行命令，只会产出文字。";
 }
 
 
@@ -7364,7 +7364,7 @@ function roomDeleteBlockReason(room) {
   if (roomAdminState.available === false) return "房间管理服务未就绪（PATCH/DELETE 404/503）";
   const active = activeTasksInRoom(room.id);
   if (active.length > 0) {
-    return `还有 ${active.length} 个进行中 / 卡住的任务，先等它们结束或重置猫咖`;
+    return `还有 ${active.length} 个进行中 / 卡住的任务，先等它们结束或重置交付台`;
   }
   return "";
 }
@@ -10364,7 +10364,7 @@ async function confirmDeleteMcp(serverId) {
   }
 }
 
-// ── 每猫工具权限 / 技能 ────────────────────────────────────────────────
+// ── 按成员工具权限 / 技能 ────────────────────────────────────────────────
 
 function openCatAccess(catId) {
   const cat = catById(catId);
@@ -10381,7 +10381,7 @@ function openCatAccess(catId) {
   catAccessState.skillsError = "";
 
   if (els.catAccessSub) {
-    els.catAccessSub.textContent = `${cat.name} · ${cat.species} · 配置它能使用的工具与技能包。`;
+    els.catAccessSub.textContent = `${cat.name} · ${cat.discipline} · 配置它能使用的工具与技能包。`;
   }
   hideCatAccessError();
   updateCatAccessCounts();

@@ -38,7 +38,7 @@ export class Sandbox implements SandboxRunner {
     this.root = resolve(root);
   }
 
-  /** 没有项目时种一份初始代码；已有则保持猫猫上次的成果。 */
+  /** 没有项目时种一份初始代码；已有则保持上次的成果。 */
   ensureSeed(): void {
     mkdirSync(this.root, { recursive: true });
     if (existsSync(join(this.root, "package.json"))) return;

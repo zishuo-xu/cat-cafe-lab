@@ -7,7 +7,7 @@
  * 2. **绝不泄露 key**：apiKey 只出现在请求头里；日志、错误信息、持久化都不带。
  * 3. **零依赖**：只用 Node 原生 fetch + AbortController。
  *
- * 模型被要求只输出一个 CatTurn[] JSON 数组。解析后逐条做结构校验：
+ * 模型被要求只输出一个 AgentTurn[] JSON 数组。解析后逐条做结构校验：
  * kind 必须在白名单内，字段类型必须正确，未知 kind 直接丢弃；无法产出任何合法
  * turn 时视为失败并降级。工具调用（tool turn）同样走白名单 + input 结构校验，
  * 执行回执会通过 ctx.recentToolResults / trigger.toolResults 喂回 prompt。
@@ -15,9 +15,9 @@
 
 import type {
   ArtifactKind,
-  CatBrain,
-  CatId,
-  CatTurn,
+  AgentBrain,
+  MemberId,
+  AgentTurn,
   HandoffCard,
   LlmSettings,
   MemoryKind,
@@ -34,13 +34,13 @@ import type {
 } from "../domain/types.ts";
 
 /**
- * 内置工具名。真实模型常请求「真实存在但不在这只猫权限里」的工具（例如宪宪请求 write_file）。
+ * 内置工具名。真实模型常请求「真实存在但不在这个成员权限里」的工具（例如林知远请求 write_file）。
  * 这类 turn 要保留，交给 driver 拒绝并回喂「没有权限」，模型才能学到边界；
  * 而完全编造的工具名（delete_everything）直接丢弃。
  */
 const BUILTIN_TOOL_NAMES = new Set(["read_file", "write_file", "list_files", "run_command"]);
 
-/** 默认请求超时：20s。真实模型偶尔慢，再久就不如先让猫猫动起来。 */
+/** 默认请求超时：20s。真实模型偶尔慢，再久就不如先让成员动起来。 */
 export const DEFAULT_TIMEOUT_MS = 20_000;
 /**
  * 流式请求的超时。
@@ -76,7 +76,7 @@ const MEMORY_KINDS: readonly MemoryKind[] = ["decision", "lesson", "preference"]
 const REVIEW_VERDICTS: readonly ReviewVerdict[] = ["approve", "request_changes"];
 
 const ROLE_LABEL: Record<Role, string> = {
-  architect: "主架构师 / 主理猫",
+  architect: "主架构师 / 架构师",
   reviewer: "Reviewer / 安全与细节",
   designer: "设计 / 创意",
   implementer: "实现 / 多面手",
@@ -106,9 +106,9 @@ export interface LlmBrainOptions {
 
 export function createLlmBrain(
   settings: LlmSettings,
-  fallback: CatBrain,
+  fallback: AgentBrain,
   options: LlmBrainOptions = {},
-): CatBrain {
+): AgentBrain {
   const fetchImpl = options.fetchImpl ?? globalThis.fetch;
   const timeoutMs = positiveInt(options.timeoutMs, DEFAULT_TIMEOUT_MS);
   const streamTimeoutMs = positiveInt(options.timeoutMs, STREAM_TIMEOUT_MS);
@@ -151,14 +151,14 @@ export function createLlmBrain(
 
   return {
     mode: "llm",
-    async think(ctx: TurnContext): Promise<CatTurn[]> {
-      // 每只猫可以有自己的模型 / 温度；缺省回落全局设置。
+    async think(ctx: TurnContext): Promise<AgentTurn[]> {
+      // 每个成员可以有自己的模型 / 温度；缺省回落全局设置。
       const model = resolveModel(ctx, globalModel);
       const temperature = resolveTemperature(ctx, globalTemperature);
 
-      const downgrade = (reason: string): Promise<CatTurn[]> => {
+      const downgrade = (reason: string): Promise<AgentTurn[]> => {
         warn(
-          `[llm-brain] ${reason}，降级 fallback（猫=${ctx.cat.name}，model=${model || "-"}，stage=${ctx.task?.stage ?? "-"}）`,
+          `[llm-brain] ${reason}，降级 fallback（成员=${ctx.cat.name}，model=${model || "-"}，stage=${ctx.task?.stage ?? "-"}）`,
         );
         ctx.onReport?.({
           model,
@@ -173,7 +173,7 @@ export function createLlmBrain(
       if (!model) return downgrade("LLM_MODEL 缺失");
 
       // 推理型模型的思考链也消耗 completion budget：被截断时用更大预算重试一次，
-      // 仍失败才降级到 mock。retried 是每只猫每次 think 的状态。
+      // 仍失败才降级到 mock。retried 是每个成员每次 think 的状态。
       const useStream = Boolean(options.streaming) && typeof ctx.onDelta === "function";
       let retried = false;
       let attemptTokens = maxTokens;
@@ -266,7 +266,7 @@ export function createLlmBrain(
             // 排查用：把模型原文的前 300 字打出来（已 scrub），否则只知道"解析失败"。
             const preview = content.replace(/\s+/g, " ").slice(0, 300);
             return await downgrade(
-              `模型输出不是可用的 CatTurn[]（finish=${finish ?? "-"}, len=${content.length}，原文前 300 字：${preview}）`,
+              `模型输出不是可用的 AgentTurn[]（finish=${finish ?? "-"}, len=${content.length}，原文前 300 字：${preview}）`,
             );
           }
           // 成功路径：回报用量（token / 流式 / 重试），供可观测性记录。
@@ -375,7 +375,7 @@ async function consumeStream(
 /**
  * 从「还没写完的 JSON」里尽量抽出一段可读文本，用于流式预览。
  *
- * 模型输出是 CatTurn[] JSON。可能正在写两种东西：
+ * 模型输出是 AgentTurn[] JSON。可能正在写两种东西：
  * 1. 说的话：`"text":"..."`（短，一两句）
  * 2. 产物正文：`"body":"..."`（长，spec / patch 的正文，往往几百字）
  *
@@ -533,13 +533,13 @@ function extractBalancedObjects(text: string): string[] {
 }
 
 /**
- * 解析模型输出为 CatTurn[]。导出以便单测直接覆盖结构校验。
+ * 解析模型输出为 AgentTurn[]。导出以便单测直接覆盖结构校验。
  * - 顶层必须是数组，否则返回 []
  * - 未知 kind 丢弃
  * - 字段类型错误 / 必填缺失的 turn 丢弃
- * - mentions / to 只保留本房间内的猫 id，且 handoff 不能交给自己
+ * - mentions / to 只保留本房间内的成员 id，且 handoff 不能交给自己
  */
-export function parseTurns(content: string, ctx: TurnContext): CatTurn[] {
+export function parseTurns(content: string, ctx: TurnContext): AgentTurn[] {
   const jsonText = extractJsonArray(content);
   if (jsonText === null) return [];
 
@@ -551,7 +551,7 @@ export function parseTurns(content: string, ctx: TurnContext): CatTurn[] {
   }
   if (!Array.isArray(parsed)) return [];
 
-  const turns: CatTurn[] = [];
+  const turns: AgentTurn[] = [];
   for (const item of parsed) {
     if (turns.length >= MAX_TURNS) break;
     const turn = parseTurn(item, ctx);
@@ -560,7 +560,7 @@ export function parseTurns(content: string, ctx: TurnContext): CatTurn[] {
   return turns;
 }
 
-function parseTurn(item: unknown, ctx: TurnContext): CatTurn | null {
+function parseTurn(item: unknown, ctx: TurnContext): AgentTurn | null {
   if (!isRecord(item)) return null;
   switch (item.kind) {
     case "message":
@@ -586,10 +586,10 @@ function parseTurn(item: unknown, ctx: TurnContext): CatTurn | null {
 function parseMessageTurn(
   item: Record<string, unknown>,
   ctx: TurnContext,
-): CatTurn | null {
+): AgentTurn | null {
   const text = requiredText(item.text);
   if (!text) return null;
-  const turn: CatTurn = { kind: "message", text };
+  const turn: AgentTurn = { kind: "message", text };
   const mentions = parseMentions(item.mentions, ctx);
   if (mentions) turn.mentions = mentions;
   const delay = parseDelay(item.delayMs);
@@ -600,7 +600,7 @@ function parseMessageTurn(
 function parseToolTurn(
   item: Record<string, unknown>,
   ctx: TurnContext,
-): CatTurn | null {
+): AgentTurn | null {
   const rawTool = item.tool;
   if (typeof rawTool !== "string") return null;
   const tool = rawTool.trim();
@@ -646,7 +646,7 @@ function parseToolTurn(
     input = rawInput ?? {};
   }
   if (!input) return null;
-  const turn: CatTurn = { kind: "tool", tool, input };
+  const turn: AgentTurn = { kind: "tool", tool, input };
   const label = requiredText(item.label);
   if (label) turn.label = label;
   const text = requiredText(item.text);
@@ -661,17 +661,17 @@ function parseToolTurn(
 function parseHandoffTurn(
   item: Record<string, unknown>,
   ctx: TurnContext,
-): CatTurn | null {
+): AgentTurn | null {
   const to = requiredText(item.to);
   if (!to) return null;
-  // handoff 只能交给房间里、且不是自己的猫。
+  // handoff 只能交给房间里、且不是自己的成员。
   if (to === ctx.cat.id) return null;
   if (!ctx.room.catIds.includes(to)) return null;
 
   const card = parseCard(item.card);
   if (!card) return null;
 
-  const turn: CatTurn = { kind: "handoff", to, card };
+  const turn: AgentTurn = { kind: "handoff", to, card };
   const text = requiredText(item.text);
   if (text) turn.text = text;
   if (item.fault === "missed_mention") turn.fault = "missed_mention";
@@ -683,10 +683,10 @@ function parseHandoffTurn(
 function parseArtifactTurn(
   item: Record<string, unknown>,
   ctx: TurnContext,
-): CatTurn | null {
+): AgentTurn | null {
   const artifact = parseArtifactBody(item.artifact);
   if (!artifact) return null;
-  const turn: CatTurn = { kind: "artifact", artifact };
+  const turn: AgentTurn = { kind: "artifact", artifact };
   const text = requiredText(item.text);
   if (text) turn.text = text;
   const mentions = parseMentions(item.mentions, ctx);
@@ -699,7 +699,7 @@ function parseArtifactTurn(
 function parseReviewTurn(
   item: Record<string, unknown>,
   ctx: TurnContext,
-): CatTurn | null {
+): AgentTurn | null {
   const verdict = item.verdict;
   if (typeof verdict !== "string" || !REVIEW_VERDICTS.includes(verdict as ReviewVerdict)) {
     return null;
@@ -711,7 +711,7 @@ function parseReviewTurn(
   const findings = parseFindings(item.findings);
   if (findings === null) return null;
 
-  const turn: CatTurn = {
+  const turn: AgentTurn = {
     kind: "review",
     verdict: verdict as ReviewVerdict,
     title,
@@ -725,7 +725,7 @@ function parseReviewTurn(
   return turn;
 }
 
-function parseDecisionTurn(item: Record<string, unknown>): CatTurn | null {
+function parseDecisionTurn(item: Record<string, unknown>): AgentTurn | null {
   const text = requiredText(item.text);
   const artifact = parseArtifactBody(item.artifact);
   if (!text || !artifact) return null;
@@ -739,17 +739,17 @@ function parseDecisionTurn(item: Record<string, unknown>): CatTurn | null {
     }
   }
 
-  const turn: CatTurn = { kind: "decision", artifact, text, memory };
+  const turn: AgentTurn = { kind: "decision", artifact, text, memory };
   const delay = parseDelay(item.delayMs);
   if (delay !== undefined) turn.delayMs = delay;
   return turn;
 }
 
-function parseMemoryTurn(item: Record<string, unknown>): CatTurn | null {
+function parseMemoryTurn(item: Record<string, unknown>): AgentTurn | null {
   const text = requiredText(item.text);
   const memory = parseMemoryEntry(item.memory);
   if (!text || !memory) return null;
-  const turn: CatTurn = { kind: "memory", memory, text };
+  const turn: AgentTurn = { kind: "memory", memory, text };
   const delay = parseDelay(item.delayMs);
   if (delay !== undefined) turn.delayMs = delay;
   return turn;
@@ -904,11 +904,11 @@ function parseMemoryEntry(
   };
 }
 
-/** mentions 只接受本房间猫 id；去重；空数组返回 undefined。 */
-function parseMentions(value: unknown, ctx: TurnContext): CatId[] | undefined {
+/** mentions 只接受本房间成员 id；去重；空数组返回 undefined。 */
+function parseMentions(value: unknown, ctx: TurnContext): MemberId[] | undefined {
   if (value === undefined) return undefined;
   if (!Array.isArray(value)) return undefined;
-  const out: CatId[] = [];
+  const out: MemberId[] = [];
   for (const item of value) {
     if (typeof item !== "string") continue;
     const id = item.trim();
@@ -941,13 +941,13 @@ function stringList(value: unknown): string[] | null {
 
 // ───────────────────────── Prompt 组装 ─────────────────────────
 
-/** 每只猫用哪个模型：cat.llmModel 优先（空白串视为未设置），否则全局。 */
+/** 每个成员用哪个模型：cat.llmModel 优先（空白串视为未设置），否则全局。 */
 function resolveModel(ctx: TurnContext, globalModel: string): string {
   const perCat = typeof ctx.cat.llmModel === "string" ? ctx.cat.llmModel.trim() : "";
   return perCat || globalModel;
 }
 
-/** 每只猫的温度：cat.llmTemperature 优先，0 是合法值，非法/缺省回落全局。 */
+/** 每个成员的温度：cat.llmTemperature 优先，0 是合法值，非法/缺省回落全局。 */
 function resolveTemperature(ctx: TurnContext, globalTemperature: number): number {
   const perCat = ctx.cat.llmTemperature;
   if (typeof perCat === "number" && Number.isFinite(perCat)) {
@@ -957,20 +957,20 @@ function resolveTemperature(ctx: TurnContext, globalTemperature: number): number
 }
 
 export /**
- * 「你的近期经历」：把这只猫跨任务的连续性写进 prompt。
+ * 「你的近期经历」：把这个成员跨任务的连续性写进 prompt。
  *
- * 对应 Cat Café 的成功标准之一——「任何一只猫新开窗口，5 分钟内能进入状态」。
+ * 对应 Member Café 的成功标准之一——「任何一个成员新开窗口，5 分钟内能进入状态」。
  * 内容克制：最近 5 个任务 + 3 条自己的教训，避免 prompt 膨胀。
  */
 /**
- * 房间里的猫（名字 ↔ catId 对照）。
+ * 房间里的成员（名字 ↔ catId 对照）。
  *
- * 为什么要显式给对照表：实测模型会把「砚砚」写成「燕燕」、「烁烁」写成「说说」，
+ * 为什么要显式给对照表：实测模型会把「沈砚」写成「燕燕」、「周烁」写成「说说」，
  * 因为它只看到了一串 catId，不知道怎么念。给它名字就别猜了。
  */
 function renderRoomCats(ctx: TurnContext): string {
   const lines = [
-    "【房间里的猫】称呼必须严格用下面的名字和 catId，不要自创、不要音译：",
+    "【房间里的成员】称呼必须严格用下面的名字和 catId，不要自创、不要音译：",
   ];
   for (const peer of ctx.roomCats) {
     const self = peer.id === ctx.cat.id;
@@ -1022,7 +1022,7 @@ export function buildSystemPrompt(ctx: TurnContext, model: string): string {
   const sessionBlock = renderSession(ctx.session);
 
   const sections: string[] = [
-    `你是「${cat.name}」（${cat.species}），猫咖里的${ROLE_LABEL[cat.role] ?? cat.title}。`,
+    `你是「${cat.name}」（${cat.discipline}），交付台里的${ROLE_LABEL[cat.role] ?? cat.title}。`,
     `性格：${cat.persona}`,
     `口头禅：${cat.catchphrase}`,
     `房间：${room.name} —— ${room.topic}`,
@@ -1058,7 +1058,7 @@ export function buildSystemPrompt(ctx: TurnContext, model: string): string {
     "",
     "【规则】",
     "- kind 只能是 message / tool / handoff / artifact / review / decision / memory；其他一律不要输出。",
-    "- mentions、handoff.to 只能用上面列出的 catId，不要用猫的名字；handoff 不能交给自己。",
+    "- mentions、handoff.to 只能用上面列出的 catId，不要用成员的名字；handoff 不能交给自己。",
     "- handoff 卡片的 what / why / tradeoff / openQuestions / nextAction 五栏必须齐全，openQuestions 必须是字符串数组。",
     "- 全部用中文，保持角色人格和口头禅，不要出戏；每条 text 控制在 120 字以内。",
     "- 需要别人做事就用 handoff；别人给了你产物、轮到你评审就用 review；任务收尾用 decision 把结论记进共享记忆。",
@@ -1078,11 +1078,11 @@ export function buildSystemPrompt(ctx: TurnContext, model: string): string {
       "工具使用纪律：",
       '- 一轮可以同时请求多个工具，会按数组顺序执行；执行完会用 trigger.kind="tool_result" 把回执再发给你一次。',
       "- 工具调用最多连续 3 轮，之后必须给出结论或交接，不要无限试探。",
-      "- 收到 status=rejected 时不要重复申请同一个命令 / 同一个写入；换方案，或直接向铲屎官说明被拒原因与替代做法。",
+      "- 收到 status=rejected 时不要重复申请同一个命令 / 同一个写入；换方案，或直接向负责人说明被拒原因与替代做法。",
       "- 读文件、看目录这类低风险操作尽量一轮批量做完，不要一轮一个。",
       "- run_command 的参数限制：每个 ≤80 字、不含空格/../绝对路径、最多 10 个、不支持 shell 管道与重定向。" +
         "读文件一律用 read_file；不要用 `node -e \"...\"` 之类长内联脚本去读或改文件。",
-      "- 同一类操作连续失败两次就停下：说明限制或方案有问题，改用别的工具或直接向铲屎官说明，不要无限重试。",
+      "- 同一类操作连续失败两次就停下：说明限制或方案有问题，改用别的工具或直接向负责人说明，不要无限重试。",
     );
   }
 
@@ -1123,7 +1123,7 @@ function renderToolCatalog(tools: ToolDefinition[]): string[] {
     );
   }
   lines.push(
-    "风险：risk=needs_approval 的工具每次执行都可能需要铲屎官审批，被拒绝时回执 status=rejected；risk=safe 一般直接执行。",
+    "风险：risk=needs_approval 的工具每次执行都可能需要负责人审批，被拒绝时回执 status=rejected；risk=safe 一般直接执行。",
     "调用工具是为了拿真实信息或产生真实结果；普通讨论不需要工具。",
   );
   return lines;
@@ -1204,7 +1204,7 @@ export function buildUserPrompt(ctx: TurnContext): string {
 
 function describeTrigger(trigger: Trigger, ctx: TurnContext): string {
   const lines: string[] = [`- kind：${trigger.kind}`];
-  if (trigger.fromCatId) lines.push(`- 来自：${trigger.fromCatId}`);
+  if (trigger.fromMemberId) lines.push(`- 来自：${trigger.fromMemberId}`);
   if (trigger.text) lines.push(`- 内容：${clip(trigger.text, 320)}`);
   if (trigger.mentions && trigger.mentions.length > 0) {
     lines.push(
@@ -1251,7 +1251,7 @@ function renderCard(card: HandoffCard): string {
 }
 
 function authorLabel(author: string, ctx: TurnContext): string {
-  if (author === "user") return "铲屎官";
+  if (author === "user") return "负责人";
   if (author === "system") return "系统";
   if (author === ctx.cat.id) return `${ctx.cat.name}（你）`;
   return author;

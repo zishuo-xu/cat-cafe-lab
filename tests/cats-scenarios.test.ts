@@ -51,7 +51,7 @@ describe("猫猫档案 updateCat", () => {
   });
 
   test("改名、改主题色、每猫模型与温度", () => {
-    const cat = studio.updateCat("yanyan", {
+    const cat = studio.updateCat("shenyan", {
       name: "砚台",
       accent: "#123456",
       llmModel: "gpt-4.1-mini",
@@ -61,17 +61,17 @@ describe("猫猫档案 updateCat", () => {
     assert.equal(cat.accent, "#123456");
     assert.equal(cat.llmModel, "gpt-4.1-mini");
     assert.equal(cat.llmTemperature, 0);
-    assert.equal(studio.getCat("yanyan")?.name, "砚台");
+    assert.equal(studio.getCat("shenyan")?.name, "砚台");
   });
 
   test("重名 / 非法颜色 / 温度越界都被拒绝", () => {
     assert.throws(
-      () => studio.updateCat("shuoshuo", { name: "砚台" }),
-      /已经被其他猫用了/,
+      () => studio.updateCat("zhoushuo", { name: "砚台" }),
+      /已经被其他成员用了/,
     );
-    assert.throws(() => studio.updateCat("shuoshuo", { accent: "gold" }), /#RRGGBB/);
+    assert.throws(() => studio.updateCat("zhoushuo", { accent: "gold" }), /#RRGGBB/);
     assert.throws(
-      () => studio.updateCat("shuoshuo", { llmTemperature: 2.5 }),
+      () => studio.updateCat("zhoushuo", { llmTemperature: 2.5 }),
       /0–2/,
     );
     assert.throws(() => studio.updateCat("ghost", { name: "x" }), /not found/);
@@ -80,27 +80,27 @@ describe("猫猫档案 updateCat", () => {
   test("改成名字后 @ 新名字能解析到同一只猫", async () => {
     const { parseMentions } = await import("../src/server/http.ts");
     const mentions = parseMentions("@砚台 帮忙看下", studio, "room_cafe");
-    assert.deepEqual(mentions, ["yanyan"]);
+    assert.deepEqual(mentions, ["shenyan"]);
   });
 
   test("清空每猫模型 / 温度", () => {
-    const cat = studio.updateCat("yanyan", { llmModel: null, llmTemperature: null });
+    const cat = studio.updateCat("shenyan", { llmModel: null, llmTemperature: null });
     assert.equal(cat.llmModel, undefined);
     assert.equal(cat.llmTemperature, undefined);
   });
 
   test("重启后档案与每猫模型都能恢复", () => {
-    studio.updateCat("yanyan", { name: "砚台", llmModel: "gpt-4.1-mini" });
+    studio.updateCat("shenyan", { name: "砚台", llmModel: "gpt-4.1-mini" });
     studio.persistNow();
     studio.close();
 
     const reopened = new Studio({ cats: CATS, mode: "mock", dataDir: dir });
     try {
-      const cat = reopened.getCat("yanyan");
+      const cat = reopened.getCat("shenyan");
       assert.equal(cat?.name, "砚台");
       assert.equal(cat?.llmModel, "gpt-4.1-mini");
       // 其他猫不受影响。
-      assert.equal(reopened.getCat("xianxian")?.name, "宪宪");
+      assert.equal(reopened.getCat("linzhiyuan")?.name, "林知远");
     } finally {
       reopened.close();
     }
@@ -127,7 +127,7 @@ describe("剧本校验 validateScenario", () => {
     }
     broken.beats.push({
       stage: "intake",
-      cat: "xianxian",
+      cat: "linzhiyuan",
       turn: { kind: "dance" } as unknown as Scenario["beats"][number]["turn"],
     });
 
@@ -233,20 +233,20 @@ describe("HTTP /api/cats 与 /api/scenarios", () => {
   });
 
   test("PUT /api/cats/:id 更新档案，400 校验，404 未知猫", async () => {
-    const ok = await fetch(`${base}/api/cats/shuoshuo`, {
+    const ok = await fetch(`${base}/api/cats/zhoushuo`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "烁烁猫", llmModel: "gemini-2.0-flash" }),
+      body: JSON.stringify({ name: "周烁猫", llmModel: "gemini-2.0-flash" }),
     });
     assert.equal(ok.status, 200);
     const cat = (await ok.json()) as { name: string; llmModel: string };
-    assert.equal(cat.name, "烁烁猫");
+    assert.equal(cat.name, "周烁猫");
     assert.equal(cat.llmModel, "gemini-2.0-flash");
 
-    const dup = await fetch(`${base}/api/cats/jinjianceng`, {
+    const dup = await fetch(`${base}/api/cats/chenshi`, {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ name: "烁烁猫" }),
+      body: JSON.stringify({ name: "周烁猫" }),
     });
     assert.equal(dup.status, 400);
 
@@ -261,7 +261,7 @@ describe("HTTP /api/cats 与 /api/scenarios", () => {
   test("GET /api/cats 返回更新后的档案", async () => {
     const res = await fetch(`${base}/api/cats`);
     const body = (await res.json()) as { cats: Array<{ id: string; name: string }> };
-    assert.equal(body.cats.find((cat) => cat.id === "shuoshuo")?.name, "烁烁猫");
+    assert.equal(body.cats.find((cat) => cat.id === "zhoushuo")?.name, "周烁猫");
   });
 
   test("剧本列表 / 导入 / 删除 / 内置保护", async () => {

@@ -13,8 +13,8 @@ import { createMockBrain } from "../src/agents/mock-brain.ts";
 import { CATS, SCENARIOS } from "../src/agents/personas.ts";
 import type {
   Artifact,
-  Cat,
-  CatTurn,
+  Member,
+  AgentTurn,
   HandoffCard,
   MemoryEntry,
   Room,
@@ -29,7 +29,7 @@ import { getSkill, listSkills, skillsForCat } from "../src/skills/registry.ts";
 
 const ROOM: Room = {
   id: "room_test",
-  name: "猫咖 · 测试桌",
+  name: "交付台 · 测试桌",
   topic: "测试用房间",
   catIds: CATS.map((cat) => cat.id),
   createdAt: 0,
@@ -39,7 +39,7 @@ const ALL_STAGES: TaskStage[] = ["intake", "planning", "working", "reviewing", "
 
 // ───────────────────────── 构造辅助 ─────────────────────────
 
-function catOf(id: string): Cat {
+function catOf(id: string): Member {
   const cat = CATS.find((item) => item.id === id);
   if (!cat) throw new Error(`missing cat: ${id}`);
   return cat;
@@ -60,7 +60,7 @@ function makeTask(scenarioId: string, stage: TaskStage, overrides: Partial<Task>
     scenarioId,
     status: "active",
     stage,
-    owner: "xianxian",
+    owner: "linzhiyuan",
     steps: [],
     createdAt: 0,
     updatedAt: 0,
@@ -75,7 +75,7 @@ function patchArtifact(taskId: string, version: number): Artifact {
     kind: "patch",
     title: `后端实现 v${version}`,
     body: "diff 摘要",
-    author: "jinjianceng",
+    author: "chenshi",
     version,
     createdAt: version,
   };
@@ -124,11 +124,11 @@ function nudgeTrigger(taskId: string): Trigger {
 
 // ───────────────────────── 断言辅助 ─────────────────────────
 
-function serialized(turns: CatTurn[]): string {
+function serialized(turns: AgentTurn[]): string {
   return JSON.stringify(turns);
 }
 
-function assertNoPlaceholders(turns: CatTurn[]): void {
+function assertNoPlaceholders(turns: AgentTurn[]): void {
   const leftover = serialized(turns).match(/\{\{[^}]*\}\}/u);
   assert.equal(leftover, null, `未替换的占位符：${leftover?.[0] ?? ""}`);
 }
@@ -143,23 +143,23 @@ function assertCardComplete(card: HandoffCard, label: string): void {
   }
 }
 
-function messageTurns(turns: CatTurn[]): Array<Extract<CatTurn, { kind: "message" }>> {
-  return turns.filter((turn): turn is Extract<CatTurn, { kind: "message" }> => turn.kind === "message");
+function messageTurns(turns: AgentTurn[]): Array<Extract<AgentTurn, { kind: "message" }>> {
+  return turns.filter((turn): turn is Extract<AgentTurn, { kind: "message" }> => turn.kind === "message");
 }
 
-function handoffTurns(turns: CatTurn[]): Array<Extract<CatTurn, { kind: "handoff" }>> {
-  return turns.filter((turn): turn is Extract<CatTurn, { kind: "handoff" }> => turn.kind === "handoff");
+function handoffTurns(turns: AgentTurn[]): Array<Extract<AgentTurn, { kind: "handoff" }>> {
+  return turns.filter((turn): turn is Extract<AgentTurn, { kind: "handoff" }> => turn.kind === "handoff");
 }
 
-function reviewTurns(turns: CatTurn[]): Array<Extract<CatTurn, { kind: "review" }>> {
-  return turns.filter((turn): turn is Extract<CatTurn, { kind: "review" }> => turn.kind === "review");
+function reviewTurns(turns: AgentTurn[]): Array<Extract<AgentTurn, { kind: "review" }>> {
+  return turns.filter((turn): turn is Extract<AgentTurn, { kind: "review" }> => turn.kind === "review");
 }
 
-function toolTurns(turns: CatTurn[]): Array<Extract<CatTurn, { kind: "tool" }>> {
-  return turns.filter((turn): turn is Extract<CatTurn, { kind: "tool" }> => turn.kind === "tool");
+function toolTurns(turns: AgentTurn[]): Array<Extract<AgentTurn, { kind: "tool" }>> {
+  return turns.filter((turn): turn is Extract<AgentTurn, { kind: "tool" }> => turn.kind === "tool");
 }
 
-function beatTurns(scenario: Scenario, stage: TaskStage, cat: string): CatTurn[] {
+function beatTurns(scenario: Scenario, stage: TaskStage, cat: string): AgentTurn[] {
   return scenario.beats
     .filter((beat) => beat.stage === stage && beat.cat === cat)
     .map((beat) => beat.turn);
@@ -169,12 +169,12 @@ function toolBeatTurns(
   scenario: Scenario,
   stage: TaskStage,
   cat: string,
-): Array<Extract<CatTurn, { kind: "tool" }>> {
+): Array<Extract<AgentTurn, { kind: "tool" }>> {
   return toolTurns(beatTurns(scenario, stage, cat));
 }
 
 function isRunOf(
-  turn: Extract<CatTurn, { kind: "tool" }>,
+  turn: Extract<AgentTurn, { kind: "tool" }>,
   testFile: string,
 ): boolean {
   if (turn.tool !== "run_command") return false;
@@ -199,7 +199,7 @@ function sentenceCount(text: string): number {
 test("四只猫：id 固定、字段齐全、人格互不重复", () => {
   assert.deepEqual(
     CATS.map((cat) => cat.id).sort(),
-    ["jinjianceng", "shuoshuo", "xianxian", "yanyan"],
+    ["chenshi", "linzhiyuan", "shenyan", "zhoushuo"],
   );
   assert.deepEqual(
     [...new Set(CATS.map((cat) => cat.role))].sort(),
@@ -207,12 +207,12 @@ test("四只猫：id 固定、字段齐全、人格互不重复", () => {
   );
 
   for (const cat of CATS) {
-    for (const key of ["name", "species", "title", "persona", "catchphrase", "greeting"] as const) {
+    for (const key of ["name", "discipline", "title", "persona", "catchphrase", "greeting"] as const) {
       assert.ok(cat[key].trim().length > 0, `${cat.id}.${key} 不能为空`);
     }
     assert.match(cat.accent, /^#[0-9a-fA-F]{6}$/u, `${cat.id} 主题色必须是 hex`);
     assert.ok(
-      ["ragdoll", "mainecoon", "siamese", "golden"].includes(cat.avatar),
+      ["architect", "reviewer", "designer", "implementer"].includes(cat.avatar),
       `${cat.id} 的头像 key 非法`,
     );
   }
@@ -223,10 +223,10 @@ test("四只猫：id 固定、字段齐全、人格互不重复", () => {
 // ───────────────────────── 工具 / 技能默认值 ─────────────────────────
 
 const EXPECTED_CAT_DEFAULTS: Record<string, { tools: string[]; skills: string[] }> = {
-  xianxian: { tools: ["read_file", "list_files"], skills: ["architecture"] },
-  yanyan: { tools: ["read_file", "list_files", "run_command"], skills: ["review-checklist"] },
-  shuoshuo: { tools: ["read_file", "list_files"], skills: ["design-system"] },
-  jinjianceng: {
+  linzhiyuan: { tools: ["read_file", "list_files"], skills: ["architecture"] },
+  shenyan: { tools: ["read_file", "list_files", "run_command"], skills: ["review-checklist"] },
+  zhoushuo: { tools: ["read_file", "list_files"], skills: ["design-system"] },
+  chenshi: {
     tools: ["read_file", "write_file", "list_files", "run_command"],
     skills: ["tdd"],
   },
@@ -267,10 +267,10 @@ test("四猫工具/技能默认值：存在、合法、能被技能包解析", (
 });
 
 test("skillsForCat：cat.skills 优先、角色默认兜底、未知 id 忽略", () => {
-  const implementer = catOf("jinjianceng");
+  const implementer = catOf("chenshi");
 
   // 1) 自定义 skills 优先于角色默认
-  const custom: Cat = { ...implementer, skills: ["design-system", "architecture"] };
+  const custom: Member = { ...implementer, skills: ["design-system", "architecture"] };
   assert.deepEqual(
     skillsForCat(custom).map((skill) => skill.id),
     ["design-system", "architecture"],
@@ -400,12 +400,12 @@ const TOOL_CASES = [
   { id: "export_csv", source: "src/export.js", testFile: "test/export.test.js", failed: /逗号字段要加引号|引号要 doubling/u },
 ] as const;
 
-test("剧本工具节拍：金渐层先写文件再跑测试，砚砚先跑测试再 review", () => {
+test("剧本工具节拍：陈实先写文件再跑测试，沈砚先跑测试再 review", () => {
   for (const item of TOOL_CASES) {
     const scenario = scenarioOf(item.id);
 
     // working：写文件 → 跑测试 → 承认失败 → patch → 交接
-    const working = beatTurns(scenario, "working", "jinjianceng");
+    const working = beatTurns(scenario, "working", "chenshi");
     const workingTools = toolTurns(working);
     assert.deepEqual(
       workingTools.map((turn) => turn.tool),
@@ -428,11 +428,11 @@ test("剧本工具节拍：金渐层先写文件再跑测试，砚砚先跑测�
       working
         .slice(workingRunIndex + 1)
         .some((turn) => turn.kind === "message" && /失败|没全过|挂了|没过/u.test(turn.text)),
-      "跑完失败的测试后，金渐层应该有台词承认问题",
+      "跑完失败的测试后，陈实应该有台词承认问题",
     );
 
     // revising：写 v2 → 再跑测试 → v2 patch → 交接
-    const revising = beatTurns(scenario, "revising", "jinjianceng");
+    const revising = beatTurns(scenario, "revising", "chenshi");
     const revisingTools = toolTurns(revising);
     assert.deepEqual(
       revisingTools.map((turn) => turn.tool),
@@ -450,7 +450,7 @@ test("剧本工具节拍：金渐层先写文件再跑测试，砚砚先跑测�
     assert.ok(v2PatchIndex > revisingRunIndex, "v2 patch 在跑测试之后");
 
     // reviewing：两轮都先跑测试，紧挨着 review
-    const reviewing = beatTurns(scenario, "reviewing", "yanyan");
+    const reviewing = beatTurns(scenario, "reviewing", "shenyan");
     const reviewingTools = toolTurns(reviewing);
     assert.equal(reviewingTools.length, 2, `${item.id} 两轮 review 都应先跑测试`);
     for (const runTurn of reviewingTools) assert.equal(isRunOf(runTurn, item.testFile), true);
@@ -517,7 +517,7 @@ test("剧本里的 v1/v2 在真实沙盒里：测试失败 → 修复后通过",
       sandbox.ensureSeed();
 
       // working v1：写文件 → 跑测试 → 必须失败（台词说的问题要真的出现）
-      const workingTools = toolBeatTurns(scenario, "working", "jinjianceng");
+      const workingTools = toolBeatTurns(scenario, "working", "chenshi");
       assert.equal(workingTools.length, 2);
       for (const turn of workingTools) {
         const result = await sandbox.execute(turn.tool, turn.input);
@@ -531,7 +531,7 @@ test("剧本里的 v1/v2 在真实沙盒里：测试失败 → 修复后通过",
       }
 
       // revising v2：写文件 → 再跑测试 → 必须通过
-      const revisingTools = toolBeatTurns(scenario, "revising", "jinjianceng");
+      const revisingTools = toolBeatTurns(scenario, "revising", "chenshi");
       assert.equal(revisingTools.length, 2);
       for (const turn of revisingTools) {
         const result = await sandbox.execute(turn.tool, turn.input);
@@ -554,17 +554,17 @@ test("剧本里的 v1/v2 在真实沙盒里：测试失败 → 修复后通过",
   }
 });
 
-test("remember_me：埋了 金渐层 → 砚砚 的 missed_mention 漏 @", async () => {
+test("remember_me：埋了 陈实 → 沈砚 的 missed_mention 漏 @", async () => {
   const scenario = scenarioOf("remember_me");
   const faultBeats = scenario.beats.filter((beat) => beat.fault === "missed_mention");
   assert.equal(faultBeats.length, 1, "漏 @ 的埋点应该只有一张卡");
 
   const faultBeat = faultBeats[0];
   if (!faultBeat) throw new Error("missing fault beat");
-  assert.equal(faultBeat.cat, "jinjianceng");
+  assert.equal(faultBeat.cat, "chenshi");
   assert.equal(faultBeat.stage, "working");
   if (faultBeat.turn.kind !== "handoff") throw new Error("fault beat 必须是 handoff");
-  assert.equal(faultBeat.turn.to, "yanyan");
+  assert.equal(faultBeat.turn.to, "shenyan");
   assert.equal(
     (faultBeat.turn.text ?? "").includes("@"),
     false,
@@ -575,9 +575,9 @@ test("remember_me：埋了 金渐层 → 砚砚 的 missed_mention 漏 @", async
   const brain = createMockBrain(SCENARIOS);
   const task = makeTask("remember_me", "working");
   const turns = await brain.think(
-    makeCtx({ catId: "jinjianceng", task, trigger: taskTrigger("handoff", task.id) }),
+    makeCtx({ catId: "chenshi", task, trigger: taskTrigger("handoff", task.id) }),
   );
-  const handoff = handoffTurns(turns).find((turn) => turn.to === "yanyan");
+  const handoff = handoffTurns(turns).find((turn) => turn.to === "shenyan");
   if (!handoff) throw new Error("working 阶段应该产出交接卡");
   assert.equal(handoff.fault, "missed_mention");
 });
@@ -594,17 +594,17 @@ test("driver 契约：intake 只回消息、planning 一次给「消息 + 2 张�
 
     // 1) task_created → intake：只有消息，不带 handoff，driver 才会自动进 planning
     const intake = await brain.think(
-      makeCtx({ catId: "xianxian", task, trigger: taskTrigger("task_created", task.id) }),
+      makeCtx({ catId: "linzhiyuan", task, trigger: taskTrigger("task_created", task.id) }),
     );
     assert.equal(intake.length, 1, `${scenario.id} 的 intake 应该只有一条消息`);
     assert.equal(intake[0]?.kind, "message");
     assert.equal(handoffTurns(intake).length, 0);
     assertNoPlaceholders(intake);
 
-    // 2) planning：一条接住需求的消息 + 烁烁 / 金渐层两张 handoff
+    // 2) planning：一条接住需求的消息 + 周烁 / 陈实两张 handoff
     task.stage = "planning";
     const planning = await brain.think(
-      makeCtx({ catId: "xianxian", task, trigger: taskTrigger("handoff", task.id) }),
+      makeCtx({ catId: "linzhiyuan", task, trigger: taskTrigger("handoff", task.id) }),
     );
     const planningMessages = messageTurns(planning);
     const planningHandoffs = handoffTurns(planning);
@@ -612,7 +612,7 @@ test("driver 契约：intake 只回消息、planning 一次给「消息 + 2 张�
     assert.equal(planningHandoffs.length, 2, `${scenario.id} 的 planning 应该发两张交接卡`);
     assert.deepEqual(
       planningHandoffs.map((handoff) => handoff.to),
-      ["shuoshuo", "jinjianceng"],
+      ["zhoushuo", "chenshi"],
     );
     for (const handoff of planningHandoffs) assertCardComplete(handoff.card, `${scenario.id} planning`);
     assertNoPlaceholders(planning);
@@ -624,18 +624,18 @@ test("driver 契约：working 一次给「写文件 + 跑测试 + patch + 交接
   const task = makeTask("remember_me", "working", { id: "task_working_contract" });
 
   const design = await brain.think(
-    makeCtx({ catId: "shuoshuo", task, trigger: taskTrigger("handoff", task.id) }),
+    makeCtx({ catId: "zhoushuo", task, trigger: taskTrigger("handoff", task.id) }),
   );
   assert.equal(design.length, 1);
   assert.equal(design[0]?.kind, "artifact");
 
   const implementation = await brain.think(
-    makeCtx({ catId: "jinjianceng", task, trigger: taskTrigger("handoff", task.id) }),
+    makeCtx({ catId: "chenshi", task, trigger: taskTrigger("handoff", task.id) }),
   );
   assert.deepEqual(
     implementation.map((turn) => turn.kind),
     ["message", "tool", "tool", "message", "artifact", "handoff"],
-    "金渐层应该：说一句 → 写文件 → 跑测试 → 承认失败 → 交 patch → 交接",
+    "陈实应该：说一句 → 写文件 → 跑测试 → 承认失败 → 交 patch → 交接",
   );
 
   const tools = toolTurns(implementation);
@@ -653,7 +653,7 @@ test("driver 契约：working 一次给「写文件 + 跑测试 + patch + 交接
 
   const handoffs = handoffTurns(implementation);
   assert.equal(handoffs.length, 1);
-  assert.equal(handoffs[0]?.to, "yanyan");
+  assert.equal(handoffs[0]?.to, "shenyan");
   assert.equal(handoffs[0]?.fault, "missed_mention");
 });
 
@@ -664,7 +664,7 @@ test("driver 契约：reviewing 先跑测试，再按 artifacts 版本只返回�
   // 只有 v1 patch → 先跑测试，再 request_changes
   const v1Only = await brain.think(
     makeCtx({
-      catId: "yanyan",
+      catId: "shenyan",
       task,
       trigger: taskTrigger("handoff", task.id),
       artifacts: [patchArtifact(task.id, 1)],
@@ -681,7 +681,7 @@ test("driver 契约：reviewing 先跑测试，再按 artifacts 版本只返回�
   // v2 出现 → 再跑测试，然后 approve
   const revised = await brain.think(
     makeCtx({
-      catId: "yanyan",
+      catId: "shenyan",
       task,
       trigger: taskTrigger("artifact", task.id),
       artifacts: [patchArtifact(task.id, 1), patchArtifact(task.id, 2)],
@@ -698,7 +698,7 @@ test("driver 契约：reviewing 先跑测试，再按 artifacts 版本只返回�
   // 没有 version 字段信息时，用 patch 数量也能判断（两张 patch = 已 revise）
   const byCount = await brain.think(
     makeCtx({
-      catId: "yanyan",
+      catId: "shenyan",
       task,
       trigger: taskTrigger("artifact", task.id),
       artifacts: [patchArtifact(task.id, 1), { ...patchArtifact(task.id, 2), version: 1 }],
@@ -718,9 +718,9 @@ test("mock brain：remember_me 六阶段全流程（含打回 → 修改 → 通
   });
   const artifacts: Artifact[] = [];
 
-  // intake：宪宪接需求
+  // intake：林知远接需求
   const intake = await brain.think(
-    makeCtx({ catId: "xianxian", task, trigger: taskTrigger("task_created", task.id) }),
+    makeCtx({ catId: "linzhiyuan", task, trigger: taskTrigger("task_created", task.id) }),
   );
   const intakeMessage = messageTurns(intake)[0];
   if (!intakeMessage) throw new Error("intake 应该是 message");
@@ -729,24 +729,24 @@ test("mock brain：remember_me 六阶段全流程（含打回 → 修改 → 通
   // planning：消息 + 两张交接卡
   task.stage = "planning";
   const planning = await brain.think(
-    makeCtx({ catId: "xianxian", task, trigger: taskTrigger("handoff", task.id) }),
+    makeCtx({ catId: "linzhiyuan", task, trigger: taskTrigger("handoff", task.id) }),
   );
   assert.equal(planning.length, 3, "planning 应该是 1 条消息 + 2 张卡");
-  assert.deepEqual(handoffTurns(planning).map((handoff) => handoff.to), ["shuoshuo", "jinjianceng"]);
+  assert.deepEqual(handoffTurns(planning).map((handoff) => handoff.to), ["zhoushuo", "chenshi"]);
 
-  // working：烁烁设计稿
+  // working：周烁设计稿
   task.stage = "working";
   const design = await brain.think(
-    makeCtx({ catId: "shuoshuo", task, trigger: taskTrigger("handoff", task.id) }),
+    makeCtx({ catId: "zhoushuo", task, trigger: taskTrigger("handoff", task.id) }),
   );
   const designTurn = design[0];
-  if (designTurn?.kind !== "artifact") throw new Error("烁烁应该交 artifact");
+  if (designTurn?.kind !== "artifact") throw new Error("周烁应该交 artifact");
   assert.equal(designTurn.artifact.kind, "design");
-  assert.ok((designTurn.mentions ?? []).includes("xianxian"));
+  assert.ok((designTurn.mentions ?? []).includes("linzhiyuan"));
 
-  // working：金渐层写文件 → 跑测试（失败）→ 实现稿 + 漏 @ 的交接卡
+  // working：陈实写文件 → 跑测试（失败）→ 实现稿 + 漏 @ 的交接卡
   const implementation = await brain.think(
-    makeCtx({ catId: "jinjianceng", task, trigger: taskTrigger("handoff", task.id) }),
+    makeCtx({ catId: "chenshi", task, trigger: taskTrigger("handoff", task.id) }),
   );
   assert.deepEqual(
     implementation.map((turn) => turn.kind),
@@ -755,19 +755,19 @@ test("mock brain：remember_me 六阶段全流程（含打回 → 修改 → 通
   const implTools = toolTurns(implementation);
   assert.deepEqual(implTools.map((turn) => turn.tool), ["write_file", "run_command"]);
   const patchTurn = implementation.find((turn) => turn.kind === "artifact");
-  if (patchTurn?.kind !== "artifact") throw new Error("金渐层应该交 patch artifact");
+  if (patchTurn?.kind !== "artifact") throw new Error("陈实应该交 patch artifact");
   assert.equal(patchTurn.artifact.kind, "patch");
   const reviewHandoff = handoffTurns(implementation)[0];
-  if (!reviewHandoff) throw new Error("金渐层应该发出 review 交接卡");
-  assert.equal(reviewHandoff.to, "yanyan");
+  if (!reviewHandoff) throw new Error("陈实应该发出 review 交接卡");
+  assert.equal(reviewHandoff.to, "shenyan");
   assert.equal(reviewHandoff.fault, "missed_mention");
   artifacts.push(patchArtifact(task.id, 1));
 
-  // reviewing：砚砚先跑测试，再抓 1 blocker + 1 minor，request_changes
+  // reviewing：沈砚先跑测试，再抓 1 blocker + 1 minor，request_changes
   task.stage = "reviewing";
   const review1 = await brain.think(
     makeCtx({
-      catId: "yanyan",
+      catId: "shenyan",
       task,
       trigger: taskTrigger("handoff", reviewHandoff.to),
       artifacts,
@@ -776,18 +776,18 @@ test("mock brain：remember_me 六阶段全流程（含打回 → 修改 → 通
   assert.deepEqual(review1.map((turn) => turn.kind), ["tool", "review"]);
   assert.equal(toolTurns(review1)[0]?.input["cmd"], "node");
   const review1Turn = reviewTurns(review1)[0];
-  if (!review1Turn) throw new Error("砚砚应该产出 review");
+  if (!review1Turn) throw new Error("沈砚应该产出 review");
   assert.equal(review1Turn.verdict, "request_changes");
-  assert.ok((review1Turn.mentions ?? []).includes("jinjianceng"));
+  assert.ok((review1Turn.mentions ?? []).includes("chenshi"));
   assert.deepEqual(
     review1Turn.findings.map((finding) => finding.severity).sort(),
     ["blocker", "minor"],
   );
 
-  // revising：金渐层写 v2 → 跑测试 → v2 patch + 干净交接
+  // revising：陈实写 v2 → 跑测试 → v2 patch + 干净交接
   task.stage = "revising";
   const revise = await brain.think(
-    makeCtx({ catId: "jinjianceng", task, trigger: taskTrigger("review_result", task.id), artifacts }),
+    makeCtx({ catId: "chenshi", task, trigger: taskTrigger("review_result", task.id), artifacts }),
   );
   assert.deepEqual(
     revise.map((turn) => turn.kind),
@@ -801,24 +801,24 @@ test("mock brain：remember_me 六阶段全流程（含打回 → 修改 → 通
   assert.equal(revisePatch.artifact.title.includes("v2"), true);
   const reviseHandoff = handoffTurns(revise)[0];
   if (!reviseHandoff) throw new Error("revising 应该有重新交接");
-  assert.equal(reviseHandoff.to, "yanyan");
+  assert.equal(reviseHandoff.to, "shenyan");
   assert.equal(reviseHandoff.fault, undefined);
   artifacts.push(patchArtifact(task.id, 2));
 
   // reviewing 第二次：v2 已在 artifacts 里 → 再跑测试后 approve（不能重播打回）
   task.stage = "reviewing";
   const review2 = await brain.think(
-    makeCtx({ catId: "yanyan", task, trigger: taskTrigger("artifact", task.id), artifacts }),
+    makeCtx({ catId: "shenyan", task, trigger: taskTrigger("artifact", task.id), artifacts }),
   );
   assert.deepEqual(review2.map((turn) => turn.kind), ["tool", "review"]);
   const review2Turn = reviewTurns(review2)[0];
   if (!review2Turn) throw new Error("第二次 review 应该还是 review");
   assert.equal(review2Turn.verdict, "approve");
 
-  // done：宪宪落决策 + 决策 / 教训记忆
+  // done：林知远落决策 + 决策 / 教训记忆
   task.stage = "done";
   const done = await brain.think(
-    makeCtx({ catId: "xianxian", task, trigger: taskTrigger("review_result", task.id), artifacts }),
+    makeCtx({ catId: "linzhiyuan", task, trigger: taskTrigger("review_result", task.id), artifacts }),
   );
   const decision = done[0];
   if (decision?.kind !== "decision") throw new Error("done 阶段应该产出 decision");
@@ -842,7 +842,7 @@ test("mock brain：remember_me 六阶段全流程（含打回 → 修改 → 通
 
 // ───────────────────────── 记忆复用 ─────────────────────────
 
-test("export_csv：宪宪 planning 台词引用上次 remember-me 的决策记忆", async () => {
+test("export_csv：林知远 planning 台词引用上次 remember-me 的决策记忆", async () => {
   const brain = createMockBrain(SCENARIOS);
   const task = makeTask("export_csv", "intake", {
     id: "task_export_flow",
@@ -861,38 +861,38 @@ test("export_csv：宪宪 planning 台词引用上次 remember-me 的决策记�
   ];
 
   const intake = await brain.think(
-    makeCtx({ catId: "xianxian", task, trigger: taskTrigger("task_created", task.id), memory }),
+    makeCtx({ catId: "linzhiyuan", task, trigger: taskTrigger("task_created", task.id), memory }),
   );
   assert.equal(intake.length, 1);
   assertNoPlaceholders(intake);
 
   task.stage = "planning";
   const planning = await brain.think(
-    makeCtx({ catId: "xianxian", task, trigger: taskTrigger("handoff", task.id), memory }),
+    makeCtx({ catId: "linzhiyuan", task, trigger: taskTrigger("handoff", task.id), memory }),
   );
   const planningText = messageTurns(planning)[0]?.text ?? "";
   assert.ok(planningText.includes("REMEMBER_ME_DECISION_V1"), `台词没有引用记忆：${planningText}`);
-  assert.deepEqual(handoffTurns(planning).map((handoff) => handoff.to), ["shuoshuo", "jinjianceng"]);
+  assert.deepEqual(handoffTurns(planning).map((handoff) => handoff.to), ["zhoushuo", "chenshi"]);
   assert.equal(handoffTurns(planning).some((handoff) => handoff.fault !== undefined), false);
   assertNoPlaceholders(planning);
 
   // 后续流程无故障，review 闭环与 remember_me 一致
   const artifacts: Artifact[] = [];
   task.stage = "working";
-  await brain.think(makeCtx({ catId: "shuoshuo", task, trigger: taskTrigger("handoff", task.id), memory }));
+  await brain.think(makeCtx({ catId: "zhoushuo", task, trigger: taskTrigger("handoff", task.id), memory }));
   const workImpl = await brain.think(
-    makeCtx({ catId: "jinjianceng", task, trigger: taskTrigger("handoff", task.id), memory }),
+    makeCtx({ catId: "chenshi", task, trigger: taskTrigger("handoff", task.id), memory }),
   );
   const implHandoff = handoffTurns(workImpl)[0];
   if (!implHandoff) throw new Error("export_csv working 应有交接卡");
-  assert.equal(implHandoff.to, "yanyan");
+  assert.equal(implHandoff.to, "shenyan");
   assert.equal(implHandoff.fault, undefined, "export_csv 不应有故障");
   artifacts.push(patchArtifact(task.id, 1));
 
   task.stage = "reviewing";
   const review1 = reviewTurns(
     await brain.think(
-      makeCtx({ catId: "yanyan", task, trigger: taskTrigger("handoff", task.id), memory, artifacts }),
+      makeCtx({ catId: "shenyan", task, trigger: taskTrigger("handoff", task.id), memory, artifacts }),
     ),
   )[0];
   if (!review1) throw new Error("reviewing 应有 review");
@@ -900,13 +900,13 @@ test("export_csv：宪宪 planning 台词引用上次 remember-me 的决策记�
 
   task.stage = "revising";
   await brain.think(
-    makeCtx({ catId: "jinjianceng", task, trigger: taskTrigger("review_result", task.id), memory, artifacts }),
+    makeCtx({ catId: "chenshi", task, trigger: taskTrigger("review_result", task.id), memory, artifacts }),
   );
   artifacts.push(patchArtifact(task.id, 2));
   task.stage = "reviewing";
   const review2 = reviewTurns(
     await brain.think(
-      makeCtx({ catId: "yanyan", task, trigger: taskTrigger("artifact", task.id), memory, artifacts }),
+      makeCtx({ catId: "shenyan", task, trigger: taskTrigger("artifact", task.id), memory, artifacts }),
     ),
   )[0];
   if (!review2) throw new Error("第二次 review 应有 review");
@@ -914,7 +914,7 @@ test("export_csv：宪宪 planning 台词引用上次 remember-me 的决策记�
 
   task.stage = "done";
   const done = await brain.think(
-    makeCtx({ catId: "xianxian", task, trigger: taskTrigger("review_result", task.id), memory, artifacts }),
+    makeCtx({ catId: "linzhiyuan", task, trigger: taskTrigger("review_result", task.id), memory, artifacts }),
   );
   assert.equal(done[0]?.kind, "decision");
 });
@@ -923,7 +923,7 @@ test("export_csv：没有记忆时用 remember-me 兜底引用，不出现空占
   const brain = createMockBrain(SCENARIOS);
   const task = makeTask("export_csv", "planning", { id: "task_export_no_memory" });
   const turns = await brain.think(
-    makeCtx({ catId: "xianxian", task, trigger: taskTrigger("handoff", task.id) }),
+    makeCtx({ catId: "linzhiyuan", task, trigger: taskTrigger("handoff", task.id) }),
   );
   const text = messageTurns(turns)[0]?.text ?? "";
   assert.match(text, /remember-me/u);
@@ -958,13 +958,13 @@ test("mock brain：@ 到谁，谁按自己的口吻接话并引用用户原话",
   const brain = createMockBrain(SCENARIOS);
   const turns = await brain.think(
     makeCtx({
-      catId: "shuoshuo",
+      catId: "zhoushuo",
       task,
-      trigger: userTrigger("@烁烁 导出按钮能加个进度吗", ["shuoshuo"]),
+      trigger: userTrigger("@周烁 导出按钮能加个进度吗", ["zhoushuo"]),
     }),
   );
   const message = messageTurns(turns)[0];
-  if (!message) throw new Error("烁烁应该接话");
+  if (!message) throw new Error("周烁应该接话");
   assert.ok(message.text.includes("导出按钮能加个进度吗"));
   assert.ok(message.text.includes("后台导出 CSV"));
 });
@@ -984,31 +984,31 @@ test("mock brain：没有任务时的闲聊自然接话", async () => {
 
 // ───────────────────────── nudge 恢复 ─────────────────────────
 
-test("mock brain：催一下 → 宪宪说明漏 @ 卡点，补投交给 driver（不重复发 handoff）", async () => {
+test("mock brain：催一下 → 林知远说明漏 @ 卡点，补投交给 driver（不重复发 handoff）", async () => {
   const brain = createMockBrain(SCENARIOS);
   const task = makeTask("remember_me", "working", { id: "task_stalled", status: "stalled" });
 
   // driver 在 nudge 之后会自己 deliverMissed 补投；brain 只给恢复台词，不能再发 handoff
   const turns = await brain.think(
-    makeCtx({ catId: "xianxian", task, trigger: nudgeTrigger(task.id) }),
+    makeCtx({ catId: "linzhiyuan", task, trigger: nudgeTrigger(task.id) }),
   );
   assert.equal(turns.length, 1, "nudge 只应该返回一条恢复消息");
-  assert.equal(handoffTurns(turns).length, 0, "nudge 不能重复发交接卡，否则会重复唤醒砚砚");
+  assert.equal(handoffTurns(turns).length, 0, "nudge 不能重复发交接卡，否则会重复唤醒沈砚");
   const message = messageTurns(turns)[0];
   if (!message) throw new Error("催一下应该先有说明");
   assert.ok(message.text.includes("没带 @") || message.text.includes("没 @"));
-  assert.ok((message.mentions ?? []).includes("yanyan"));
+  assert.ok((message.mentions ?? []).includes("shenyan"));
 
   // 再催一次：不重复认领
   const again = await brain.think(
-    makeCtx({ catId: "xianxian", task, trigger: nudgeTrigger(task.id) }),
+    makeCtx({ catId: "linzhiyuan", task, trigger: nudgeTrigger(task.id) }),
   );
   assert.equal(again.length, 1);
   assert.ok((messageTurns(again)[0]?.text ?? "").includes("已经补过"));
 
   // 非主理猫被催：只说明情况
   const other = await brain.think(
-    makeCtx({ catId: "jinjianceng", task, trigger: nudgeTrigger(task.id) }),
+    makeCtx({ catId: "chenshi", task, trigger: nudgeTrigger(task.id) }),
   );
   assert.equal(other.length, 1);
   assert.equal(other[0]?.kind, "message");
@@ -1016,7 +1016,7 @@ test("mock brain：催一下 → 宪宪说明漏 @ 卡点，补投交给 driver�
   // 任务正常推进时的「催一下」不该乱认漏 @ 的锅
   const healthy = makeTask("remember_me", "working", { id: "task_healthy", status: "active" });
   const healthyTurns = await brain.think(
-    makeCtx({ catId: "xianxian", task: healthy, trigger: nudgeTrigger(healthy.id) }),
+    makeCtx({ catId: "linzhiyuan", task: healthy, trigger: nudgeTrigger(healthy.id) }),
   );
   assert.equal(healthyTurns.length, 1);
   assert.ok(!(messageTurns(healthyTurns)[0]?.text ?? "").includes("没带 @"));
@@ -1031,7 +1031,7 @@ test("{{brief}} / {{title}} 会被任务内容替换", async () => {
   const task = makeTask("remember_me", "intake", { id: "task_placeholders", brief, title });
 
   const intake = await brain.think(
-    makeCtx({ catId: "xianxian", task, trigger: taskTrigger("task_created", task.id) }),
+    makeCtx({ catId: "linzhiyuan", task, trigger: taskTrigger("task_created", task.id) }),
   );
   const intakeText = messageTurns(intake)[0]?.text ?? "";
   assert.ok(intakeText.includes(brief), "{{brief}} 没有被替换成需求原文");
@@ -1039,7 +1039,7 @@ test("{{brief}} / {{title}} 会被任务内容替换", async () => {
 
   // {{title}} 出现在有任务的对话里
   const chat = await brain.think(
-    makeCtx({ catId: "xianxian", task, trigger: userTrigger("这个还要改吗") }),
+    makeCtx({ catId: "linzhiyuan", task, trigger: userTrigger("这个还要改吗") }),
   );
   const chatText = messageTurns(chat)[0]?.text ?? "";
   assert.ok(chatText.includes(title), "{{title}} 没有被替换成任务标题");
@@ -1050,7 +1050,7 @@ test("mock brain：未知场景 / 词穷时按角色兜一句", async () => {
   const brain = createMockBrain(SCENARIOS);
   const task = makeTask("no_such_scenario", "working", { id: "task_unknown" });
   const turns = await brain.think(
-    makeCtx({ catId: "jinjianceng", task, trigger: taskTrigger("handoff", task.id) }),
+    makeCtx({ catId: "chenshi", task, trigger: taskTrigger("handoff", task.id) }),
   );
   assert.equal(turns.length, 1);
   const message = messageTurns(turns)[0];
