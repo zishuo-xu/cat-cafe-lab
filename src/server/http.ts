@@ -1250,7 +1250,7 @@ export function createHttpServer(deps: HttpDeps): Server {
     }
 
     {
-      const taskGitMatch = /^\/api\/tasks\/([^/]+)\/(diff|commit|rollback)$/.exec(pathname);
+      const taskGitMatch = /^\/api\/tasks\/([^/]+)\/(diff|commit|rollback|merge)$/.exec(pathname);
       if (taskGitMatch) {
         if (!workspaces) {
           fail(res, 503, "workspace manager not enabled");
@@ -1298,6 +1298,35 @@ export function createHttpServer(deps: HttpDeps): Server {
             task: updated,
             // 被挡下的敏感文件：告诉负责人它们还在工作区里，但没进这次提交。
             ...(result.skipped?.length ? { skipped: result.skipped } : {}),
+          });
+          return;
+        }
+
+        if (action === "merge" && method === "POST") {
+          const body = (await readBody(req)) as { confirm?: unknown };
+          if (body.confirm !== true) {
+            fail(res, 400, "合并需要显式确认（confirm: true）");
+            return;
+          }
+          const result = await workspaces.mergeTaskBranch(workspace.id, task.git, task.id);
+          if (!result.ok) {
+            json(res, 400, {
+              error: result.error ?? "merge failed",
+              ...(result.conflicts?.length ? { conflicts: result.conflicts } : {}),
+            });
+            return;
+          }
+          const updated = studio.updateTaskGit(task.id, {
+            ...task.git,
+            ...(result.merged
+              ? { mergeCommit: result.merged, mergedAt: Date.now() }
+              : {}),
+          });
+          json(res, 200, {
+            ok: true,
+            merged: result.merged,
+            note: result.note,
+            task: updated,
           });
           return;
         }

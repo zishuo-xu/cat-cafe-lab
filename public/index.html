@@ -340,6 +340,14 @@
               </button>
               <button
                 type="button"
+                class="btn btn--tiny btn--primary"
+                data-action="open-task-merge"
+                id="task-merge-btn"
+              >
+                合并
+              </button>
+              <button
+                type="button"
                 class="btn btn--tiny btn--danger"
                 data-action="open-task-rollback"
                 id="task-rollback-btn"
@@ -1480,6 +1488,31 @@
           <button type="button" class="btn btn--ghost" data-action="close-task-rollback">取消</button>
           <button type="button" class="btn btn--danger" data-action="confirm-task-rollback" id="task-rollback-confirm">
             确认回滚
+          </button>
+        </footer>
+      </div>
+    </dialog>
+
+    <!-- ── 任务分支合并弹窗 ───────────────────────────────────────── -->
+    <dialog id="task-merge-modal" class="modal" aria-labelledby="task-merge-title">
+      <div class="modal-card">
+        <header class="modal-head">
+          <h2 id="task-merge-title">合并任务分支</h2>
+          <button type="button" class="icon-btn" data-action="close-task-merge" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub" id="task-merge-sub">把任务分支合并到 base 分支。</p>
+        <div id="task-merge-info" class="git-meta"></div>
+        <p class="task-merge-warning">
+          只合并到本地 base 分支：不会 push 到远端，也不会删除任务分支。
+        </p>
+        <p class="form-error" id="task-merge-error" role="alert" hidden></p>
+        <div id="task-merge-conflicts" class="task-merge-conflicts" role="alert" hidden></div>
+        <footer class="modal-foot">
+          <button type="button" class="btn btn--ghost" data-action="close-task-merge">取消</button>
+          <button type="button" class="btn btn--primary" data-action="confirm-task-merge" id="task-merge-confirm">
+            确认合并
           </button>
         </footer>
       </div>

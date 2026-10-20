@@ -341,6 +341,11 @@ const taskRollbackModal = {
   saving: false,
 };
 
+const taskMergeModal = {
+  taskId: null,
+  saving: false,
+};
+
 /** MCP server 管理状态。 */
 const mcpState = {
   loading: false,
@@ -946,6 +951,13 @@ function cacheDom() {
   els.taskRollbackInfo = $("#task-rollback-info");
   els.taskRollbackError = $("#task-rollback-error");
   els.taskRollbackConfirm = $("#task-rollback-confirm");
+  els.taskMergeBtn = $("#task-merge-btn");
+  els.taskMergeModal = $("#task-merge-modal");
+  els.taskMergeSub = $("#task-merge-sub");
+  els.taskMergeInfo = $("#task-merge-info");
+  els.taskMergeError = $("#task-merge-error");
+  els.taskMergeConflicts = $("#task-merge-conflicts");
+  els.taskMergeConfirm = $("#task-merge-confirm");
   els.workspaceBranchPerTask = $("#workspace-branch-per-task");
   els.currentWorkspaceBody = $("#current-workspace-body");
   els.currentWorkspacePolicy = $("[data-current-workspace-policy]");
@@ -3235,6 +3247,7 @@ function bindUi() {
     [els.taskDiffModal, closeTaskDiffModal],
     [els.taskCommitModal, closeTaskCommitModal],
     [els.taskRollbackModal, closeTaskRollbackModal],
+    [els.taskMergeModal, closeTaskMergeModal],
   ]) {
     if (!modal) continue;
     modal.addEventListener("click", (event) => {
@@ -3251,6 +3264,13 @@ function bindUi() {
     els.taskRollbackModal.addEventListener("close", () => {
       taskRollbackModal.saving = false;
       hideTaskRollbackError();
+    });
+  }
+  if (els.taskMergeModal) {
+    els.taskMergeModal.addEventListener("close", () => {
+      taskMergeModal.saving = false;
+      hideTaskMergeError();
+      hideTaskMergeConflicts();
     });
   }
   if (els.taskDiffModal) {
@@ -3714,6 +3734,15 @@ function onGlobalClick(event) {
       break;
     case "close-task-rollback":
       closeTaskRollbackModal();
+      break;
+    case "open-task-merge":
+      openTaskMergeModal();
+      break;
+    case "close-task-merge":
+      closeTaskMergeModal();
+      break;
+    case "confirm-task-merge":
+      void confirmTaskMerge();
       break;
     case "confirm-task-rollback":
       void confirmTaskRollback();
@@ -9982,6 +10011,8 @@ function taskGitSignature(task) {
     task?.git?.baseBranch ?? "",
     task?.git?.commit ?? "",
     task?.git?.committedAt ?? "",
+    task?.git?.mergeCommit ?? "",
+    task?.git?.mergedAt ?? "",
     task?.git?.stashedAt ?? "",
     task?.git?.error ?? "",
     workspace?.id ?? "",
@@ -10079,10 +10110,29 @@ function taskGitActionState(task, workspace) {
           : stashed
             ? "任务已经回滚过了"
             : "";
+  const merged = Boolean(git.mergeCommit || git.mergedAt);
+  const mergeReason = !task
+    ? "当前没有任务"
+    : readonly
+      ? "只读工作区，不能合并"
+      : unavailable
+        ? "任务 git 服务未就绪，按钮暂时不可用"
+        : merged
+          ? "已经合并过了"
+          : stashed
+            ? "任务已回滚，没有可合并的提交"
+            : git.error
+              ? "建分支失败，不能合并"
+              : !git.branch || !git.baseBranch
+                ? "任务没有独立分支，没有需要合并的内容"
+                : !committed
+                  ? "任务还没有提交，先提交再合并"
+                  : "";
   return {
     diff: !task ? "当前没有任务" : unavailable ? "任务 git 服务未就绪" : "",
     commit: commitReason,
     rollback: rollbackReason,
+    merge: mergeReason,
   };
 }
 
@@ -10104,6 +10154,7 @@ function renderTaskGit() {
   const loading = taskGitState.taskId === task?.id && taskGitState.loading;
   const unavailable = taskGitState.available === false;
   const committed = Boolean(git.commit || git.committedAt);
+  const merged = Boolean(git.mergeCommit || git.mergedAt);
   const stashed = Boolean(git.stashedAt);
   const readonly = workspace.policy === "read-only";
 
@@ -10125,6 +10176,9 @@ function renderTaskGit() {
   } else if (unavailable) {
     statusText = "git 服务未就绪";
     statusTone = "danger";
+  } else if (merged) {
+    statusText = `已合并 · ${shortHash(git.mergeCommit)}`;
+    statusTone = "ok";
   } else if (committed) {
     statusText = `已提交 · ${shortHash(git.commit)}`;
     statusTone = "ok";
@@ -10212,6 +10266,29 @@ function renderTaskGit() {
         ),
       );
     }
+    if (git.mergeCommit) {
+      rows.push(
+        h(
+          "div",
+          { class: "task-git-branch" },
+          h("span", { class: "task-git-label", text: "merged" }),
+          h("code", { text: shortHash(git.mergeCommit), title: git.mergeCommit }),
+          h("span", {
+            class: "task-git-label",
+            text: `→ ${git.baseBranch ?? "base"} · 未 push`,
+          }),
+          h("button", {
+            type: "button",
+            class: "task-git-copy",
+            "data-action": "copy-task-git",
+            "data-copy-text": git.mergeCommit,
+            "data-copy-label": "合并 commit hash",
+            text: "复制",
+            title: "复制合并提交完整 hash",
+          }),
+        ),
+      );
+    }
     rows.push(h("span", { class: "task-git-status", "data-tone": statusTone, text: statusText }));
     if (git.error) {
       rows.push(h("p", { class: "task-git-hint", "data-tone": "danger", text: `⚠ ${git.error}` }));
@@ -10221,7 +10298,7 @@ function renderTaskGit() {
         h("p", {
           class: "task-git-hint",
           "data-tone": "danger",
-          text: "只读工作区，不能提交/回滚；可以查看 diff 和文件。",
+          text: "只读工作区，不能提交/合并/回滚；可以查看 diff 和文件。",
         }),
       );
     } else if (unavailable) {
@@ -10255,6 +10332,18 @@ function renderTaskGit() {
     els.taskRollbackBtn.disabled = Boolean(actions.rollback);
     els.taskRollbackBtn.title = actions.rollback || "回滚任务改动（stash）";
   }
+  if (els.taskMergeBtn) {
+    const base = git.baseBranch || "base";
+    const mergedLabel = shortHash(git.mergeCommit);
+    els.taskMergeBtn.hidden = false;
+    els.taskMergeBtn.disabled = merged || Boolean(actions.merge);
+    els.taskMergeBtn.textContent = merged
+      ? `已合并${mergedLabel ? ` ${mergedLabel}` : ""}`
+      : `合并到 ${base}`;
+    els.taskMergeBtn.title = merged
+      ? `已合并到 ${base}${mergedLabel ? `（${mergedLabel}）` : ""}；只合并到本地，未 push`
+      : actions.merge || `把任务分支合并到 ${base}（仅本地，不 push）`;
+  }
   if (els.taskGitHint) {
     const hint = unavailable
       ? taskGitState.error || "任务 git 服务未就绪（接口 404/503），按钮暂时不可用。"
@@ -10272,8 +10361,11 @@ function renderTaskGit() {
 
 function templateTaskGitHint(task, git, workspace) {
   if (!task) return "当前房间没有进行中的任务。";
-  if (workspace?.policy === "read-only") return "只读工作区，不能提交/回滚。";
-  if (git?.commit) return "已提交：任务分支保留，请人工 review / merge。";
+  if (workspace?.policy === "read-only") return "只读工作区，不能提交/合并/回滚。";
+  if (git?.mergeCommit) {
+    return `已合并到 ${git.baseBranch ?? "base"}（${shortHash(git.mergeCommit)}）；只合并到本地，未 push。`;
+  }
+  if (git?.commit) return "已提交：可以合并到 base 收尾（只合并本地，不会 push）。";
   if (git?.stashedAt) return "已回滚：改动在 git stash 中，可手动恢复。";
   if (git?.branch && !git?.error) return "";
   return "";
@@ -10541,6 +10633,151 @@ async function confirmTaskRollback() {
     if (els.taskRollbackConfirm) {
       els.taskRollbackConfirm.disabled = false;
       els.taskRollbackConfirm.textContent = "确认回滚";
+    }
+  }
+}
+
+// —— 任务分支合并 ——
+
+async function readMergeApiError(response) {
+  try {
+    const payload = await response.json();
+    if (payload && typeof payload === "object") {
+      return {
+        error:
+          typeof payload.error === "string" && payload.error
+            ? payload.error
+            : `HTTP ${response.status}`,
+        conflicts: Array.isArray(payload.conflicts)
+          ? payload.conflicts.filter((item) => typeof item === "string" && item.trim())
+          : [],
+      };
+    }
+  } catch {
+    /* 非 JSON 错误体 */
+  }
+  return { error: `HTTP ${response.status}`, conflicts: [] };
+}
+
+function openTaskMergeModal() {
+  const task = activeTask();
+  if (!task) {
+    toast("当前没有任务", "warn");
+    return;
+  }
+  const actions = taskGitActionState(task, currentWorkspace());
+  if (actions.merge) {
+    toast(actions.merge, "warn");
+    return;
+  }
+  const git = task.git ?? {};
+  taskMergeModal.taskId = task.id;
+  taskMergeModal.saving = false;
+  if (els.taskMergeSub) {
+    els.taskMergeSub.textContent =
+      `把 ${git.branch ?? "任务分支"} 合并到 ${git.baseBranch ?? "base"}。`;
+  }
+  if (els.taskMergeInfo) {
+    const nodes = [];
+    if (git.branch) nodes.push(h("span", { class: "git-branch", text: git.branch }));
+    if (git.baseBranch) nodes.push(h("span", { text: `→ ${git.baseBranch}` }));
+    if (git.commit) {
+      nodes.push(h("code", { text: shortHash(git.commit), title: git.commit }));
+    }
+    nodes.push(h("span", { text: "仅本地合并，不 push" }));
+    els.taskMergeInfo.replaceChildren(...nodes);
+  }
+  hideTaskMergeError();
+  hideTaskMergeConflicts();
+  if (els.taskMergeConfirm) {
+    els.taskMergeConfirm.disabled = false;
+    els.taskMergeConfirm.textContent = "确认合并";
+  }
+  if (!els.taskMergeModal?.open) els.taskMergeModal?.showModal();
+}
+
+function closeTaskMergeModal() {
+  if (els.taskMergeModal?.open) els.taskMergeModal.close();
+}
+
+function hideTaskMergeError() {
+  if (!els.taskMergeError) return;
+  els.taskMergeError.hidden = true;
+  els.taskMergeError.textContent = "";
+}
+
+function showTaskMergeError(message) {
+  if (!els.taskMergeError) return;
+  els.taskMergeError.textContent = message;
+  els.taskMergeError.hidden = false;
+}
+
+function hideTaskMergeConflicts() {
+  if (!els.taskMergeConflicts) return;
+  els.taskMergeConflicts.hidden = true;
+  els.taskMergeConflicts.replaceChildren();
+}
+
+function showTaskMergeConflicts(conflicts) {
+  if (!els.taskMergeConflicts) return;
+  if (!conflicts?.length) {
+    hideTaskMergeConflicts();
+    return;
+  }
+  els.taskMergeConflicts.hidden = false;
+  els.taskMergeConflicts.replaceChildren(
+    h("strong", { class: "task-merge-conflicts-title", text: "冲突文件" }),
+    h(
+      "ul",
+      { class: "task-merge-conflicts-list" },
+      ...conflicts.map((file) => h("li", { text: file })),
+    ),
+  );
+}
+
+async function confirmTaskMerge() {
+  if (taskMergeModal.saving) return;
+  const taskId = taskMergeModal.taskId;
+  if (!taskId) return;
+  taskMergeModal.saving = true;
+  hideTaskMergeError();
+  hideTaskMergeConflicts();
+  if (els.taskMergeConfirm) {
+    els.taskMergeConfirm.disabled = true;
+    els.taskMergeConfirm.textContent = "合并中…";
+  }
+  try {
+    const response = await fetch(`/api/tasks/${encodeURIComponent(taskId)}/merge`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ confirm: true }),
+    });
+    if (!response.ok) {
+      // 冲突时后端会回滚现场，这里原样展示 error 并列出冲突文件。
+      const failure = await readMergeApiError(response);
+      showTaskMergeError(failure.error);
+      showTaskMergeConflicts(failure.conflicts);
+      return;
+    }
+    const payload = await response.json();
+    closeTaskMergeModal();
+    const merged = shortHash(payload?.merged);
+    if (merged) {
+      toast(`已合并 ${merged}；只合并到本地，未 push`);
+    } else {
+      toast(payload?.note || "已合并");
+    }
+    if (payload?.task) applyUpdatedTask(payload.task);
+    await refreshState().catch(() => {});
+    clearTaskGitState();
+    renderAll();
+  } catch (error) {
+    showTaskMergeError(error.message || "合并失败");
+  } finally {
+    taskMergeModal.saving = false;
+    if (els.taskMergeConfirm) {
+      els.taskMergeConfirm.disabled = false;
+      els.taskMergeConfirm.textContent = "确认合并";
     }
   }
 }

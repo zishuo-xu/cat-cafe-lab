@@ -133,6 +133,9 @@ export interface TaskGit {
   committedAt?: number;
   /** 已回滚（stash 可恢复）的时间。 */
   stashedAt?: number;
+  /** 已合并回 base 分支：合并提交与时间。 */
+  mergeCommit?: string;
+  mergedAt?: number;
   /** 建分支失败等提示。 */
   error?: string;
 }

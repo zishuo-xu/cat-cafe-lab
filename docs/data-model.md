@@ -304,12 +304,14 @@ interface TaskStep {
 
 ```ts
 interface TaskGit {
-  branch?: string;       // catcafe/<taskId>
+  branch?: string;       // deliverylab/<taskId>
   baseBranch?: string;
   baseCommit?: string;
   commit?: string;       // 人工确认提交后的 commit
   committedAt?: number;
   stashedAt?: number;    // 回滚时间（改动在 stash 里可恢复）
+  mergeCommit?: string;  // 合并回 base 后的合并提交
+  mergedAt?: number;
   error?: string;        // 建分支失败等提示
 }
 ```

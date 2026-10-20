@@ -349,6 +349,96 @@ export class WorkspaceManager {
   }
 
   /**
+   * 合并任务分支回 base（人工确认后）。
+   *
+   * 设计取舍：**不自动 push、不删任务分支**。合并只发生在本地 base 分支上，
+   * 失败了（冲突）会 abort 回原状并把冲突文件报给负责人，绝不留下半个合并现场。
+   * 用 `--no-ff` 保留一条合并提交，历史上看得出「这个任务是一个整体」。
+   */
+  async mergeTaskBranch(
+    workspaceId: string,
+    taskGit: { branch?: string; baseBranch?: string; commit?: string } | undefined,
+    taskId: string,
+  ): Promise<{ ok: boolean; merged?: string; note?: string; error?: string; conflicts?: string[] }> {
+    const workspace = this.get(workspaceId);
+    if (!workspace) return { ok: false, error: "工作区不存在" };
+    if (!workspace.isGit) return { ok: false, error: "不是 git 仓库" };
+    if (workspace.policy !== "read-write") {
+      return { ok: false, error: "只读工作区不能合并，请先授予读写权限" };
+    }
+    const branch = taskGit?.branch;
+    const baseBranch = taskGit?.baseBranch;
+    if (!branch || !baseBranch) {
+      return { ok: false, error: "任务没有独立分支，没有需要合并的内容" };
+    }
+    if (!taskGit?.commit) {
+      return { ok: false, error: "任务还没有提交，先确认提交再合并" };
+    }
+
+    const status = await this.git(workspace.root, ["status", "--porcelain=v1"]);
+    if (!status.ok) return { ok: false, error: status.stderr.trim() || "git status 失败" };
+    if (status.stdout.trim()) {
+      return { ok: false, error: "工作区有未提交改动，先清理工作树再合并" };
+    }
+
+    const current = await this.git(workspace.root, ["rev-parse", "--abbrev-ref", "HEAD"]);
+    if (!current.ok) return { ok: false, error: current.stderr.trim() || "读取当前分支失败" };
+    const currentBranch = current.stdout.trim();
+
+    // 已经合过了就不再产生空合并提交。
+    const ancestor = await this.git(workspace.root, [
+      "merge-base",
+      "--is-ancestor",
+      branch,
+      baseBranch,
+    ]);
+    if (ancestor.ok) {
+      return { ok: true, note: `任务分支 ${branch} 已经在 ${baseBranch} 里，无需重复合并` };
+    }
+
+    if (currentBranch !== baseBranch) {
+      const checkout = await this.git(workspace.root, ["checkout", baseBranch]);
+      if (!checkout.ok) {
+        return { ok: false, error: checkout.stderr.trim() || `切换到 ${baseBranch} 失败` };
+      }
+    }
+
+    const merged = await this.git(workspace.root, [
+      "merge",
+      "--no-ff",
+      branch,
+      "-m",
+      `merge: 任务 ${taskId}`,
+    ]);
+    if (!merged.ok) {
+      // 冲突：把现场撤干净，别让负责人接手一个半合并的仓库。
+      const conflicted = await this.git(workspace.root, [
+        "diff",
+        "--name-only",
+        "--diff-filter=U",
+      ]);
+      await this.git(workspace.root, ["merge", "--abort"]);
+      const conflicts = conflicted.ok
+        ? conflicted.stdout
+            .split("\n")
+            .map((line) => line.trim())
+            .filter(Boolean)
+        : [];
+      return {
+        ok: false,
+        error:
+          conflicts.length > 0
+            ? `合并有冲突，已中止：${conflicts.join("、")}。请手动解决后再合并`
+            : merged.stderr.trim() || "合并失败（已中止）",
+        ...(conflicts.length > 0 ? { conflicts } : {}),
+      };
+    }
+
+    const head = await this.git(workspace.root, ["rev-parse", "HEAD"]);
+    return { ok: true, ...(head.ok ? { merged: head.stdout.trim() } : {}) };
+  }
+
+  /**
    * 回滚：用 git stash -u 收走改动（可恢复），有任务分支时切回 base 并删除空分支。
    * 已提交的任务拒绝回滚，避免动历史。
    */

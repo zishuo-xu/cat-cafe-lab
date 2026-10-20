@@ -87,10 +87,13 @@ stash 可恢复回滚；只读/脏树/未收尾分支都有明确拒绝。181 �
 - **真实 provider 联调**：见 [real-model.md](./docs/real-model.md)，需要真实 key；
 - ~~房间编辑/解绑~~：已完成（PATCH / DELETE /api/rooms/:id + 左栏房间菜单）；
 - ~~MCP 鉴权~~：已完成（stdio env / http headers，值不泄露）；
-- 下一步候选：任务分支 merge 收尾 UI、MCP server 市场示例、多用户/鉴权。
+- ~~任务分支 merge 收尾~~：已完成（`POST /api/tasks/:id/merge` + 任务 Git 区「合并到 base」
+  按钮/确认弹窗；`--no-ff` 保留合并提交，冲突自动 abort，不 push、不删任务分支）；
+- 成员数量配置化：已完成（增删成员 + 角色约束 + 历史「已移除」显示）；
+- 下一步候选：MCP server 市场示例、真实 provider 联调、多用户/鉴权。
 
 ## 不做清单（现阶段）
 
 - 不做公网多租户、不做计费、不接真实支付；
-- 不做自动 merge 到主分支（C 阶段 commit 也要人工确认）；
+- 不做自动 merge / 自动 push：merge 与 commit 都必须人工点确认，且只作用于本地分支；
 - 不做语音/IM（之前评估过，属于产品变厚之后的层）。

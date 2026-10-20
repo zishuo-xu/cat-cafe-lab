@@ -5122,6 +5122,43 @@ button {
   color: #9a5b3c;
 }
 
+.task-merge-warning {
+  margin: 0;
+  padding: 7px 9px;
+  border: 1px dashed #e5c48c;
+  border-radius: 9px;
+  background: var(--warn-soft);
+  color: #8a6118;
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.task-merge-conflicts {
+  padding: 7px 9px;
+  border: 1px solid #e3b7a0;
+  border-radius: 9px;
+  background: #fbe9df;
+  color: #9a5b3c;
+  font-size: 10.5px;
+  line-height: 1.55;
+}
+
+.task-merge-conflicts[hidden] {
+  display: none;
+}
+
+.task-merge-conflicts-title {
+  display: block;
+  margin-bottom: 3px;
+}
+
+.task-merge-conflicts-list {
+  margin: 0;
+  padding-left: 18px;
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
 .task-diff-pre {
   min-height: 72px;
   max-height: 340px;
