@@ -345,6 +345,83 @@ button {
   background: linear-gradient(160deg, #f9e2d4, #f3cbb5);
 }
 
+/* 「这句话像需求」确认框：聊天框提需求时弹出（开任务 / 就聊两句） */
+.confirm-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  background: rgba(58, 46, 40, 0.42);
+  backdrop-filter: blur(3px);
+}
+
+.confirm-card {
+  width: min(430px, calc(100vw - 32px));
+  padding: 20px 20px 16px;
+  border-radius: 16px;
+  background: #fffdf9;
+  box-shadow: 0 18px 50px rgba(58, 46, 40, 0.28);
+}
+
+.confirm-card h2 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.confirm-card p {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--ink);
+}
+
+.confirm-card .confirm-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.confirm-card footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.confirm-card footer button {
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.confirm-card footer button:hover {
+  background: #faf4ea;
+}
+
+.confirm-card footer button.primary {
+  border-color: #c58a4a;
+  background: #c58a4a;
+  color: #fff;
+  font-weight: 700;
+}
+
+.confirm-card footer button.primary:hover {
+  background: #b57a3c;
+}
+
+@media (max-width: 720px) {
+  .confirm-card {
+    width: calc(100vw - 24px);
+  }
+}
+
 /* Provider 预设 chips：一次填好 Base URL / 模型 / 请求头 */
 .provider-presets {
   display: flex;

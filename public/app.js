@@ -4076,7 +4076,18 @@ function showBriefHint(text) {
       </footer>
     </div>`;
   document.body.append(dialog);
-  const close = () => dialog.remove();
+  const close = () => {
+    dialog.remove();
+    document.removeEventListener("keydown", onKey);
+  };
+  // Esc 或点遮罩 = 先不决定（文字留在输入框里，不会丢）
+  const onKey = (event) => {
+    if (event.key === "Escape") close();
+  };
+  document.addEventListener("keydown", onKey);
+  dialog.addEventListener("click", (event) => {
+    if (event.target === dialog) close();
+  });
   dialog.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;

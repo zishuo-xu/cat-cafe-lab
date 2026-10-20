@@ -169,6 +169,20 @@ function runCli(
 
     let stdout = "";
     let settled = false;
+    /**
+     * 超时/超限/错误时主动销毁管道。
+     *
+     * 子进程可能是 `sh -c "sleep 30; ..."` 这类脚本：SIGTERM 杀掉 sh 后，
+     * sleep 还活着并继承着 stdout 管道；不销毁流，Node 进程会一直等 EOF（实测多等 30s）。
+     */
+    const disposeChild = (): void => {
+      try {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      } catch {
+        // 流可能已关闭
+      }
+    };
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
@@ -178,6 +192,7 @@ function runCli(
       } catch {
         // 进程可能已退出
       }
+      disposeChild();
       fail(new Error(`CLI 超时 ${opts.timeoutMs}ms`));
     }, opts.timeoutMs);
     timer.unref?.();
@@ -190,6 +205,7 @@ function runCli(
         settled = true;
         clearTimeout(timer);
         child.kill("SIGKILL");
+        disposeChild();
         fail(new Error("CLI 输出超过上限"));
       }
     });
@@ -202,6 +218,7 @@ function runCli(
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      disposeChild();
       fail(new Error(`无法启动 CLI（${command}）：${err.message}`));
     });
 
