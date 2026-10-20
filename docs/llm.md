@@ -1,7 +1,7 @@
 # 真实模式（LLM）配置与行为
 
-猫咖默认是**演出模式**：零 API key、确定性台词，打开就能看完一次完整协作。
-配好模型后切到**真实模式**：四只猫的台词与交接由真实模型生成，协作流程（谁接活、
+交付台默认是**演出模式**：零 API key、确定性台词，打开就能看完一次完整协作。
+配好模型后切到**真实模式**：四个成员的台词与交接由真实模型生成，协作流程（谁接活、
 交接顺序、review 打回、谁写得进记忆）保持不变。
 
 真实模式的实现只有两处：
@@ -30,28 +30,28 @@
 > 点「测试连接」并保存，运行中即时切换。面板保存的值会覆盖环境变量；API Key 只存在进程内存，
 > 不回传、不落盘。下面的环境变量方式仍然可用，作为启动默认值。
 
-### 每只猫独立模型
+### 每个成员独立模型
 
-设置面板「猫猫与模型」里可以给每只猫单独填 `llmModel` 和 `llmTemperature`
-（等价于 `PUT /api/cats/:id`）。真实模式下，llm-brain 每次调用按当前这只猫解析：
+设置面板「成员与模型」里可以给每个成员单独填 `llmModel` 和 `llmTemperature`
+（等价于 `PUT /api/cats/:id`）。真实模式下，llm-brain 每次调用按当前这个成员解析：
 
-- `Cat.llmModel` 非空 → 用这只猫的模型；空/缺省 → 用全局 `LLM_MODEL`；
+- `Cat.llmModel` 非空 → 用这个成员的模型；空/缺省 → 用全局 `LLM_MODEL`；
 - `Cat.llmTemperature` 是数字（包括 `0`）→ 用它；否则回落全局 `LLM_TEMPERATURE`；
 - 覆盖值存在 `data/studio.json` 的 `cats` 里，重启保留。
 
-这样可以让宪宪用推理模型、金渐层用便宜快速的模型，而不需要维护多个 brain 实例。
+这样可以让林知远用推理模型、陈实用便宜快速的模型，而不需要维护多个 brain 实例。
 
 ### 真实模式与沙盒工具
 
 真实模式下，llm-brain 的输出第 7 种 turn 是 `kind:"tool"`，可用工具来自 `TurnContext.availableTools`：
-内置沙盒四个工具 + 已连接的 MCP server 工具（按每猫权限过滤）。driver 执行后以
+内置沙盒四个工具 + 已连接的 MCP server 工具（按按成员权限过滤）。driver 执行后以
 `trigger.kind="tool_result"` 再叫一次，把 exitCode 和输出喂回去（最多连续 3 轮）。
 
 `TurnContext.skills` 里的技能包会以 `### <name>` + prompt 全文注入 system prompt（演出模式不生效）。
 MCP 工具默认风险 `needs_approval`，模型调用会进审批队列。
 
-模型主动发起的命令默认要铲屎官审批（`commands` 策略），拒绝会以 `rejected` 回喂；
-剧本里的工具节拍永远自动放行。详见 README「真实模式：猫会自己决定用工具」。
+模型主动发起的命令默认要负责人审批（`commands` 策略），拒绝会以 `rejected` 回喂；
+剧本里的工具节拍永远自动放行。详见 README「真实模式：成员会自己决定用工具」。
 
 ### 启动示例
 
@@ -118,7 +118,7 @@ Content-Type: application/json
   "max_tokens": 1600,
   "stream": false,
   "messages": [
-    { "role": "system", "content": "……猫的人格 + 当前阶段 + 输出契约……" },
+    { "role": "system", "content": "……成员的人格 + 当前阶段 + 输出契约……" },
     { "role": "user", "content": "……最近消息 + 交接卡 + 产物 + 记忆 + 触发事件……" }
   ]
 }
@@ -126,7 +126,7 @@ Content-Type: application/json
 
 Prompt 会带上：
 
-- 这只猫的名字/品种/角色/性格/口头禅，以及房间信息；
+- 这个成员的名字/品种/角色/性格/口头禅，以及房间信息；
 - 当前任务的标题、需求原文、阶段、负责人、场景 id；
 - 最近 24 条房间消息（每条截断到约 220 字）；
 - 当前任务的交接卡、已有产物（正文截断）、相关共享记忆（最多 12 条）；
@@ -191,7 +191,7 @@ Prompt 会带上：
   `blocker` / `minor`，非法项被过滤；
 - `artifact.kind` 必须是 `spec / design / patch / review / decision`；
 - `memory.kind` 必须是 `decision / lesson / preference`；
-- `mentions`、`handoff.to` 只保留房间里存在的 catId，交接给自己或被 @ 到不存在的猫会被丢弃；
+- `mentions`、`handoff.to` 只保留房间里存在的 catId，交接给自己或被 @ 到不存在的成员会被丢弃；
 - 一次最多接受 6 个 turn，`delayMs` 被夹到 `0 ~ 8000`。
 
 校验后一条合法 turn 都不剩，视为整轮失败 → 降级。
@@ -204,7 +204,7 @@ Prompt 会带上：
 
 | 失败情况 | 行为 | 日志（一行） |
 |---|---|---|
-| HTTP 非 2xx | `fallback.think(ctx)` | `[llm-brain] HTTP 500，降级 fallback（猫=宪宪，stage=reviewing）` |
+| HTTP 非 2xx | `fallback.think(ctx)` | `[llm-brain] HTTP 500，降级 fallback（成员=林知远，stage=reviewing）` |
 | 响应体不是 JSON | `fallback.think(ctx)` | `…响应不是合法 JSON envelope…` |
 | 缺 `choices[0].message.content` | `fallback.think(ctx)` | `…响应缺少 choices[0].message.content…` |
 | 内容不是可用 `CatTurn[]`（坏 JSON / 全被校验过滤） | `fallback.think(ctx)` | `…模型输出不是可用的 CatTurn[]…` |
@@ -217,7 +217,7 @@ Prompt 会带上：
 - 降级调用的是 `fallback.think(ctx)`，也就是**确定性 mock brain**，所以任务状态机、
   交接、review、记忆照常推进，只是台词变回演出稿；
 - 每次失败只 `console.warn` **一行**，不抛异常、不中断 driver；
-- 超时是 per-request 的 `AbortController`，不用全局定时器，不会影响其他猫的轮次；
+- 超时是 per-request 的 `AbortController`，不用全局定时器，不会影响其他成员的轮次；
 - 模型的个别 turn 不合法只丢弃该 turn，不整轮降级（只有一条都不剩才降级）；
 - 恢复不需要重启：下一次 `think()` 会重新请求模型。
 
@@ -230,7 +230,7 @@ Prompt 会带上：
 - key 只出现在请求头 `Authorization: Bearer …`；所有 warn 日志都会经过一次
   `scrub()` 二次脱敏（即使 key 因某种原因出现在文本里也会被替换成 `***`）。
 - 上行给模型的内容包括：需求原文（brief）、最近 24 条房间消息、交接卡、产物正文
-  （截断）、共享记忆（最多 12 条）与猫的人格设定。**这意味着这些内容会发送到你配置的
+  （截断）、共享记忆（最多 12 条）与成员的人格设定。**这意味着这些内容会发送到你配置的
   端点**。处理真实业务数据时：
   - 优先用本地模型（Ollama / vLLM / llama.cpp），数据不出机器；
   - 用云端服务时，确认提供方的数据留存与训练政策；
@@ -250,7 +250,7 @@ Prompt 会带上：
 node --test tests/llm.test.ts
 ```
 
-测试覆盖：合法 JSON 被正确解析（并断言请求体带猫名与 brief）、坏 JSON / HTTP 500 /
+测试覆盖：合法 JSON 被正确解析（并断言请求体带成员名与 brief）、坏 JSON / HTTP 500 /
 超时 / 网络错误全部降级、结构校验（未知 kind、缺栏卡片、非法 verdict）、以及
 “日志不出现 apiKey”。
 

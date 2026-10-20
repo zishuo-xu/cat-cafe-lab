@@ -1,6 +1,6 @@
 # HTTP API 参考
 
-猫咖工作台的 HTTP 层是「REST + SSE + 静态资源」：所有状态变更都经由 `Studio` / `Driver`，HTTP 只做校验和转发。
+协作交付台的 HTTP 层是「REST + SSE + 静态资源」：所有状态变更都经由 `Studio` / `Driver`，HTTP 只做校验和转发。
 本文按 `src/server/http.ts` 的实际实现整理，路径、方法、错误码都以代码为准。
 
 - Base URL：`http://127.0.0.1:4318`（`PORT` 可覆盖）
@@ -21,16 +21,16 @@
 | GET | `/api/health` | 健康检查 + 运行模式 / 卡住阈值 |
 | GET | `/api/state` | 拉取全量 `StudioState` 快照 |
 | GET | `/api/events` | SSE：状态全量快照流 |
-| POST | `/api/reset` | 重置猫咖（清空消息/任务/产物/记忆等） |
+| POST | `/api/reset` | 重置交付台（清空消息/任务/产物/记忆等） |
 | GET / PUT | `/api/settings` | 读取 / 修改运行时设置 |
 | POST | `/api/settings/test` | 测试 LLM 连接 |
-| GET | `/api/cats` | 猫猫名册 |
-| PUT | `/api/cats/:id` | 修改单只猫的档案 / 模型 / 工具 / 技能 |
+| GET | `/api/cats` | 成员名册 |
+| PUT | `/api/cats/:id` | 修改单个成员的档案 / 模型 / 工具 / 技能 |
 | POST | `/api/rooms` | 新建房间（绑定工作区） |
 | PATCH | `/api/rooms/:id` | 改房间名 / 主题 / 工作区 |
 | PUT | `/api/rooms/:id` | 绑定 / 切换房间的工作区 |
 | DELETE | `/api/rooms/:id` | 删除房间（级联清理该房间的任务等） |
-| POST | `/api/rooms/:id/messages` | 铲屎官发消息 |
+| POST | `/api/rooms/:id/messages` | 负责人发消息 |
 | POST | `/api/tasks` | 创建任务并开工 |
 | GET | `/api/tasks/:id/trace` | 任务轨迹（时间线 + 汇总） |
 | GET | `/api/tasks/:id/diff` | 任务分支 / 工作树 diff（git） |
@@ -103,7 +103,7 @@
 
 ```json
 {
-  "rooms": [{ "id": "room_cafe", "name": "猫咖 · 客厅", "workspaceId": "ws_sandbox" }],
+  "rooms": [{ "id": "room_cafe", "name": "交付台 · 主工作区", "workspaceId": "ws_sandbox" }],
   "cats": [],
   "messages": [],
   "tasks": [],
@@ -149,8 +149,8 @@ data: {"seq":42,"state":{...}}
 
 ### `POST /api/reset`
 
-重置猫咖：清空消息、任务、交接、产物、共享记忆、每猫会话、工具/模型调用记录，并重新播放入房问候。
-**保留**房间、猫猫档案与沙盒文件。
+重置交付台：清空消息、任务、交接、产物、共享记忆、按成员会话、工具/模型调用记录，并重新播放入房问候。
+**保留**房间、成员档案与沙盒文件。
 
 ```json
 { "ok": true, "seq": 44 }
@@ -241,22 +241,22 @@ data: {"seq":42,"state":{...}}
 
 ---
 
-## 3. 猫猫
+## 3. 成员
 
 ### `GET /api/cats`
 
 ```json
-{ "cats": [ { "id": "xianxian", "name": "宪宪", "role": "architect", "...": "..." } ] }
+{ "cats": [ { "id": "xianxian", "name": "林知远", "role": "architect", "...": "..." } ] }
 ```
 
 ### `PUT /api/cats/:id`
 
-修改单只猫的档案、模型、工具与技能。所有字段可选，至少传一个：
+修改单个成员的档案、模型、工具与技能。所有字段可选，至少传一个：
 
 ```json
 {
-  "name": "宪宪",
-  "title": "主架构师 / 主理猫",
+  "name": "林知远",
+  "title": "主架构师 / 架构师",
   "persona": "稳，先问为什么……",
   "catchphrase": "我先说结论，再拆。",
   "greeting": "我先把需求接住。",
@@ -271,7 +271,7 @@ data: {"seq":42,"state":{...}}
 - `llmModel` / `llmTemperature` 传 `null` 表示清除覆盖、跟随全局。
 - `tools` / `skills` 传 `null` 表示恢复默认；`tools: []` 表示**一个工具都不给**。
 - 成功返回更新后的 `Cat`。
-- 错误：`400`（字段类型 / 名字重复 / 颜色格式 / 温度越界）、`404`（猫不存在）。
+- 错误：`400`（字段类型 / 名字重复 / 颜色格式 / 温度越界）、`404`（成员不存在）。
 
 ---
 
@@ -325,10 +325,10 @@ data: {"seq":42,"state":{...}}
 
 ### `POST /api/rooms/:id/messages`
 
-铲屎官发消息。会立刻落库，再交给 driver 决定谁来接话。
+负责人发消息。会立刻落库，再交给 driver 决定谁来接话。
 
 ```json
-{ "text": "@砚砚 帮我看下这个 token 方案", "force": false }
+{ "text": "@沈砚 帮我看下这个 token 方案", "force": false }
 ```
 
 返回 `201` + 落库的 `Message`：
@@ -339,7 +339,7 @@ data: {"seq":42,"state":{...}}
   "roomId": "room_cafe",
   "author": "user",
   "kind": "chat",
-  "text": "@砚砚 帮我看下这个 token 方案",
+  "text": "@沈砚 帮我看下这个 token 方案",
   "mentions": ["yanyan"],
   "at": 1792420785923
 }
@@ -380,9 +380,9 @@ data: {"seq":42,"state":{...}}
 {
   "task": { "id": "task_xxx", "title": "…", "stage": "done" },
   "entries": [
-    { "at": 1792420786000, "kind": "stage", "actor": "xianxian", "actorName": "宪宪", "detail": "进入阶段 intake", "meta": { "stage": "intake" } },
-    { "at": 1792420786100, "kind": "llm", "actor": "xianxian", "actorName": "宪宪", "detail": "some-model · 10063ms · in 2378/out 905", "meta": { "engine": "api", "streamed": true, "degraded": false } },
-    { "at": 1792420787000, "kind": "tool", "actor": "jinjianceng", "actorName": "金渐层", "detail": "run_command error (exit 1)", "meta": { "label": "跑测试", "durationMs": 97 } }
+    { "at": 1792420786000, "kind": "stage", "actor": "xianxian", "actorName": "林知远", "detail": "进入阶段 intake", "meta": { "stage": "intake" } },
+    { "at": 1792420786100, "kind": "llm", "actor": "xianxian", "actorName": "林知远", "detail": "some-model · 10063ms · in 2378/out 905", "meta": { "engine": "api", "streamed": true, "degraded": false } },
+    { "at": 1792420787000, "kind": "tool", "actor": "jinjianceng", "actorName": "陈实", "detail": "run_command error (exit 1)", "meta": { "label": "跑测试", "durationMs": 97 } }
   ],
   "summary": {
     "durationMs": 1216000,
@@ -444,7 +444,7 @@ data: {"seq":42,"state":{...}}
 
 ### `POST /api/tasks/:id/action`
 
-任务是「卡住」或「被强制收尾」时，铲屎官的三选一：
+任务是「卡住」或「被强制收尾」时，负责人的三选一：
 
 ```json
 { "action": "continue", "note": "再试一次（可选，pivot/close 时建议写）" }
@@ -461,7 +461,7 @@ data: {"seq":42,"state":{...}}
 
 ### `POST /api/tasks/:id/nudge`
 
-催一下：唤醒宪宪检查卡点、补投漏掉的交接。返回 `202 {"ok":true}`。
+催一下：唤醒林知远检查卡点、补投漏掉的交接。返回 `202 {"ok":true}`。
 错误：`404`。
 
 ---
@@ -498,7 +498,7 @@ data: {"seq":42,"state":{...}}
 ```
 
 - `decision` 分别为 `approved` / `rejected`。
-- `remember: true` 表示同一只猫 + 同一工具本进程内后续不再询问。
+- `remember: true` 表示同一个成员 + 同一工具本进程内后续不再询问。
 - 错误：`404`（没有等待中的审批 / 已处理过）、`503`。
 
 ### `POST /api/patrol`
@@ -588,7 +588,7 @@ MCP 工具的 `source` 为 `"mcp"`，并带 `serverId`。没有注册表时返�
   "servers": [
     {
       "id": "memory",
-      "name": "猫咖记事本",
+      "name": "团队记事本",
       "transport": "stdio",
       "enabled": true,
       "status": "connected",
@@ -609,7 +609,7 @@ MCP 工具的 `source` 为 `"mcp"`，并带 `serverId`。没有注册表时返�
 
 ```json
 {
-  "name": "猫咖记事本",
+  "name": "团队记事本",
   "transport": "stdio",
   "command": "node",
   "args": ["examples/mcp/notes-server.mjs"],
@@ -667,7 +667,7 @@ http 传输则用 `"transport":"http"` + `"url":"https://…"`。
   "workspaces": [
     {
       "id": "ws_sandbox",
-      "name": "猫咖沙盒",
+      "name": "内置沙盒",
       "root": "/…/data/workspace",
       "policy": "read-write",
       "kind": "sandbox",
@@ -695,7 +695,7 @@ http 传输则用 `"transport":"http"` + `"url":"https://…"`。
 }
 ```
 
-- `path` 必须是存在的绝对路径；不能是猫咖自己的数据目录；同一目录不能重复添加。
+- `path` 必须是存在的绝对路径；不能是交付台自己的数据目录；同一目录不能重复添加。
 - `policy: "read-write"` 时必须同时传 `confirm: true`。
 - `branchPerTask` 缺省为 `true`（仅读写 git 仓库会真正建分支）。
 - 成功 `201 {"workspace": Workspace}`；错误 `400`、`503`。
@@ -860,7 +860,7 @@ http 传输则用 `"transport":"http"` + `"url":"https://…"`。
 { "ok": true, "profile": "opencode-mixed", "cats": [{ "catId": "xianxian", "model": "deepseek-v4.1-flash" }] }
 ```
 
-`single-model` 会清掉所有猫的模型覆盖。错误：`400`（未知档案）。
+`single-model` 会清掉所有成员的模型覆盖。错误：`400`（未知档案）。
 
 ---
 
@@ -907,7 +907,7 @@ http 传输则用 `"transport":"http"` + `"url":"https://…"`。
 剧本导入校验会额外带 `errors` 数组：
 
 ```json
-{ "error": "第一条错误", "errors": ["beats[0].cat 必须是现有猫的 id", "…"] }
+{ "error": "第一条错误", "errors": ["beats[0].cat 必须是现有成员的 id", "…"] }
 ```
 
 | 状态码 | 何时出现 |

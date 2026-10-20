@@ -35,7 +35,7 @@ pnpm start
 ```
 
 没有 `LLM_BASE_URL` / `LLM_MODEL` 时 `readSettings()` 返回 `mode: "mock"`；
-四只猫的台词来自内置剧本，工具与审批照常工作，只是不调用真实模型。
+四个成员的台词来自内置剧本，工具与审批照常工作，只是不调用真实模型。
 
 ### 2.2 真实模式
 
@@ -110,7 +110,7 @@ npx tsc --noEmit       # 类型检查
 | `PORT` | `4318` | HTTP 监听端口 | `PORT=4400`；`Number.parseInt`，非法值回落 4318 |
 | `CATCAFE_DATA_DIR` | `data` | 数据目录 | `CATCAFE_DATA_DIR=/var/lib/cat-cafe-lab`；相对路径基于进程 cwd |
 | `CATCAFE_STALL_MS` | `12000` | 判定任务「卡住了」的静默毫秒数 | 只接受正数；非法/<=0 回落 12000。前端也会读 `/api/health.stallMs` |
-| `CATCAFE_TOOLS` | 开启 | 是否允许猫执行沙盒工具 | **只有字符串 `"0"` 关闭**；其他值都视为开启。设置面板保存的 `toolsEnabled` 会覆盖初始值 |
+| `CATCAFE_TOOLS` | 开启 | 是否允许成员执行沙盒工具 | **只有字符串 `"0"` 关闭**；其他值都视为开启。设置面板保存的 `toolsEnabled` 会覆盖初始值 |
 | `CATCAFE_APPROVAL` | `commands` | 工具审批策略 | `auto`（全自动）/ `all`（全审批）/ `commands`（只审批跑命令，默认）；其他值按 `commands` |
 | `LLM_BASE_URL` | 空 | OpenAI 兼容 API base URL | `https://api.deepseek.com/v1`；末尾 `/` 会被去掉；与 `LLM_MODEL` 同时非空才进入真实模式 |
 | `LLM_MODEL` | 空 | 默认模型名 | `deepseek-chat`；与 `LLM_BASE_URL` 同时非空才进入真实模式 |
@@ -143,7 +143,7 @@ npx tsc --noEmit       # 类型检查
 
 ```
 data/
-├── studio.json          # 协作状态：房间、猫、消息、任务、交接、产物、记忆、调用记录…
+├── studio.json          # 协作状态：房间、成员、消息、任务、交接、产物、记忆、调用记录…
 ├── settings.json        # 非敏感运行时设置（0600；首次修改设置后才出现）
 ├── workspaces.json      # 用户添加的工作区（0600；只有自定义工作区，不含内置沙盒）
 ├── mcp.json             # MCP server 配置（0600；可能含 env / HTTP headers 等鉴权值）
@@ -151,7 +151,7 @@ data/
 └── workspace/           # 内置沙盒工作区（ws_sandbox）
     ├── package.json
     ├── README.md
-    └── src/ test/ ...   # 猫真实写出来的文件
+    └── src/ test/ ...   # 成员真实写出来的文件
 ```
 
 用户添加的真实仓库不在 `data/` 里面——`workspaces.json` 只记录它的绝对路径和策略，
@@ -164,16 +164,16 @@ data/
 | 字段 | 内容 |
 |---|---|
 | `rooms` | 房间（id / name / topic / catIds / workspaceId / createdAt） |
-| `cats` | 猫猫档案；恢复时只接受安全字段覆盖，id/role/avatar 等以代码 `CATS` 为底 |
+| `cats` | 成员档案；恢复时只接受安全字段覆盖，id/role/avatar 等以代码 `CATS` 为底 |
 | `messages` | 当前保留的消息（含 user / system / chat / tool / handoff / artifact / review / decision） |
 | `tasks` | 任务（状态、阶段、owner、标题、时间等） |
 | `handoffs` | 交接卡 |
 | `artifacts` | 产物 |
 | `memory` | 共享记忆 |
-| `catSessions` | 每只猫的跨任务会话记忆 |
+| `catSessions` | 每个成员的跨任务会话记忆 |
 | `toolCalls` | 沙盒工具调用记录 |
 | `llmCalls` | 模型调用记录（耗时、token、降级等） |
-| `typing` | 每房间当前打字的猫（恢复时会被清空） |
+| `typing` | 每房间当前打字的成员（恢复时会被清空） |
 | `drafts` | 流式草稿（瞬态，恢复时不保留） |
 | `seq` | SSE 递增序号 |
 | `mode` | 启动时的大脑模式 |
@@ -193,12 +193,12 @@ data/
 
 **恢复：**
 
-- 房间、猫猫档案（安全字段）、消息、任务状态/阶段、交接、产物、共享记忆、`catSessions`；
+- 房间、成员档案（安全字段）、消息、任务状态/阶段、交接、产物、共享记忆、`catSessions`；
 - `toolCalls` / `llmCalls` 历史（用于页面展示和轨迹）；
 - `settings.json` 里的非敏感设置；
 - 自定义剧本（`scenarios.json`）、自定义工作区（`workspaces.json`，目标目录必须仍存在）；
 - MCP server 配置（`mcp.json`，启动时重新连接）；
-- 内置沙盒 `data/workspace` 里的文件（不会重新种，已有 `package.json` 就保留猫的成果）。
+- 内置沙盒 `data/workspace` 里的文件（不会重新种，已有 `package.json` 就保留成员的成果）。
 
 **清空/不恢复：**
 
@@ -351,7 +351,7 @@ tar czf catcafe-backup-$(date +%F).tgz data/
 - `workspaces.json`（自定义工作区引用）
 - `mcp.json`（**可能含密钥**，按敏感文件保管）
 - `scenarios.json`（自定义剧本，若有）
-- `workspace/`（内置沙盒里猫写的文件）
+- `workspace/`（内置沙盒里成员写的文件）
 
 **不在** `data/` 里、但业务上可能需要的：
 

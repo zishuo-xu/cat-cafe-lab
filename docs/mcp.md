@@ -1,7 +1,7 @@
 # MCP 服务器接入与鉴权
 
-猫咖支持挂载 [MCP](https://modelcontextprotocol.io) server，把它们的工具注册成
-`serverId__toolName` 交给猫猫使用。支持两种传输：
+交付台支持挂载 [MCP](https://modelcontextprotocol.io) server，把它们的工具注册成
+`serverId__toolName` 交给成员使用。支持两种传输：
 
 | 传输 | 适用 | 鉴权字段 | 连接方式 |
 |---|---|---|---|
@@ -9,7 +9,7 @@
 | `http` | 远程 / 本机 HTTP 服务 | `headers` | 每个 JSON-RPC 请求走 HTTP POST |
 
 MCP 工具默认风险等级 `needs_approval`：模型主动调用时会进审批队列，
-铲屎官批准后才真正执行（可在设置里按 `auto` / `commands` / `all` 调整）。
+负责人批准后才真正执行（可在设置里按 `auto` / `commands` / `all` 调整）。
 
 > 前端设置面板是后续任务；本文以 HTTP API 为准，面板只是这些接口的壳。
 
@@ -182,7 +182,7 @@ curl -s -X PUT http://127.0.0.1:4318/api/mcp/github-mcp \
    `PATH` / `HOME` 这类基础变量，除非你清楚后果。
 7. **http 头的边界**：用户头不能覆盖 `content-type` 与 `mcp-session-id`，避免破坏
    JSON-RPC 会话；`accept` 可以覆盖。
-8. **执行仍然走审批**：MCP 工具默认 `needs_approval`，模型调用会排队等待铲屎官
+8. **执行仍然走审批**：MCP 工具默认 `needs_approval`，模型调用会排队等待负责人
    批准；被拒后回执 `status=rejected`，模型不会无限重试。
 
 ---
@@ -220,9 +220,9 @@ node --test tests/mcp.test.ts
 
 仓库里有几个零依赖的示例，复制到设置里就能用（路径写绝对路径）：
 
-### 1. 猫咖记事本（examples/mcp/notes-server.mjs）
+### 1. 团队记事本（examples/mcp/notes-server.mjs）
 
-让猫能读写一个本地记事本：
+让成员能读写一个本地记事本：
 
 | 工具 | 作用 |
 |---|---|
@@ -235,7 +235,7 @@ node --test tests/mcp.test.ts
 ```json
 {
   "id": "notes",
-  "name": "猫咖记事本",
+  "name": "团队记事本",
   "transport": "stdio",
   "command": "node",
   "args": ["/绝对路径/cat-cafe-lab/examples/mcp/notes-server.mjs"],
@@ -246,10 +246,10 @@ node --test tests/mcp.test.ts
 > 建议显式给 `id`：不给的话服务端会按名字生成（中文名会退化成 `mcp`），
 > 工具名会变成 `mcp__list_notes` 这种看不出归属的形式。
 
-添加后名册里的猫就能在真实模式下使用 `list_notes` / `read_note` / `write_note`。
+添加后名册里的成员就能在真实模式下使用 `list_notes` / `read_note` / `write_note`。
 数据存在 `examples/mcp/notes.json`（gitignore 之外的演示文件，自己注意别提交私密内容）。
 
-> `risk: "safe"` 表示不需要审批；如果让猫频繁写东西，建议保持默认的 `needs_approval`。
+> `risk: "safe"` 表示不需要审批；如果让成员频繁写东西，建议保持默认的 `needs_approval`。
 
 ### 2. 自测用 fake server（tests/fixtures/fake-mcp-stdio.mjs）
 

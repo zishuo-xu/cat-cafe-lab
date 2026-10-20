@@ -1,6 +1,6 @@
 # 协作引擎（driver.ts）
 
-> 一句话：driver 是「什么时候让哪只猫想什么」的调度器。
+> 一句话：driver 是「什么时候让哪个成员想什么」的调度器。
 > 台词和决策来自 brain，状态落库来自 Studio；driver 只负责**队列、路由、阶段推进、故障恢复**。
 >
 > 源码：`src/engine/driver.ts`（约 1.8k 行）、`src/engine/stages.ts`（纯状态机）、`src/engine/mentions.ts`（@ 路由）。
@@ -18,13 +18,13 @@ roomId 串行队列 ──► processWake(wake)
                        │  1. setTyping / startLlmCall / onDelta → drafts
                        │  2. brain.think(TurnContext) ──► CatTurn[]
                        │  3. applyTurns：message / handoff / tool / artifact / review / decision / memory
-                       │  4. ReAct：有工具回执就带着 tool_result 再问同一只猫（有上限）
+                       │  4. ReAct：有工具回执就带着 tool_result 再问同一个成员（有上限）
                        │  5. afterTurns：按阶段机推进 / 路由下一个 wake / stall 计时
                        ▼
                     Studio mutator ──► seq++ ──► SSE 全量快照
 ```
 
-一个 wake = 「让某只猫想一轮」。driver 本身不产生剧情文本，唯一的例外是工具被关闭 /
+一个 wake = 「让某个成员想一轮」。driver 本身不产生剧情文本，唯一的例外是工具被关闭 /
 未接沙盒 / 权限不足 / 审批等待这类**机制性提示**。
 
 ---
@@ -37,9 +37,9 @@ roomId 串行队列 ──► processWake(wake)
 
 | 事件 | 何时产生 | 要点 |
 |---|---|---|
-| `task_created` | `POST /api/tasks` | 建任务后启动 kickoff，owner 是主理猫 |
+| `task_created` | `POST /api/tasks` | 建任务后启动 kickoff，owner 是架构师 |
 | `user_message` | `POST /api/rooms/:id/messages` | `mentions` 决定唤醒谁；`force` 用于跳过「房间忙」提醒 |
-| `nudge` | `POST /api/tasks/:id/nudge`、UI「催一下」 | 让主理猫做恢复 |
+| `nudge` | `POST /api/tasks/:id/nudge`、UI「催一下」 | 让架构师做恢复 |
 | `task_action` | `POST /api/tasks/:id/action` | `continue / pivot / close` 三选一（见 §7） |
 
 `submit()` 是**同步入队、立即返回**。真正的执行在房间队列里。
@@ -80,31 +80,31 @@ const roomPending = new Map<RoomId, number>();  // 每房间未完成 wake 数�
 
 ## 2. Wake 的 8 种 purpose
 
-`WakePurpose` 定义在 driver.ts。它回答「这一轮为什么叫猫」，决定 `afterTurns` 怎么收尾。
+`WakePurpose` 定义在 driver.ts。它回答「这一轮为什么叫成员」，决定 `afterTurns` 怎么收尾。
 
 | purpose | 谁产生 | trigger.kind | 期望动作 | afterTurns 做什么 |
 |---|---|---|---|---|
-| `kickoff` | `submit(task_created)` | `task_created` | 主理猫接住需求 | 结束 intake step；没发 handoff 就自动进 planning 并排 planning wake |
+| `kickoff` | `submit(task_created)` | `task_created` | 架构师接住需求 | 结束 intake step；没发 handoff 就自动进 planning 并排 planning wake |
 | `planning` | kickoff 自动续排 | `task_created` | 拆活 + 发五栏交接卡 | 只路由 handoff；没交接就停在 planning 等 stall |
 | `chat` | `submit(user_message)` | `user_message` | 被 @ / owner 接话 | 不推进阶段（但 turn 里的 handoff 仍会正常路由） |
-| `nudge` | `submit(nudge)`、`task_action continue/pivot` | `nudge` | 主理猫解释/恢复 | 解除 stalled；有漏 @ 的交接就补投递 |
-| `patrol` | `patrolOnce()`（定时或手动） | `proactive` | 非 owner 猫判断要不要插话 | 什么都不推进（turn 已在执行前过滤） |
+| `nudge` | `submit(nudge)`、`task_action continue/pivot` | `nudge` | 架构师解释/恢复 | 解除 stalled；有漏 @ 的交接就补投递 |
+| `patrol` | `patrolOnce()`（定时或手动） | `proactive` | 非 owner 成员判断要不要插话 | 什么都不推进（turn 已在执行前过滤） |
 | `worker` | handoff 给非 reviewer / review 打回 / 补投递 | `handoff` / `review_result` | 产出 artifact/patch | worker 计数 -1；归零后进 reviewing |
 | `reviewer` | 所有 worker 跑完 / 直接 handoff 给 reviewer | `artifact` / `handoff` | review 一次，只给一个 verdict | 按 verdict 进 revising 或 done |
-| `decision` | review approve | `review_result` | 主理猫落 decision + memory | 结束任务、记 episode |
+| `decision` | review approve | `review_result` | 架构师落 decision + memory | 结束任务、记 episode |
 
 ### 8 种 TriggerKind 与唤醒场景
 
 | kind | 喂给谁 | 场景 |
 |---|---|---|
-| `task_created` | 主理猫 | kickoff / planning |
-| `user_message` | 被 @ 的猫 / 任务 owner / 主理猫 | 用户说话 |
+| `task_created` | 架构师 | kickoff / planning |
+| `user_message` | 被 @ 的成员 / 任务 owner / 架构师 | 用户说话 |
 | `handoff` | 交接接收方、reviewer | 阶段推进 |
 | `artifact` | reviewer | 工作做完但没显式交接卡时的兜底 |
-| `review_result` | 被 @ 的实现者 / 主理猫 | 打回修订 / approve 后落 decision |
-| `tool_result` | 同一只猫 | ReAct 回喂（§4） |
-| `nudge` | 主理猫 | 卡住恢复、换方案 |
-| `proactive` | 被巡查选中的猫 | 主动协作（§8） |
+| `review_result` | 被 @ 的实现者 / 架构师 | 打回修订 / approve 后落 decision |
+| `tool_result` | 同一个成员 | ReAct 回喂（§4） |
+| `nudge` | 架构师 | 卡住恢复、换方案 |
+| `proactive` | 被巡查选中的成员 | 主动协作（§8） |
 
 ---
 
@@ -115,7 +115,7 @@ const roomPending = new Map<RoomId, number>();  // 每房间未完成 wake 数�
 ```mermaid
 stateDiagram-v2
     [*] --> intake: task_created
-    intake --> planning: 主理猫接住且无 handoff
+    intake --> planning: 架构师接住且无 handoff
     planning --> working: handoff 给 designer / implementer
     planning --> reviewing: 直接 handoff 给 reviewer
     working --> reviewing: 所有 worker 完成
@@ -132,34 +132,34 @@ stateDiagram-v2
 
 | 阶段 | owner | 进入条件 | 离开条件 | 产出 |
 |---|---|---|---|---|
-| `intake` | 主理猫 | task_created | kickoff 轮结束（有 handoff 则直接跳转） | 接住需求的 message |
-| `planning` | 主理猫 | intake 无 handoff | handoff 目标角色 | 消息 + 五栏交接卡 |
+| `intake` | 架构师 | task_created | kickoff 轮结束（有 handoff 则直接跳转） | 接住需求的 message |
+| `planning` | 架构师 | intake 无 handoff | handoff 目标角色 | 消息 + 五栏交接卡 |
 | `working` | designer / implementer | handoff 给非 reviewer | 所有 worker 计数归零 | artifact（design / patch） |
 | `reviewing` | reviewer | 显式交接给 reviewer，或 worker 全部完成 | verdict | review artifact |
 | `revising` | implementer（或 @ 到的作者） | request_changes | 修订轮结束 | v2 patch |
 
 > 上图标的是正常主流程；如果 intake / planning 轮直接给出 handoff，driver 也会按
 > `handoffMove` 直接跳到对应阶段（没有「必须先经过 planning」的硬约束）。
-| `done` | 主理猫 | approve 后的 decision 轮结束 | — | decision artifact + memory |
+| `done` | 架构师 | approve 后的 decision 轮结束 | — | decision artifact + memory |
 
 ### 推进规则（`handoffMove` / `reviewMove`）
 
 - 交接给 **reviewer** → `reviewing`；
-- 在 `reviewing` / `revising` 里交接给其他猫 → `revising`（打回返工）；
+- 在 `reviewing` / `revising` 里交接给其他成员 → `revising`（打回返工）；
 - 其他交接 → `working`；
 - `request_changes` 回给谁：优先被 @ 的 implementer，其次 @ 到的 designer/implementer，
   再次最近一个 patch 的作者，最后按角色兜底（`pickReviseTarget`）；
-- `approve` → `done`，owner 是主理猫，等它产 decision。
+- `approve` → `done`，owner 是架构师，等它产 decision。
 
 ### 关键细节
 
 - **`beginStage` 是幂等的**：stage 相同直接返回；如果任务已被删除（重置/删房间后队列里
   还残留旧 wake），也会安静跳过，避免一个已删除任务打断整条队列。
-- **多 worker 的延期投递**：`planning` 一次给烁烁和金渐层各一张卡时，driver 先记下
+- **多 worker 的延期投递**：`planning` 一次给周烁和陈实各一张卡时，driver 先记下
   `runtime.deferredReviewer`；等 `runtime.workers` 归零才真正进入 reviewing。
-  否则先跑完的猫会把阶段推到 reviewing，另一只猫就会在错误的阶段说话。
+  否则先跑完的成员会把阶段推到 reviewing，另一个成员就会在错误的阶段说话。
 - **漏 @ 绝不自动绕过**：`handoff.fault === "missed_mention"` 时，卡片和消息照写
-  （`mentions` 仍写接收者，表示「本意是给它的」），但 driver 不唤醒接收猫、把任务标
+  （`mentions` 仍写接收者，表示「本意是给它的」），但 driver 不唤醒接收方、把任务标
   `stalled`，并记下 `runtime.missed`。只有 `nudge` 会补投递并恢复。**所有 worker 完成时
   也不会自动进 reviewing** —— 否则「卡住 → 催一下」这一幕就不存在了。
 - **一次 think 只认第一个 review turn**：模型偶尔一轮返回两个 verdict，按顺序执行会
@@ -226,10 +226,10 @@ cat.tools 权限检查 → 未授权：记 error ToolCall + 回执，不执行
     （MCP 工具也算）；没有注册表时按 `run_command` 需审批兜底；
   - `all`：所有工具都批。
 - `ToolCall.status` 的生命周期：`pending → running → ok / error / rejected`。
-- `remember`：审批通过时传 `remember: true`，同一只猫 + 同一工具后续自动放行/拒绝
+- `remember`：审批通过时传 `remember: true`，同一个成员 + 同一工具后续自动放行/拒绝
   （`POST /api/tool-calls/:id/approve|reject` body `{remember?: true}`）。
 - **5 分钟超时自动拒绝**（`ApprovalQueue`），避免任务永远挂起；审批请求抛异常也按拒绝处理。
-- **审批期间不会误判卡住**：wake 还没结束，stall timer 没排；等人不算猫卡住。
+- **审批期间不会误判卡住**：wake 还没结束，stall timer 没排；等人不算成员卡住。
 
 ### 并行工具（`isParallelizableTool`）
 
@@ -245,7 +245,7 @@ cat.tools 权限检查 → 未授权：记 error ToolCall + 回执，不执行
   `ToolDefinition.title · JSON(input) 截断 60 字`。
 - 结果文案缺省：内置工具按工具生成；非内置工具 `${title} 完成 / 失败`。
 - 工具被关掉 / 没有 runner 时只发一条 chat 说明，协作流程继续。
-- 每猫权限（`cat.tools`）：`undefined` = 全部，数组 = 白名单（空数组 = 什么都没有）。
+- 按成员权限（`cat.tools`）：`undefined` = 全部，数组 = 白名单（空数组 = 什么都没有）。
   未授权工具不执行、不弹审批，直接记 `error` 回执喂回模型。
 
 ---
@@ -289,8 +289,8 @@ cat.tools 权限检查 → 未授权：记 error ToolCall + 回执，不执行
 
 | action | 行为 |
 |---|---|
-| `continue` | 解除 stalled，唤醒主理猫继续（等价 nudge） |
-| `pivot` | 解除 stalled，以用户口吻插入「换个方案」消息，再让主理猫重新拆活 |
+| `continue` | 解除 stalled，唤醒架构师继续（等价 nudge） |
+| `pivot` | 解除 stalled，以用户口吻插入「换个方案」消息，再让架构师重新拆活 |
 | `close` | `studio.closeTaskWithReason`：system 消息 + `manual-close` 教训 + 任务 done |
 
 **可复活规则**：正常完成的任务不能重开；只有被强制收尾（记忆里有 `review-loop` tag）的
@@ -303,17 +303,17 @@ cat.tools 权限检查 → 未授权：记 error ToolCall + 回执，不执行
 
 ## 8. 主动巡查
 
-目标：让没被 @ 的猫也有机会说话，但**不能变成噪音或抢 owner 的活**。
+目标：让没被 @ 的成员也有机会说话，但**不能变成噪音或抢 owner 的活**。
 
 | 机制 | 实现 |
 |---|---|
 | 启停 | `setProactive(enabled, intervalMs)`；`setInterval` + `unref`，设置面板切换即时生效 |
 | 手动触发 | `POST /api/patrol` → `driver.patrol()` |
 | 选房间 | 只巡查有 `active` 任务的房间 |
-| 选猫 | `pickPatrolCat`：排除当前 owner；超过 `proactiveIntervalMs` 没巡查过；reviewer 优先，其次 architect，再其他 |
+| 选成员 | `pickPatrolCat`：排除当前 owner；超过 `proactiveIntervalMs` 没巡查过；reviewer 优先，其次 architect，再其他 |
 | 一轮只一只 | 每个任务每轮只排一个巡查 wake；`patrolling` 防重入 |
 | 巡查轮权限 | 在执行前过滤：只保留 `message / silence / tool`；handoff / review / decision / artifact 一律丢弃 |
-| 出口 | 猫可以返回 `silence` turn（什么都不说）；不会产生消息，但会记在 `LlmCall.turnKinds` 里可审计 |
+| 出口 | 成员可以返回 `silence` turn（什么都不说）；不会产生消息，但会记在 `LlmCall.turnKinds` 里可审计 |
 
 ### 为什么巡查不能阻塞接口
 
@@ -336,7 +336,7 @@ cat.tools 权限检查 → 未授权：记 error ToolCall + 回执，不执行
 - `activeTaskIn(roomId)` 找 status ≠ done 的最近任务；
 - 没有 `force` 时，先插一条 **system 提醒**：当前任务在哪个阶段、新需求会被当成补充、
   建议新建房间或等结束；
-- **消息照常路由**（被 @ 的猫 / owner 继续接话），不是拒绝、也不是悄悄丢弃。
+- **消息照常路由**（被 @ 的成员 / owner 继续接话），不是拒绝、也不是悄悄丢弃。
 
 ### 为什么选方案 A
 
@@ -353,7 +353,7 @@ HTTP `POST /api/rooms/:id/messages` 透传 `force`；前端在输入框上方常
 
 ---
 
-## 10. 每猫会话与可观测性
+## 10. 按成员会话与可观测性
 
 ### LlmCall / trace
 
@@ -369,16 +369,16 @@ HTTP `POST /api/rooms/:id/messages` 透传 `force`；前端在输入框上方常
 （防串台），落 `state.drafts[roomId]`（瞬态，不持久化）。一轮结束 `finally` 清空，
 正式消息接管。
 
-### 每猫会话（`CatSession`）
+### 按成员会话（`CatSession`）
 
-任务正常完成时 `recordTaskEpisodes` 会给**参与过该任务的每只猫**记一条 episode：
+任务正常完成时 `recordTaskEpisodes` 会给**参与过该任务的每个成员**记一条 episode：
 
-- 参与判定：该任务里发过消息 / 产物 / 交接的猫；
-- 摘要只取自这只猫自己的产物和最后两条非工具消息，不编造；
+- 参与判定：该任务里发过消息 / 产物 / 交接的成员；
+- 摘要只取自这个成员自己的产物和最后两条非工具消息，不编造；
 - `Studio.recordEpisode` 只保留最近 8 条，同一任务重跑会覆盖；
 - 下一轮 `buildContext.session` 带进 `TurnContext`，llm-brain 写进 system prompt。
 
-`roomCats`（房间里所有猫的 id/名字/角色）也由 driver 注入，避免模型自创称呼（UAT P2）。
+`roomCats`（房间里所有成员的 id/名字/角色）也由 driver 注入，避免模型自创称呼（UAT P2）。
 
 ---
 
@@ -405,7 +405,7 @@ HTTP `POST /api/rooms/:id/messages` 透传 `force`；前端在输入框上方常
 | `68f9310` | 提速与恢复 | 只读工具并行、审批 remember + 5 分钟超时、任务 continue/pivot/close |
 | `fefa5d1` | 真实用户测试 P0/P1 | 模型调用飞行中不再误判卡住 |
 | `88e5757` | 主动协作 | 巡查轮过滤非 message turn、`patrol()` 排队即返回 |
-| `68503f4` | 每猫持久会话 | 任务完成记 episode，喂进下一轮 prompt |
+| `68503f4` | 按成员持久会话 | 任务完成记 episode，喂进下一轮 prompt |
 | `c8f5938` | 可观测性 | LlmCall / BrainReport / 任务 trace |
 | `21b05d6` | 流式输出 | onDelta → 瞬态 drafts，轮末清理 |
 | `47c13ef` | 房间忙保护 | 方案 A：system 提醒 + force 放行 |

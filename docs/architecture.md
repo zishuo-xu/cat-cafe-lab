@@ -44,14 +44,14 @@
 │  src/mcp/client.ts     MCP JSON-RPC 客户端     │
 │    · stdio / http，tools/list + tools/call     │
 │  src/skills/registry.ts 技能包                  │
-│    · 按猫注入真实模式 system prompt            │
-│  src/tools/approval.ts 铲屎官审批队列          │
+│    · 按成员注入真实模式 system prompt            │
+│  src/tools/approval.ts 负责人审批队列          │
 │    · pending → approve / reject                │
 ├──────────────────────────────────────────────┤
-│  src/agents/          猫猫的"大脑"             │
+│  src/agents/          成员的"大脑"             │
 │    mock-brain.ts   场景 beats → CatTurn[]     │
 │    llm-brain.ts    真实模型 → CatTurn[]       │
-│    personas.ts     四猫人格 + 场景数据         │
+│    personas.ts     四成员人格 + 场景数据         │
 └──────────────────────────────────────────────┘
 ```
 
@@ -78,19 +78,19 @@
 - `mock-brain` 从场景 beats 取数据，确定、离线、可测试；
 - `llm-brain` 拼 prompt 调模型，失败降级到 mock。
 
-**代价**：mock 演出是"半脚本"的——猫的反应由场景数据 + 当前阶段决定，
+**代价**：mock 演出是"半脚本"的——成员的反应由场景数据 + 当前阶段决定，
 不会真的理解新需求。这是有意的取舍：没有 key 也能完整演示协作流程，接了 key 才换脑子。
 
 ### 3. @ 路由不是装饰
 
 `message.mentions` 是真实的路由依据：
 
-- 用户消息只唤醒被 @ 的猫；没 @ 时唤醒任务 owner（无任务时宪宪）；
-- 猫的交接（handoff）只唤醒接收方；
-- 未被唤醒的猫不产生任何 token / 动作，前端显示睡眠。
+- 用户消息只唤醒被 @ 的成员；没 @ 时唤醒任务 owner（无任务时林知远）；
+- 成员的交接（handoff）只唤醒接收方；
+- 未被唤醒的成员不产生任何 token / 动作，前端显示睡眠。
 
-这条规则让"漏 @"成为可观察的故障：卡片照写、消息照发，但接收猫没被唤醒，
-任务 `status` 变 `stalled`，铲屎官点「催一下」后由宪宪补投递。这是 Cat Café 教程里
+这条规则让"漏 @"成为可观察的故障：卡片照写、消息照发，但接收方没被唤醒，
+任务 `status` 变 `stalled`，负责人点「催一下」后由林知远补投递。这是 Cat Café 教程里
 第 4 课的真实教训，在这个项目里被做成了可复现的一幕。
 
 ## 任务阶段机
@@ -103,15 +103,15 @@ intake ──► planning ──► working ──► reviewing ──► done
 
 | 阶段 | owner | 产出 |
 |---|---|---|
-| intake | 宪宪 | 接住需求、复述风险 |
-| planning | 宪宪 | 方案骨架 + 两张五栏交接卡 |
-| working | 烁烁 / 金渐层 | design / patch 产物 |
-| reviewing | 砚砚 | review 产物（blocker / minor + verdict） |
-| revising | 金渐层 | v2 patch |
-| done | 宪宪 | decision 产物 + 记忆 |
+| intake | 林知远 | 接住需求、复述风险 |
+| planning | 林知远 | 方案骨架 + 两张五栏交接卡 |
+| working | 周烁 / 陈实 | design / patch 产物 |
+| reviewing | 沈砚 | review 产物（blocker / minor + verdict） |
+| revising | 陈实 | v2 patch |
+| done | 林知远 | decision 产物 + 记忆 |
 
 阶段推进由 driver 根据 `CatTurn.kind` 决定：`handoff` → 下一阶段，`review.request_changes`
-→ revising，`review.approve` → 等宪宪落 decision，`decision` → done。台词内容不属于状态机。
+→ revising，`review.approve` → 等林知远落 decision，`decision` → done。台词内容不属于状态机。
 
 ## 实时更新
 
@@ -133,18 +133,18 @@ intake ──► planning ──► working ──► reviewing ──► done
 
 ## 持久化
 
-`data/studio.json`（协作状态 + 猫猫档案）、`data/settings.json`（非敏感设置）、
+`data/studio.json`（协作状态 + 成员档案）、`data/settings.json`（非敏感设置）、
 `data/scenarios.json`（导入的自定义剧本），都是原子写（tmp + rename）。
-启动时若无 studio 文件则种下房间 + 四猫招呼；若有则恢复（并把残留的 typing 清空）。
+启动时若无 studio 文件则种下房间 + 四成员招呼；若有则恢复（并把残留的 typing 清空）。
 没有数据库：这个体量的数据用 JSON 足够，且方便直接 `cat` 出来看。
 
-## 下一层：档案 / 每猫模型 / 剧本
+## 下一层：档案 / 按成员模型 / 剧本
 
-- **猫猫档案**存在 `studio.json` 的 `cats` 里。加载时以代码里的 `CATS` 为底，只接受
+- **成员档案**存在 `studio.json` 的 `cats` 里。加载时以代码里的 `CATS` 为底，只接受
   白名单字段的合法覆盖（改名/称号/性格/口头禅/招呼语/主题色），并做重名回退。
   id / role / avatar / species 不可改，所以 `room.catIds`、@ 路由、历史消息都不受影响。
-- **每猫模型**是 `Cat.llmModel / llmTemperature`：llm-brain 在每次 think 时从当前 `ctx.cat`
-  解析，空值回落全局。这样不用为每只猫维护一个 brain 实例，也不影响 mock 模式。
+- **按成员模型**是 `Cat.llmModel / llmTemperature`：llm-brain 在每次 think 时从当前 `ctx.cat`
+  解析，空值回落全局。这样不用为每个成员维护一个 brain 实例，也不影响 mock 模式。
 - **剧本库**的核心是数组引用稳定：`SCENARIOS` 在启动时一次性交给 driver / HTTP / brain，
   导入和删除都原地 `push/splice`，所以不需要重启，也不需要重建对象。
   导入前走 `scenario-validation.ts` 的逐条校验——坏剧本宁可拒绝，也不能把运行时带崩。
@@ -170,7 +170,7 @@ intake ──► planning ──► working ──► reviewing ──► done
 - `mcp:<serverId>`：MCP manager 连接成功后动态注册，工具名统一是 `<serverId>__<toolName>`。
 
 driver 只依赖 `ToolRegistry`，执行时先查内置、再遍历 provider；MCP 工具走
-`McpClient.callTool`。工具是否可用还要过每猫权限：`Cat.tools` 为 `undefined` 表示不限制，
+`McpClient.callTool`。工具是否可用还要过按成员权限：`Cat.tools` 为 `undefined` 表示不限制，
 数组是白名单（空数组 = 一个都不给），未授权工具不执行、不弹审批，直接记一条 error 回喂。
 
 **MCP 客户端**：JSON-RPC 2.0，支持两种 transport——
@@ -220,7 +220,7 @@ llm-brain 把 name + prompt 全文塞进 system prompt；演出模式不调用�
 ## 真实模式的工具调用与审批
 
 llm-brain 的输出 schema 增加第 7 种 turn：`kind:"tool"`。模型可以主动请求工具，
-driver 执行后用 `trigger.kind="tool_result"` 再叫同一只猫，把 exitCode/output 喂回去
+driver 执行后用 `trigger.kind="tool_result"` 再叫同一个成员，把 exitCode/output 喂回去
 （首轮 + 最多 3 次回喂，工具轮本身不推进阶段）。
 
 **审批闸门**（`src/tools/approval.ts`）：
@@ -230,9 +230,9 @@ driver 执行后用 `trigger.kind="tool_result"` 再叫同一只猫，把 exitCo
 - pending 流程：`addToolCall(status:"pending")` → `await gate.request()` → 批准后
   `startToolCall` 再执行；拒绝则不执行，把 `rejected` 回喂给模型；
 - HTTP：`POST /api/tool-calls/:id/approve|reject`、`GET /api/approvals`；
-- 审批期间不触发 stall 判定（等待是人，不是猫卡住了）。
+- 审批期间不触发 stall 判定（等待是人，不是成员卡住了）。
 
-这样模型不能直接决定跑什么命令——命令执行要么来自剧本，要么经过铲屎官点头。
+这样模型不能直接决定跑什么命令——命令执行要么来自剧本，要么经过负责人点头。
 
 ## 真实模式
 
@@ -245,6 +245,6 @@ driver 执行后用 `trigger.kind="tool_result"` 再叫同一只猫，把 exitCo
 - **不做多用户 / 账号体系**：本地单人工作台（工作台本身没有登录；MCP server 的鉴权由你配置）。
 - **不做增量 patch 同步**：全量快照换简单。
 - **不做前端构建**：零依赖、零构建，打开源码就能改。
-- **不做真实任务执行**：猫交付的是 spec / design / patch 摘要，不是真的改你的仓库。
+- **不做真实任务执行**：成员交付的是 spec / design / patch 摘要，不是真的改你的仓库。
   这个项目的目标是"协作过程本身"，不是 coding agent。
 - **不做可视化剧本编辑器**：剧本导入/导出 JSON，用你顺手的编辑器改；服务端负责校验。

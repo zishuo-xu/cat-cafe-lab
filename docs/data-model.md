@@ -1,6 +1,6 @@
 # 数据模型
 
-猫咖的所有领域类型定义在 `src/domain/types.ts`——**这是唯一契约**，其它模块只读。
+交付台的所有领域类型定义在 `src/domain/types.ts`——**这是唯一契约**，其它模块只读。
 本文解释这些结构之间的关系、各字段的含义，以及**哪些会写进磁盘、哪些只是运行时状态**。
 
 ![工作台里的任务进度、交接卡、产物、沙盒、共享记忆](images/uat-04-task-created.png)
@@ -34,13 +34,13 @@ interface StudioState {
 | 字段 | 内容 | 容器 / 容量 |
 |---|---|---|
 | `rooms` | 房间；每个房间绑定一个工作区 | 至少 1 个 |
-| `cats` | 四只猫的档案；来自代码默认值 + 存档覆盖 | 固定 4 只 |
+| `cats` | 四个成员的档案；来自代码默认值 + 存档覆盖 | 固定 4 只 |
 | `messages` | 房间消息流（聊天、交接、评审、工具、产物、决策、系统） | 最多 1500 条（超出丢最旧） |
 | `tasks` | 任务（阶段、owner、步骤、git 状态） | 无上限（随房间删除清理） |
 | `handoffs` | 结构化交接卡 | 无上限 |
 | `artifacts` | 产物（spec / design / patch / review / decision），带版本号 | 无上限 |
 | `memory` | 共享记忆（decision / lesson / preference） | 无上限 |
-| `catSessions` | 每只猫的跨任务经历 | 每猫 8 条 episode + 12 条 lesson |
+| `catSessions` | 每个成员的跨任务经历 | 按成员 8 条 episode + 12 条 lesson |
 | `toolCalls` | 沙盒 / MCP 工具调用记录 | 最多 300 条 |
 | `llmCalls` | 模型调用记录（可观测性） | 最多 200 条 |
 | `typing` | 当前谁在打字 | 每房间 1 个 |
@@ -120,15 +120,15 @@ graph TD
 
 ---
 
-## 3. 猫：`Cat` / `CatSession` / `CatEpisode`
+## 3. 成员：`Cat` / `CatSession` / `CatEpisode`
 
 ### `Cat`
 
 ```ts
 interface Cat {
   id: CatId;                 // xianxian / yanyan / shuoshuo / jinjianceng
-  name: string;              // 宪宪 / 砚砚 / 烁烁 / 金渐层
-  species: string;           // 布偶猫 / 缅因猫 / 暹罗猫 / 英短金渐层
+  name: string;              // 林知远 / 沈砚 / 周烁 / 陈实
+  species: string;           // 布偶成员 / 缅因成员 / 暹罗成员 / 英短陈实
   role: Role;                // architect / reviewer / designer / implementer
   title: string;             // 角色定位
   model: CatModel;           // claude / gpt / gemini / opencode（展示用）
@@ -163,12 +163,12 @@ interface CatEpisode {
 interface CatSession {
   catId: CatId;
   episodes: CatEpisode[];   // 最近 8 个任务，同一任务只留一条
-  lessons: MemoryEntry[];   // 从共享记忆分流到这只猫的教训，最多 12 条
+  lessons: MemoryEntry[];   // 从共享记忆分流到这个成员的教训，最多 12 条
   updatedAt: number;
 }
 ```
 
-用途：真实模式下把「这只猫上次参与过什么、踩过什么坑」注入 `TurnContext.session`，避免每次任务都失忆。
+用途：真实模式下把「这个成员上次参与过什么、踩过什么坑」注入 `TurnContext.session`，避免每次任务都失忆。
 
 ---
 
@@ -181,7 +181,7 @@ interface Room {
   id: RoomId;
   name: string;              // 1–30 字，全局唯一
   topic: string;             // 房间说明，≤120 字
-  catIds: CatId[];           // 房间里有哪几只猫（默认四只）
+  catIds: CatId[];           // 房间里有哪几个成员（默认四只）
   workspaceId?: string;      // 绑定的工作区；缺省用内置沙盒
   createdAt: number;
 }
@@ -198,10 +198,10 @@ type MessageKind =
 interface Message {
   id: MessageId;
   roomId: RoomId;
-  author: AuthorId;          // 猫 id / "user" / "system"
+  author: AuthorId;          // 成员 id / "user" / "system"
   kind: MessageKind;
   text: string;
-  mentions: CatId[];         // 被 @ 的猫；空数组 = 没点名
+  mentions: CatId[];         // 被 @ 的成员；空数组 = 没点名
   taskId?: TaskId;
   handoffId?: HandoffId;     // kind = handoff 时指向交接卡
   artifactId?: ArtifactId;   // kind = artifact / review / decision 时指向产物
@@ -212,13 +212,13 @@ interface Message {
 
 | kind | 谁产生 | 说明 |
 |---|---|---|
-| `chat` | 猫 / 铲屎官 / driver | 普通发言；工具被关时的说明也是 chat |
-| `handoff` | driver | 交接卡消息，绑定 `handoffId`；漏 @ 时 `mentions` 仍写接收猫，但不唤醒 |
+| `chat` | 成员 / 负责人 / driver | 普通发言；工具被关时的说明也是 chat |
+| `handoff` | driver | 交接卡消息，绑定 `handoffId`；漏 @ 时 `mentions` 仍写接收方，但不唤醒 |
 | `review` | driver | 评审结论，绑定 review 产物的 `artifactId` |
 | `decision` | driver | 任务收尾决策，绑定 decision 产物 |
 | `artifact` | driver | 交付产物说明，绑定 `artifactId` |
 | `tool` | driver | 工具执行回执，绑定 `toolCallId` |
-| `system` | driver / Studio | 系统提醒（房间忙、入场等），不路由给猫 |
+| `system` | driver / Studio | 系统提醒（房间忙、入场等），不路由给成员 |
 
 ---
 
@@ -249,16 +249,16 @@ interface Task {
 
 | stage | UI 文案 | 典型 owner | 怎么推进 |
 |---|---|---|---|
-| `intake` | 接单 | 宪宪 | 交代完需求 → 自动进 planning |
-| `planning` | 规划 | 宪宪 | 发出交接卡 → 接收猫进 working |
-| `working` | 实现 | 烁烁 / 金渐层 | 所有 worker 完成后进 reviewing |
-| `reviewing` | 评审 | 砚砚 | `request_changes` → revising；`approve` → done |
-| `revising` | 修订 | 金渐层 | 交 v2 后重新进 reviewing |
-| `done` | 完成 | 宪宪 | 落 decision + memory，任务结束 |
+| `intake` | 接单 | 林知远 | 交代完需求 → 自动进 planning |
+| `planning` | 规划 | 林知远 | 发出交接卡 → 接收方进 working |
+| `working` | 实现 | 周烁 / 陈实 | 所有 worker 完成后进 reviewing |
+| `reviewing` | 评审 | 沈砚 | `request_changes` → revising；`approve` → done |
+| `revising` | 修订 | 陈实 | 交 v2 后重新进 reviewing |
+| `done` | 完成 | 林知远 | 落 decision + memory，任务结束 |
 
 - 修订最多 **3 轮**（`MAX_REVISION_ROUNDS`，引擎常量，不在状态里）；仍不通过会**强制收尾**，
   写一条 `manual-close` 教训到共享记忆。
-- `status = "stalled"` 表示卡住等待铲屎官处理（漏 @、工具审批、异常），不是阶段。
+- `status = "stalled"` 表示卡住等待负责人处理（漏 @、工具审批、异常），不是阶段。
 
 ### `TaskStep`
 
@@ -314,9 +314,9 @@ interface Handoff {
 }
 ```
 
-- 五栏缺一栏，前端标黄；真实模式下接收猫会追问缺失项。
+- 五栏缺一栏，前端标黄；真实模式下接收方会追问缺失项。
 - `fault: "missed_mention"` 是 **`CatTurn` / `ScenarioBeat` 上的演示埋点**，落库后只体现在
-  任务变成 `stalled`、以及 driver 不唤醒接收猫——`Handoff` 本身没有 fault 字段。
+  任务变成 `stalled`、以及 driver 不唤醒接收方——`Handoff` 本身没有 fault 字段。
 
 ### `Artifact`
 
@@ -368,7 +368,7 @@ interface MemoryEntry {
 }
 ```
 
-- 任务结束时宪宪写 `decision`；评审里发现的问题沉淀为 `lesson`；`preference` 留给用户偏好。
+- 任务结束时林知远写 `decision`；评审里发现的问题沉淀为 `lesson`；`preference` 留给用户偏好。
 - 记忆按「同 tag / 同任务」排序后注入下一轮的 `TurnContext.memory`（最多 12 条），
   所以第二个相关任务能引用上一次的决策。
 
@@ -394,7 +394,7 @@ interface ToolCall {
   startedAt: number;
   finishedAt?: number;
   approvalRequestedAt?: number;  // 进入 pending 的时间
-  approvalDecidedAt?: number;    // 铲屎官做决定的时间
+  approvalDecidedAt?: number;    // 负责人做决定的时间
 }
 ```
 
@@ -430,16 +430,16 @@ interface LlmCall {
 
 ---
 
-## 8. `CatTurn`：一轮里猫能产出的 8 种动作
+## 8. `CatTurn`：一轮里成员能产出的 8 种动作
 
 `CatBrain.think(ctx)` 返回 `CatTurn[]`，driver 依次落库。一个 turn 一个动作：
 
 | kind | 关键字段 | 落库效果 |
 |---|---|---|
 | `message` | `text`, `mentions?`, `delayMs?` | 写一条 `chat` 消息 |
-| `silence` | `reason?` | 不写消息（主动巡查专用：猫判断「这里不需要我」） |
+| `silence` | `reason?` | 不写消息（主动巡查专用：成员判断「这里不需要我」） |
 | `tool` | `tool`, `input`, `label?`, `text?` | 执行工具 → `ToolCall` + `tool` 消息；`input` 结构由工具 schema 校验 |
-| `handoff` | `to`, `card`, `text?`, `fault?` | 写 `Handoff` + `handoff` 消息；`fault:"missed_mention"` 时任务 `stalled` 且不唤醒接收猫 |
+| `handoff` | `to`, `card`, `text?`, `fault?` | 写 `Handoff` + `handoff` 消息；`fault:"missed_mention"` 时任务 `stalled` 且不唤醒接收方 |
 | `artifact` | `artifact:{kind,title,body}`, `text?`, `mentions?` | 写 `Artifact`（版本自增）+ `artifact` 消息 |
 | `review` | `verdict`, `title`, `findings`, `text`, `mentions?` | 写 review 产物 + `review` 消息；`request_changes` 触发修订，`approve` 进 done |
 | `decision` | `artifact:{title,body}`, `text`, `memory[]` | 写 decision 产物 + `decision` 消息，并批量写入共享记忆 |
@@ -477,14 +477,14 @@ interface Trigger {
 
 | kind | 什么时候产生 | 唤醒谁 |
 |---|---|---|
-| `user_message` | 铲屎官发言 | 被 @ 的猫；没 @ 时任务 owner / 宪宪 |
-| `task_created` | 创建任务 / 从 intake 自动进 planning | 宪宪（kickoff / planning） |
-| `handoff` | 交接卡投递给接收猫 | 设计 / 实现（worker）或砚砚（reviewer） |
-| `artifact` | 产物落库后请求评审 | 砚砚 |
-| `review_result` | 评审结论回来 | `request_changes` → 实现者修订；`approve` → 宪宪收尾 |
-| `tool_result` | 工具执行完回喂模型（ReAct） | 同一只猫继续推理 |
-| `nudge` | 铲屎官点「催一下」 | 宪宪做恢复 / 补投递 |
-| `proactive` | 主动巡查模式到点 | 巡查选中的猫（可能返回 `silence`） |
+| `user_message` | 负责人发言 | 被 @ 的成员；没 @ 时任务 owner / 林知远 |
+| `task_created` | 创建任务 / 从 intake 自动进 planning | 林知远（kickoff / planning） |
+| `handoff` | 交接卡投递给接收方 | 设计 / 实现（worker）或沈砚（reviewer） |
+| `artifact` | 产物落库后请求评审 | 沈砚 |
+| `review_result` | 评审结论回来 | `request_changes` → 实现者修订；`approve` → 林知远收尾 |
+| `tool_result` | 工具执行完回喂模型（ReAct） | 同一个成员继续推理 |
+| `nudge` | 负责人点「催一下」 | 林知远做恢复 / 补投递 |
+| `proactive` | 主动巡查模式到点 | 巡查选中的成员（可能返回 `silence`） |
 
 ---
 
@@ -510,7 +510,7 @@ interface Scenario {
 - 内置剧本来自 `src/agents/scenarios.ts`；导入的自定义剧本追加到同一数组（`scenario-registry.ts`）。
 - mock brain 按 `(stage, cat)` 取 beat；同阶段连续的工具/交接节拍可以一次交付。
 - `fault` 是**演示埋点**，由 mock brain 透传到 `turn.handoff.fault`，driver 只认 turn 上的字段。
-- 自定义剧本导入时由 `scenario-validation.ts` 校验：id 格式、猫 id 存在、五栏完整、turn kind 白名单、
+- 自定义剧本导入时由 `scenario-validation.ts` 校验：id 格式、成员 id 存在、五栏完整、turn kind 白名单、
   文本长度、`beats ≤ 120` 等。
 
 ---
@@ -648,7 +648,7 @@ MCP 配置持久化在 `data/mcp.json`（`0600`），`env` / `headers` 的值不
 | 消息（`messages`） | 最多 1500 条（超出丢最旧） |
 | 工具调用（`toolCalls`） | 最多 300 条 |
 | 模型调用（`llmCalls`） | 最多 200 条 |
-| 每猫 episodes / lessons | 8 / 12 |
+| 按成员 episodes / lessons | 8 / 12 |
 | 任务修订上限 | 3 轮（引擎常量，非状态字段） |
 | 请求体 / 文本上限 | 64 KB / 2000 字符 |
 | 消息流注入 brain | 最近 24 条 |

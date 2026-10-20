@@ -45,8 +45,8 @@ node src/main.ts
 启动日志类似：
 
 ```
-  🐾 Cat Café Lab · 猫咖工作台
-  宪宪(布偶猫)  砚砚(缅因猫)  烁烁(暹罗猫)  金渐层(英短金渐层)
+  🐾 Delivery Lab · 协作交付台
+  林知远(布偶成员)  沈砚(缅因成员)  周烁(暹罗成员)  陈实(英短陈实)
   http://127.0.0.1:4318
   mode: 演出模式（无需 key） · data: /path/to/cat-cafe-lab/data
   sandbox: /path/to/cat-cafe-lab/data/workspace · tools: on · mcp tools: 0
@@ -131,8 +131,8 @@ cat-cafe-lab/
 │   │   ├── driver.ts        队列 / 唤醒 / ReAct / 审批 / stall / 巡查
 │   │   ├── stages.ts        纯函数状态机（handoffMove / reviewMove / …）
 │   │   └── mentions.ts      @ 解析与用户消息路由
-│   ├── agents/              猫的大脑
-│   │   ├── personas.ts      四猫人格（CATS）+ 默认场景导出
+│   ├── agents/              成员的大脑
+│   │   ├── personas.ts      四成员人格（CATS）+ 默认场景导出
 │   │   ├── scenarios.ts     内置剧本 beats
 │   │   ├── scenario-registry.ts 内置 + 自定义剧本库（数组引用稳定）
 │   │   ├── scenario-validation.ts 自定义剧本导入校验
@@ -147,7 +147,7 @@ cat-cafe-lab/
 │   │   └── seed.ts          沙盒初始项目
 │   ├── workspaces/manager.ts 工作区 / 只读策略 / 只读 git 查询
 │   ├── mcp/                 MCP JSON-RPC 客户端 + server 管理器
-│   └── skills/registry.ts   技能包（按角色/猫注入 prompt）
+│   └── skills/registry.ts   技能包（按角色/成员注入 prompt）
 ├── public/                  原生 ESM + CSS 前端（无构建）
 ├── tests/                   node:test 套件；fixtures/ 放假的 MCP server，helpers/ 放共享测试工具
 ├── docs/                    架构 / 引擎 / 前端 / 部署 / MCP / LLM 等文档与截图
@@ -162,12 +162,12 @@ cat-cafe-lab/
 
 | 文件/目录 | 内容 | 是否敏感 |
 |---|---|---|
-| `studio.json` | 房间 / 猫 / 消息 / 任务 / 交接 / 产物 / 记忆 / 会话 / 工具调用 / LLM 调用 | 否 |
+| `studio.json` | 房间 / 成员 / 消息 / 任务 / 交接 / 产物 / 记忆 / 会话 / 工具调用 / LLM 调用 | 否 |
 | `settings.json` | 非敏感设置（模式 / 节奏 / baseUrl / model / 温度） | 否 |
 | `scenarios.json` | 导入的自定义剧本 | 否 |
 | `mcp.json` | MCP server 配置（env/headers 的值也在里面，文件权限 0600） | **是** |
 | `workspaces.json` | 自定义工作区 | 否 |
-| `workspace/` | 沙盒初始项目（猫猫真实改文件的地方） | 否 |
+| `workspace/` | 沙盒初始项目（成员真实改文件的地方） | 否 |
 
 `data/` 整个目录被 `.gitignore` 忽略；不要提交运行时数据。
 
@@ -207,8 +207,8 @@ cat-cafe-lab/
    必须继续遵守安全边界：路径 `resolve` 到根目录内、限制输出长度、命令走白名单、
    不经过 shell。
 
-3. **权限**：工具是否对某只猫开放由 `Cat.tools` 白名单决定（`src/agents/personas.ts`）。
-   新增工具后确认目标猫的白名单里有它，否则会被 driver 记成「没有权限」。
+3. **权限**：工具是否对某个成员开放由 `Cat.tools` 白名单决定（`src/agents/personas.ts`）。
+   新增工具后确认目标成员的白名单里有它，否则会被 driver 记成「没有权限」。
 
 4. **测试**：在 `tests/tools.test.ts` 用临时目录构造 `Sandbox`，断言
    `status / exitCode / output`；如果工具有风险等级，顺手在 `tests/engine.test.ts`
@@ -238,13 +238,13 @@ cat-cafe-lab/
 
 2. **driver 的调用契约**（mock 剧本最容易踩这里）：
 
-   - `intake`：主理猫只回消息、不带 handoff；driver 会自动进 planning；
+   - `intake`：架构师只回消息、不带 handoff；driver 会自动进 planning；
    - `planning`：一次返回「消息 + 两张 handoff」；
-   - `working`：目标猫返回 artifact；金渐层的实现稿通常再带一张给 reviewer 的 handoff；
+   - `working`：目标成员返回 artifact；陈实的实现稿通常再带一张给 reviewer 的 handoff；
    - `reviewing`：**一次只能返回一个 verdict**。同一阶段会被调用两次（v1 打回 / v2 通过），
      mock-brain 按 `ctx.artifacts` 里的 patch 版本区分；
    - `revising`：v2 patch + 重新交接；
-   - `done`：主理猫返回 `decision`（含 `memory[]`）；
+   - `done`：架构师返回 `decision`（含 `memory[]`）；
    - 漏 @ 埋点：把 `fault: "missed_mention"` 放在 **handoff turn** 上（`ScenarioBeat.fault`
      会被 mock-brain 透传到 turn，driver 只认 `turn.fault`）。
 

@@ -33,7 +33,7 @@ node src/main.ts
 
 **看三件事**：
 1. 左侧徽标变成「真实模式」；
-2. 四只猫里只有被唤醒的那只说话，台词不是剧本；
+2. 四个成员里只有被唤醒的那只说话，台词不是剧本；
 3. 任务能走到某个阶段，不卡死。
 
 **常见失败**：模型返回 markdown 围栏 / 前后解说 → llm-brain 的容错解析应该能救；
@@ -48,7 +48,7 @@ node src/main.ts
 > 读一下 src/export.js，告诉我它导出什么。
 
 期望：模型输出一个 `kind:"tool"` 的 `read_file`，工具卡显示 ✓ 和文件内容；
-随后 `tool_result` 回喂第二次，猫基于内容回答。
+随后 `tool_result` 回喂第二次，成员基于内容回答。
 
 **如果模型不调用工具**，说明工具目录没进 prompt 或 schema 示例不够——检查 llm-brain 的
 【工具目录】段落是否渲染出了 4 个工具。
@@ -68,7 +68,7 @@ node src/main.ts
 ## 4. 冒烟 D：MCP 工具
 
 设置 →「MCP 工具」加一个本地 stdio server（也可以先用自己的测试 server），
-给某只猫勾上它的工具，真实模式请求一次。期望 pending → 批准 → 真实 MCP 调用。
+给某个成员勾上它的工具，真实模式请求一次。期望 pending → 批准 → 真实 MCP 调用。
 
 ---
 
@@ -78,7 +78,7 @@ node src/main.ts
 
 | 日期 | provider / model | 冒烟 | 结果 | 备注 |
 |---|---|---|---|---|
-| 2026-10-18 | DeepSeek / deepseek-flash | A 纯对话 | ✅ 通过 | 只唤醒被 @ 的宪宪，内容非剧本，含 HttpOnly/XSS 论证 |
+| 2026-10-18 | DeepSeek / deepseek-flash | A 纯对话 | ✅ 通过 | 只唤醒被 @ 的林知远，内容非剧本，含 HttpOnly/XSS 论证 |
 | 2026-10-18 | DeepSeek / deepseek-flash | B 单工具 | ✅ 通过 | 自主 `read_file src/export.js`，回喂后准确回答 `toCsv` 唯一导出 |
 | 2026-10-18 | DeepSeek / deepseek-flash | C 审批（批准） | ✅ 通过 | 自主请求 `run_command npm test` → pending → 批准 → 真实执行 exit 1 → 基于真实输出写下 review |
 | 2026-10-18 | DeepSeek / deepseek-flash | C 审批（拒绝） | ✅ 通过 | rejected 回喂后**没有重复申请**，改为说明「要么批准、要么你贴输出」 |

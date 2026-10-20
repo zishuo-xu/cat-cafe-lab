@@ -32,13 +32,13 @@
 
 - favicon 是 `index.html` 里的 `data:image/svg+xml` 内联 SVG；不请求 `/favicon.ico`。
 - 字体使用系统字体栈（`--font-body` / `--font-display` / `--font-mono`），不引 Google Fonts。
-- 所有猫猫头像由 `public/avatars.js` 生成：`avatarSvg(cat, options)`、
+- 所有成员头像由 `public/avatars.js` 生成：`avatarSvg(cat, options)`、
   `userAvatarSvg(size)`、`brandMarkSvg(size)`、`pawSvg(size)`。
 - 页面没有 CDN、外部图片、统计脚本或远程字体。
 
 ### 内联 SVG 头像的取舍
 
-`avatars.js` 用 SVG path 画四种猫（`ragdoll` / `mainecoon` / `siamese` / `golden`），
+`avatars.js` 用 SVG path 画四种成员（`ragdoll` / `mainecoon` / `siamese` / `golden`），
 `avatarSvg(cat, { size, mood })` 支持 `idle` / `sleep` / `typing` 三种眼神/状态。
 
 - **收益**：零请求、离线可用、没有 404；颜色跟着 `cat.accent` 走；
@@ -61,14 +61,14 @@
 └─────────────────────┴──────────────────────────────┴─────────────────────┘
 ```
 
-### 左栏：招牌、房间、猫猫名册、任务列表
+### 左栏：招牌、房间、成员名册、任务列表
 
-- `aside.panel--left`（`aria-label="猫咖招牌、猫猫名册与任务列表"`）。
+- `aside.panel--left`（`aria-label="交付台招牌、成员名册与任务列表"`）。
 - 招牌：`#brand-mark`（由 `brandMarkSvg` 注入）、模式/连接/seq 胶囊
   `[data-mode]`、`[data-conn]`、`[data-seq]`、`[data-needs-me]`、`[data-test-button]`。
 - 房间列表：`#room-list`，由 `renderRooms()` 渲染；切换房间走 `setRoom(roomId)`，
   当前房间 id 存在 `app.roomId`。
-- 猫猫名册：`#cat-roster`，由 `renderRoster()` 渲染；状态来自 `catState(catId)`：
+- 成员名册：`#cat-roster`，由 `renderRoster()` 渲染；状态来自 `catState(catId)`：
   `typing`（服务端 `typing`）、`working`（任务 owner）、`talking`（当前房间有草稿）
   或 `sleeping`。点击 `data-action="mention-cat"` 把 `@名字` 插入输入框。
 - 任务列表：`#task-list`，由 `renderTasks()` 渲染；任务卡状态用
@@ -223,10 +223,10 @@
 - `handoffCardNode(handoff)` 生成 `.handoff-card`：头部是交接路由（from/to 头像和名字）、
   中间 `.hc-grid`、末尾 warning（如果有缺栏）。
 - `handoffFieldNode(field, card, missingLabels)` 生成 `.hc-field`；
-  缺栏时加 `.is-missing`，值区显示 `.hc-missing`「空着 · 接收猫会追问」。
+  缺栏时加 `.is-missing`，值区显示 `.hc-missing`「空着 · 接收方会追问」。
 - `handoffMissing(card)` 判断五个字段是否为空（字符串 trim 或数组至少一个非空项）；
   缺栏时卡根加 `.is-incomplete`，并显示 `.handoff-warning`
-  「这张卡缺「…」——接收猫会先追问再开工。」。
+  「这张卡缺「…」——接收方会先追问再开工。」。
 - 右栏缩略卡由 `miniHandoffNode` 生成，复用同一套 `HANDOFF_FIELDS` 和缺栏判断。
 
 ### 4.4 流式草稿气泡
@@ -234,7 +234,7 @@
 - 数据来源：`state.drafts[roomId] = { catId, text, at }`；`currentDraft()` 只取当前房间的草稿。
 - 渲染：
   - `renderDraftBubble()` 在 `renderAll()` 末尾调用；
-  - `draftBubbleNode(draft)` 生成 `.msg.msg--cat.msg--chat.draft-bubble`，包含猫头像、名字、
+  - `draftBubbleNode(draft)` 生成 `.msg.msg--cat.msg--chat.draft-bubble`，包含成员头像、名字、
     「正在输入…」脉冲点（`.draft-pulse`）和文本 `.bubble[data-role="draft-text"]`；
     没有 `.msg-time`，根节点是 `role="status"`、`aria-live="polite"`。
   - 草稿文本是「已累计的完整文本」，直接覆盖 `textContent`，不做增量拼接。
@@ -296,7 +296,7 @@
 
 ### 4.7 模型分工
 
-- 设置 →「猫猫与模型」顶部 `#model-profiles-section`：
+- 设置 →「成员与模型」顶部 `#model-profiles-section`：
   `loadModelProfiles()` 请求 `GET /api/model-profiles`，`renderModelProfiles()` 渲染
   `#model-profile-list`。
 - 每套档案由 `modelProfileCard(profile)` 生成 `.model-profile-card[data-profile-id]`：
@@ -308,13 +308,13 @@
   - 应用按钮 `data-action="apply-model-profile"` → `openModelProfileConfirm()` →
     `confirmModelProfileApply()` POST `/api/model-profiles/apply`。
 - 分区标题旁的 `#model-profile-mode` 由 `currentModelMode()` 决定：
-  四猫当前生效模型（覆盖或全局）不完全相同显示「混搭」，全相同显示「统一」。
-- 每猫模型行的 `catModelRow(cat)` 在猫名旁渲染 `.cat-model-badge`：
+  四成员当前生效模型（覆盖或全局）不完全相同显示「混搭」，全相同显示「统一」。
+- 按成员模型行的 `catModelRow(cat)` 在成员名旁渲染 `.cat-model-badge`：
   有 `llmModel` 显示模型名，没有显示「跟随全局：<全局模型>」。
 - `profileMatchesCurrent(profile)` 同时比较模型和温度；手动保存模型后
   `applyUpdatedCat()` 会重渲染 `renderCatModelList()` 和 `renderModelProfiles()`，
   从而更新「当前配置已偏离」。
-- 404/503 时分区显示「模型档案服务未就绪」和重试；每猫手动模型配置仍可用。
+- 404/503 时分区显示「模型档案服务未就绪」和重试；按成员手动模型配置仍可用。
 
 ### 4.8 房间忙提示与 Needs Me
 
