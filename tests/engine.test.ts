@@ -2168,3 +2168,72 @@ describe("任务收尾后的防护", () => {
     }
   });
 });
+
+describe("worker 轮崩溃时的兜底", () => {
+  /**
+   * 回归：worker 的 brain 抛错时，不能把整轮吞成「什么都没发生」——
+   * 否则这只 worker 既没产出、也不会触发评审，任务就停在 working 直到 stall 超时。
+   * 现在 processWake 把 brain 异常兜成空轮次，afterTurns 仍会走 worker 分支，
+   * 计数和评审照常推进。
+   */
+  test("worker 的 brain 抛错后，任务仍能进入 reviewing 而不是卡在 working", async () => {
+    const studio = makeStudio();
+    const task = studio.createTask({
+      roomId: ROOM_ID,
+      brief: "给登录页加一个记住我勾选框，7天内免登录",
+      scenarioId: SCENARIO_ID,
+    });
+
+    // 周烁（designer）作为 worker 接活时 brain 抛错；其他成员正常。
+    const brain = scriptedBrain((ctx) => {
+      const stage = ctx.task?.stage ?? null;
+      if (ctx.cat.id === "zhoushuo" && stage === "working") {
+        throw new Error("模拟 brain 崩溃");
+      }
+      if (ctx.trigger.kind === "nudge") {
+        return [message("我补一下。")];
+      }
+      if (stage === "intake") {
+        return [message("我接住这个需求。")];
+      }
+      if (stage === "planning") {
+        return [
+          {
+            kind: "handoff",
+            to: "zhoushuo",
+            card: card("设计勾选框状态与文案"),
+            text: "@周烁 交互交给你。",
+          },
+        ];
+      }
+      if (ctx.cat.id === "shenyan") {
+        return [
+          {
+            kind: "review",
+            title: "评审通过",
+            verdict: "approve",
+            findings: [],
+            text: "通过。",
+          },
+        ];
+      }
+      return [message("收到。")];
+    });
+
+    const driver = makeDriver(studio, brain);
+    try {
+      driver.submit({ type: "task_created", roomId: ROOM_ID, taskId: task.id });
+      await driver.whenIdle();
+
+      const after = studio.getTask(task.id);
+      assert.ok(after, "任务应存在");
+      assert.notEqual(
+        after.stage,
+        "working",
+        `worker 崩溃后任务不该永久停在 working，实际 stage=${after.stage} status=${after.status}`,
+      );
+    } finally {
+      studio.close();
+    }
+  });
+});

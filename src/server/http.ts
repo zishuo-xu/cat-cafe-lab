@@ -958,6 +958,28 @@ export function createHttpServer(deps: HttpDeps): Server {
       return;
     }
 
+    if (pathname === "/api/tasks" && method === "GET") {
+      // 跨房间的任务总览：左栏任务列表按房间过滤，房间一多就找不回
+      // 「我记得做过一个 CSV 的任务，但忘了在哪个房间」。
+      const query = (url.searchParams.get("q") ?? "").trim().toLowerCase();
+      const tasks = studio.state.tasks
+        .filter((task) => {
+          if (!query) return true;
+          return (
+            task.title.toLowerCase().includes(query) || task.brief.toLowerCase().includes(query)
+          );
+        })
+        .slice()
+        .sort((a, b) => b.createdAt - a.createdAt);
+      json(res, 200, {
+        tasks: tasks.map((task) => ({
+          ...task,
+          roomName: studio.getRoom(task.roomId)?.name ?? "",
+        })),
+      });
+      return;
+    }
+
     if (pathname === "/api/cats" && method === "GET") {
       json(res, 200, { cats: studio.state.cats });
       return;

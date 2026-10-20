@@ -354,6 +354,30 @@ data: {"seq":42,"state":{...}}
 
 ## 5. 任务与协作控制
 
+### `GET /api/tasks?q=关键词`
+
+跨房间的任务总览。左栏任务列表只显示当前房间的任务，这个接口用于「我记得做过一个
+CSV 的任务，但忘了在哪个房间」这类检索。
+
+- `q` 可选：同时匹配任务标题和需求原文（`brief`），大小写不敏感；空白视为不筛选。
+- 按 `createdAt` 倒序返回。
+- 每条任务额外带 `roomName`，便于跨房间辨认。
+
+```json
+{
+  "tasks": [
+    {
+      "id": "task_xxx",
+      "roomId": "room_cafe",
+      "roomName": "交付台 · 主工作区",
+      "title": "导出 CSV 时中文乱码，加 UTF-8 BOM",
+      "status": "done",
+      "stage": "done"
+    }
+  ]
+}
+```
+
 ### `POST /api/tasks`
 
 创建任务并立刻开工：落一条用户消息 → `task_created` 交给 driver。
@@ -368,9 +392,9 @@ data: {"seq":42,"state":{...}}
 
 - `roomId` 缺省为 `room_cafe`；`brief` 4–2000 字。
 - `scenarioId` 省略或不存在时，按需求关键词自动匹配剧本。
-- 如果房间绑定的是**读写 git 工作区**且开启任务分支，会先创建 `catcafe/<taskId>` 分支（失败只记录提示，不阻塞任务）。
+- 如果房间绑定的是**读写 git 工作区**且开启任务分支，会先创建 `deliverylab/<taskId>` 分支（失败只记录提示，不阻塞任务）。
 - 返回 `201` + `Task`（结构见 data-model）。
-- 错误：`400`（`brief` 长度不合法）；`roomId` 不存在时目前会以 `500` 返回（该分支未做前置校验）。
+- 错误：`400`（`brief` 长度不合法）；`roomId` 不存在时返回 `404`。
 
 ### `GET /api/tasks/:id/trace`
 

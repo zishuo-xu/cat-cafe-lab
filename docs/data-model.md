@@ -222,7 +222,7 @@ interface Message {
 
 ---
 
-## 5. 任务：`Task` / `TaskStage` / `TaskStep` / `TaskGit`
+## 5. 任务：`Task` / `TaskHealth` / `TaskStage` / `TaskStep` / `TaskGit`
 
 ```ts
 type TaskStage = "intake" | "planning" | "working" | "reviewing" | "revising" | "done";
@@ -242,8 +242,27 @@ interface Task {
   updatedAt: number;
   doneAt?: number;
   git?: TaskGit;
+  health?: TaskHealth;       // 模型降级汇总，只有真实模式降级过才存在
 }
 ```
+
+### `TaskHealth`
+
+```ts
+interface TaskHealth {
+  degradedCount: number;         // 累计降级次数
+  lastDegradeReason?: string;    // 最近一次原因（截断）
+  lastDegradeStage?: TaskStage;  // 最近一次发生在哪个阶段
+  warned: boolean;               // 是否已提醒过负责人（避免刷屏）
+}
+```
+
+模型调用失败时会**静默降级**回演出台词，任务照常完成但产出质量掉档。为了让负责人
+不用翻轨迹就知道，降级会在 `finishLlmCall` 时累加到这里：
+
+- 第一次降级额外落一条系统消息（「后续产出可能不可信」）；
+- 之后只累加计数，不再刷屏；
+- 前端在任务卡和任务搜索里显示 `⚠ 降级 N` 徽标，悬停看原因。
 
 ### 阶段
 

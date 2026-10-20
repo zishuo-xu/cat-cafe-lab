@@ -32,6 +32,7 @@ import type {
   MemberSession,
   LlmCall,
   Task,
+  TaskHealth,
   TaskStage,
   TaskStep,
   ToolCall,
@@ -510,8 +511,40 @@ export class Studio {
     Object.assign(call, patch);
     call.finishedAt = now();
     call.durationMs = call.finishedAt - call.startedAt;
+    // 降级要能到达负责人：以前只留在 LlmCall 上，不翻轨迹根本看不见。
+    if (call.degraded) this.recordTaskDegradation(call);
     this.notify();
     return call;
+  }
+
+  /**
+   * 把一次降级记到任务上，并在第一次降级时留一条系统消息。
+   *
+   * 只写一次消息：一次 20 分钟任务实测降级 5 次，每次都刷屏会把聊天区淹掉；
+   * 后续计数继续累加，详情看任务轨迹。
+   */
+  recordTaskDegradation(call: LlmCall): void {
+    if (!call.taskId) return;
+    const task = this.getTask(call.taskId);
+    if (!task) return;
+
+    const health: TaskHealth = task.health ?? { degradedCount: 0, warned: false };
+    health.degradedCount += 1;
+    if (call.degradeReason) health.lastDegradeReason = call.degradeReason;
+    if (call.stage) health.lastDegradeStage = call.stage;
+    task.health = health;
+
+    if (health.warned) return;
+    health.warned = true;
+    this.appendMessage({
+      roomId: task.roomId,
+      author: "system",
+      kind: "system",
+      text:
+        `⚠️ 模型调用失败，已降级为演出台词——「${task.title}」后续产出可能不可信。` +
+        `原因：${call.degradeReason ?? "未知"}。可在任务轨迹里核对。`,
+      taskId: task.id,
+    });
   }
 
   /** 沙盒工具调用：先落一条 running，执行完再 finish。 */

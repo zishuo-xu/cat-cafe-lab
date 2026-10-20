@@ -759,6 +759,18 @@ button {
   color: var(--muted);
 }
 
+/* 模型降级徽标：产出可能不可信，必须在列表上就看得见，不能只藏在轨迹里。 */
+.task-health-badge {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #fde8e4;
+  color: #b23b23;
+  font-size: 9.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .task-meta .mini-avatar {
   width: 15px;
   height: 15px;
@@ -2500,6 +2512,75 @@ button {
 
 .toast.is-out {
   animation: toast-out 0.22s ease-in both;
+}
+
+/* ── 任务快速跳转（⌘K） ───────────────────────────────────────────── */
+
+.task-search-results {
+  max-height: min(46vh, 420px);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+  border-top: 1px solid var(--line);
+}
+
+.task-search-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.task-search-item:hover,
+.task-search-item:focus-visible {
+  background: #f7efe4;
+  outline: none;
+}
+
+.task-search-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.task-search-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-search-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.task-search-room {
+  color: #8a5a22;
+  font-weight: 600;
+}
+
+.task-search-empty {
+  margin: 12px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
 }
 
 /* ── 新任务弹窗 ───────────────────────────────────────────────────────── */

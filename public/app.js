@@ -1007,6 +1007,10 @@ function cacheDom() {
   els.traceCount = $("#trace-entry-count");
   els.traceError = $("#trace-error");
   els.traceFilters = $$(".trace-filter");
+  els.taskSearchModal = $("#task-search-modal");
+  els.taskSearchInput = $("#task-search-input");
+  els.taskSearchResults = $("#task-search-results");
+  els.taskSearchEmpty = $("#task-search-empty");
   els.modelProfilesList = $("#model-profile-list");
   els.modelProfilesStatus = $("#model-profiles-status");
   els.modelProfileMode = $("#model-profile-mode");
@@ -1390,7 +1394,18 @@ function renderTasks() {
 
   const sig =
     `${app.roomId}|` +
-    tasks.map((task) => [task.id, task.status, task.stage, task.owner, task.updatedAt].join(":")).join("|") +
+    tasks
+      .map((task) =>
+        [
+          task.id,
+          task.status,
+          task.stage,
+          task.owner,
+          task.updatedAt,
+          task.health?.degradedCount ?? 0,
+        ].join(":"),
+      )
+      .join("|") +
     `|sel:${app.selectedTaskId ?? ""}`;
   if (sig === app.sig.tasks) return;
   app.sig.tasks = sig;
@@ -1453,6 +1468,16 @@ function renderTasks() {
           h("span", { text: owner ? owner.name : "未指派" }),
           h("span", { text: "·" }),
           h("span", { text: statusText }),
+          task.health?.degradedCount > 0
+            ? h("span", {
+                class: "task-health-badge",
+                "data-degraded": String(task.health.degradedCount),
+                title:
+                  `模型调用降级 ${task.health.degradedCount} 次，产出可能不可信` +
+                  (task.health.lastDegradeReason ? `。原因：${task.health.lastDegradeReason}` : ""),
+                text: `⚠ 降级 ${task.health.degradedCount}`,
+              })
+            : null,
         ),
         h(
           "span",
@@ -1462,6 +1487,112 @@ function renderTasks() {
       );
     }),
   );
+}
+
+// ── 任务快速跳转（跨房间） ──────────────────────────────────────────────
+
+/**
+ * 左栏任务列表只显示当前房间的任务，房间一多就找不回
+ * 「我记得做过一个 CSV 的任务，但忘了在哪个房间」。
+ * 这个浮层直接在本地 state 上过滤，不走网络，输入即出结果。
+ */
+function openTaskSearch() {
+  if (!els.taskSearchModal) return;
+  if (typeof els.taskSearchModal.showModal === "function" && !els.taskSearchModal.open) {
+    els.taskSearchModal.showModal();
+  }
+  if (els.taskSearchInput) {
+    els.taskSearchInput.value = "";
+    renderTaskSearchResults("");
+    els.taskSearchInput.focus();
+  }
+}
+
+function closeTaskSearch() {
+  if (els.taskSearchModal?.open) els.taskSearchModal.close();
+}
+
+function renderTaskSearchResults(query) {
+  const host = els.taskSearchResults;
+  if (!host) return;
+  const needle = (query ?? "").trim().toLowerCase();
+  const rooms = new Map((app.state?.rooms ?? []).map((room) => [room.id, room]));
+
+  const matched = (app.state?.tasks ?? [])
+    .filter((task) => {
+      if (!needle) return true;
+      return (
+        (task.title ?? "").toLowerCase().includes(needle) ||
+        (task.brief ?? "").toLowerCase().includes(needle)
+      );
+    })
+    .sort((a, b) => b.createdAt - a.createdAt)
+    // 浮层只做「跳过去」，列表太长反而难用：给个上限。
+    .slice(0, 40);
+
+  if (els.taskSearchEmpty) els.taskSearchEmpty.hidden = matched.length > 0;
+
+  host.replaceChildren(
+    ...matched.map((task) => {
+      const room = rooms.get(task.roomId);
+      const owner = catById(task.owner);
+      const stageLabel = STAGE_LABEL.get(task.stage) ?? task.stage;
+      const statusText =
+        task.status === "done"
+          ? "已完成"
+          : task.status === "stalled"
+            ? "卡住了"
+            : `更新于 ${fmtTime(task.updatedAt)}`;
+      return h(
+        "li",
+        null,
+        h(
+          "button",
+          {
+            type: "button",
+            class: "task-search-item",
+            "data-action": "jump-task",
+            "data-task-id": task.id,
+            "data-room-id": task.roomId,
+            title: task.brief,
+          },
+          h(
+            "span",
+            { class: "task-search-top" },
+            h("span", { class: "task-search-title", text: task.title }),
+            h("span", {
+              class: "stage-pill",
+              "data-stage": task.stage,
+              text: task.status === "done" ? "完成" : stageLabel,
+            }),
+          ),
+          h(
+            "span",
+            { class: "task-search-meta" },
+            h("span", { class: "task-search-room", text: room?.name ?? "未知房间" }),
+            h("span", { text: "·" }),
+            h("span", { text: owner ? owner.name : "未指派" }),
+            h("span", { text: "·" }),
+            h("span", { text: statusText }),
+            task.health?.degradedCount > 0
+              ? h("span", {
+                  class: "task-health-badge",
+                  title: `模型降级 ${task.health.degradedCount} 次，产出可能不可信`,
+                  text: `⚠ 降级 ${task.health.degradedCount}`,
+                })
+              : null,
+          ),
+        ),
+      );
+    }),
+  );
+}
+
+/** 跳到某个任务：先切房间（若有），再选中该任务。 */
+function jumpToTask(taskId, roomId) {
+  closeTaskSearch();
+  if (roomId && roomId !== app.roomId) setRoom(roomId);
+  selectTask(taskId);
 }
 
 // ── 右栏：任务进度 / 交接卡 / 产物 / 记忆 ───────────────────────────────
@@ -1492,9 +1623,17 @@ function reviewLoopMemoryForTask(taskId) {
   return matches.length ? matches[matches.length - 1] : null;
 }
 
-function stalledMinutesForTask(task) {
+/**
+ * 「已经多久没有新动作」的文案。
+ *
+ * 以前写死成 `Math.max(1, Math.ceil(elapsed / 60000))`，把 12 秒也显示成「1 分钟」，
+ * 而且停了两分多钟就变成「3 分钟」——和实际时间对不上，会误导负责人判断要不要干预。
+ * 现在不足 1 分钟按秒说，1 分钟以上按分钟向下取整。
+ */
+function stalledElapsedLabel(task) {
   const elapsed = Math.max(0, Date.now() - (task?.updatedAt || task?.createdAt || Date.now()));
-  return Math.max(1, Math.ceil(elapsed / 60000));
+  if (elapsed < 60_000) return `${Math.max(1, Math.round(elapsed / 1000))} 秒`;
+  return `${Math.floor(elapsed / 60_000)} 分钟`;
 }
 
 function taskRecoveryInfo(task) {
@@ -1504,7 +1643,7 @@ function taskRecoveryInfo(task) {
     return {
       mode: "stalled",
       badge: "卡住了",
-      reason: `已 ${stalledMinutesForTask(task)} 分钟没有新动作，可以再给它一次机会或收尾。`,
+      reason: `已 ${stalledElapsedLabel(task)} 没有新动作，可以再给它一次机会或收尾。`,
     };
   }
   const memory = reviewLoopMemoryForTask(task.id);
@@ -2679,6 +2818,20 @@ function bindUi() {
     });
   }
 
+  if (els.taskSearchInput) {
+    els.taskSearchInput.addEventListener("input", () => {
+      renderTaskSearchResults(els.taskSearchInput.value);
+    });
+    // 回车直接跳到第一条结果，省一次点击。
+    els.taskSearchInput.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      const first = els.taskSearchResults?.querySelector("[data-task-id]");
+      if (!first) return;
+      event.preventDefault();
+      jumpToTask(first.dataset.taskId, first.dataset.roomId);
+    });
+  }
+
   if (els.composer) {
     els.composer.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -3216,6 +3369,17 @@ function onGlobalClick(event) {
     case "close-task-pivot":
       closeTaskPivotModal();
       break;
+    case "open-task-search":
+      openTaskSearch();
+      break;
+    case "close-task-search":
+      closeTaskSearch();
+      break;
+    case "jump-task":
+      if (actionEl.dataset.taskId) {
+        jumpToTask(actionEl.dataset.taskId, actionEl.dataset.roomId);
+      }
+      break;
     case "close-task-close":
       closeTaskCloseModal();
       break;
@@ -3512,6 +3676,17 @@ function onGlobalClick(event) {
 }
 
 function onGlobalKeydown(event) {
+  // ⌘K / Ctrl+K：跨房间找任务。输入框里也生效——这正是最想用它的时候。
+  if (
+    (event.metaKey || event.ctrlKey) &&
+    !event.altKey &&
+    !event.shiftKey &&
+    (event.key === "k" || event.key === "K")
+  ) {
+    event.preventDefault();
+    openTaskSearch();
+    return;
+  }
   if (event.key !== "Escape") return;
   if (app.mention.open) closeMentionPopup();
 }

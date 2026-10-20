@@ -153,6 +153,28 @@ export interface Task {
   doneAt?: number;
   /** git 工作流状态（仅 git 工作区）。 */
   git?: TaskGit;
+  /**
+   * 任务的模型健康度。
+   *
+   * 背景：模型调用失败会静默降级回 mock 台词，任务照常跑完，但产出质量掉档。
+   * 以前只有 LlmCall 上留了 `degraded`，负责人不翻任务轨迹根本不知道
+   * 「这段话其实不是模型说的」。这里把降级汇总到任务本身，让它在任务卡上直接可见。
+   *
+   * 只统计真实模式（engine=api/cli）的降级；演出模式没有降级概念，不会有这个字段。
+   */
+  health?: TaskHealth;
+}
+
+/** 任务级模型健康度汇总。 */
+export interface TaskHealth {
+  /** 累计降级次数（一次 think 降级算一次）。 */
+  degradedCount: number;
+  /** 最近一次降级的原因（截断后的简短原因）。 */
+  lastDegradeReason?: string;
+  /** 最近一次降级发生的阶段，便于定位是哪一段不可信。 */
+  lastDegradeStage?: TaskStage;
+  /** 是否已把「产出可能不可信」作为系统消息告知过负责人（避免刷屏）。 */
+  warned: boolean;
 }
 
 // ───────────────────────── 交接卡与产物 ─────────────────────────

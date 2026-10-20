@@ -117,6 +117,15 @@
               <h2 id="tasks-title">任务列表</h2>
             </button>
             <span class="count" data-task-count>0</span>
+            <button
+              type="button"
+              class="btn btn--tiny"
+              data-action="open-task-search"
+              title="跨房间搜索所有任务（⌘K / Ctrl+K）"
+              aria-label="跨房间搜索任务"
+            >
+              🔍
+            </button>
             <button type="button" class="btn btn--tiny btn--primary" data-action="new-task">
               ＋ 新任务
             </button>
@@ -1712,6 +1721,30 @@
 
         <p class="form-error" id="trace-error" role="alert" hidden></p>
         <div id="trace-timeline" class="trace-timeline" role="list"></div>
+      </div>
+    </dialog>
+
+    <!-- 任务快速跳转：跨房间找任务（⌘K / Ctrl+K） -->
+    <dialog id="task-search-modal" class="modal" aria-labelledby="task-search-title">
+      <div class="modal-card">
+        <header class="modal-head">
+          <h2 id="task-search-title">找任务</h2>
+          <button type="button" class="icon-btn" data-action="close-task-search" aria-label="关闭">
+            ✕
+          </button>
+        </header>
+        <p class="modal-sub">跨所有房间搜索任务标题和需求原文。选中后会切到对应房间并定位到该任务。</p>
+        <label class="field">
+          <span class="field-label">关键词</span>
+          <input
+            id="task-search-input"
+            type="search"
+            autocomplete="off"
+            placeholder="例如：CSV、记住我、暗色模式"
+          />
+        </label>
+        <ul id="task-search-results" class="task-search-results" role="listbox" aria-label="任务搜索结果"></ul>
+        <p class="task-search-empty" id="task-search-empty" hidden>没有匹配的任务。</p>
       </div>
     </dialog>
 
