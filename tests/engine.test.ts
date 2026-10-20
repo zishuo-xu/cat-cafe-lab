@@ -2097,3 +2097,74 @@ describe("工具并行执行", () => {
     }
   });
 });
+
+describe("任务收尾后的防护", () => {
+  test("done 任务不再接受交接派活（防止 stage 回退）", async () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    // 这个 brain 在 done 之后仍会发交接卡（模拟真实模型的越界行为）
+    let calls = 0;
+    const brain = {
+      mode: "mock" as const,
+      async think(): Promise<CatTurn[]> {
+        calls += 1;
+        if (calls === 1) {
+          return [
+            { kind: "message", text: "开工" },
+            {
+              kind: "handoff",
+              to: "jinjianceng",
+              card: { what: "实现", why: "拆活", tradeoff: "x", openQuestions: [], nextAction: "做" },
+            },
+          ];
+        }
+        if (calls === 2) {
+          return [
+            { kind: "message", text: "再派一次" },
+            {
+              kind: "handoff",
+              to: "shuoshuo",
+              card: { what: "越界", why: "x", tradeoff: "x", openQuestions: [], nextAction: "x" },
+            },
+          ];
+        }
+        // 之后不再说话，避免测试无限循环
+        return [];
+      },
+    };
+    const driver = createDriver({
+      studio,
+      brain: brain as never,
+      wait: () => Promise.resolve(),
+      stallMs: 60_000,
+    });
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "收尾后防护测试",
+        scenarioId: "export_csv",
+      });
+      driver.submit({ type: "task_created", roomId: "room_cafe", taskId: task.id });
+      await driver.whenIdle();
+      studio.setTaskStatus(task.id, "done");
+      studio.updateTaskStage(task.id, "done", "xianxian");
+
+      const stageBefore = studio.getTask(task.id)?.stage;
+      const stepsBefore = studio.getTask(task.id)?.steps.length ?? 0;
+
+      driver.submit({
+        type: "user_message",
+        roomId: "room_cafe",
+        text: "@宪宪 再说两句",
+        mentions: ["xianxian"],
+      });
+      await driver.whenIdle();
+
+      const after = studio.getTask(task.id);
+      assert.equal(after?.stage, stageBefore, "done 后 stage 不应变化");
+      assert.equal(after?.status, "done", "done 后状态不应变化");
+      assert.equal(after?.steps.length, stepsBefore, "done 后不应新增步骤");
+    } finally {
+      studio.close();
+    }
+  });
+});

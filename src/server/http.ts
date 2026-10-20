@@ -82,13 +82,24 @@ function fail(res: ServerResponse, status: number, message: string): void {
   json(res, status, { error: message });
 }
 
+/** 带 HTTP 状态码的请求体错误，让上层能返回正确的码而不是统一 500。 */
+class BodyError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function readBody(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of req) {
     const buf = chunk as Buffer;
     size += buf.length;
-    if (size > MAX_BODY) throw new Error("request body too large");
+    if (size > MAX_BODY) {
+      throw new BodyError(413, `请求体超过 ${Math.round(MAX_BODY / 1024)}KB 上限`);
+    }
     chunks.push(buf);
   }
   if (chunks.length === 0) return {};
@@ -96,7 +107,7 @@ async function readBody(req: IncomingMessage): Promise<unknown> {
   try {
     return JSON.parse(raw);
   } catch {
-    throw new Error("invalid JSON body");
+    throw new BodyError(400, "请求体不是合法的 JSON");
   }
 }
 
@@ -210,7 +221,9 @@ export function createHttpServer(deps: HttpDeps): Server {
   return createServer((req, res) => {
     void handle(req, res).catch((err: unknown) => {
       const message = err instanceof Error ? err.message : "internal error";
-      if (!res.headersSent) fail(res, 500, message);
+      // 请求体错误有自己的状态码（413/400），不要一律 500。
+      const status = err instanceof BodyError ? err.status : 500;
+      if (!res.headersSent) fail(res, status, message);
       else res.end();
     });
   });
@@ -1049,7 +1062,31 @@ export function createHttpServer(deps: HttpDeps): Server {
       const roomId = typeof body.roomId === "string" ? body.roomId : "room_cafe";
       const brief = typeof body.brief === "string" ? body.brief.trim() : "";
       if (brief.length < 4 || brief.length > MAX_TEXT) {
-        fail(res, 400, `brief must be 4..${MAX_TEXT} chars`);
+        fail(res, 400, `brief 长度需在 4..${MAX_TEXT} 字之间`);
+        return;
+      }
+      // 房间必须先存在：否则 createTask 抛错会变成 500。
+      if (!studio.getRoom(roomId)) {
+        fail(res, 404, `房间不存在：${roomId}`);
+        return;
+      }
+      // 同一房间一次只做一件事。
+      // 只拦「正在推进」的任务（正在接单/规划/实现/评审/修订）——
+      // 单纯停在 intake 的任务（驱动没跑、或测试/脚本直接建出来的）不算占用房间，
+      // 否则「连续建任务做 git 分支测试」这类正常用法会被误伤。
+      const busy = studio.state.tasks.find(
+        (item) =>
+          item.roomId === roomId &&
+          item.status !== "done" &&
+          item.stage !== "intake",
+      );
+      if (busy) {
+        fail(
+          res,
+          409,
+          `这个房间还有正在进行的任务「${busy.title}」（${busy.stage}）；` +
+            `同一房间一次只做一件事，请等它结束，或新建一个房间。`,
+        );
         return;
       }
       const scenarioId =

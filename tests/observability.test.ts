@@ -333,3 +333,62 @@ describe("审批等待时间", () => {
     }
   });
 });
+
+describe("全量测试发现的问题（回归）", () => {
+  test("任务完成时兜底写记忆，不依赖模型输出 memory", () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "记忆兜底测试",
+        scenarioId: "export_csv",
+      });
+      studio.addArtifact({
+        taskId: task.id,
+        kind: "patch",
+        title: "实现补丁",
+        body: "…",
+        author: "jinjianceng",
+      });
+      assert.equal(studio.snapshot().memory.length, 0);
+
+      const entry = studio.ensureTaskMemory(task.id);
+      assert.ok(entry, "应该生成兜底记忆");
+      assert.equal(entry?.kind, "decision");
+      assert.equal(entry?.sourceTaskId, task.id);
+      assert.match(entry?.title ?? "", /记忆兜底测试/);
+      assert.match(entry?.body ?? "", /产出 1 个/);
+      assert.match(entry?.body ?? "", /系统自动记录/);
+
+      // 幂等：已有记忆就不再写
+      const again = studio.ensureTaskMemory(task.id);
+      assert.equal(again, null);
+      assert.equal(studio.snapshot().memory.length, 1);
+    } finally {
+      studio.close();
+    }
+  });
+
+  test("已有模型写的记忆时，兜底不覆盖", () => {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "模型自己写了记忆",
+        scenarioId: "export_csv",
+      });
+      studio.addMemory({
+        kind: "decision",
+        title: "模型写的决策",
+        body: "模型自己给的",
+        tags: ["x"],
+        sourceTaskId: task.id,
+      });
+      const entry = studio.ensureTaskMemory(task.id);
+      assert.equal(entry, null, "模型已经写了就不该再补");
+      assert.equal(studio.snapshot().memory.length, 1);
+    } finally {
+      studio.close();
+    }
+  });
+});

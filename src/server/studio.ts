@@ -267,6 +267,47 @@ export class Studio {
   }
 
   /**
+   * 任务完成时的兜底记忆。
+   *
+   * 为什么需要：记忆原本依赖模型在 decision turn 里主动给 memory 字段。
+   * 实测真实模型经常只说话不给字段，于是「任务跑完了但共享记忆是空的」——
+   * 而跨任务记忆是这个项目的核心卖点之一，不能靠模型自觉。
+   *
+   * 这里只做**兜底**：已经有该任务的记忆就不重复写。
+   */
+  ensureTaskMemory(taskId: Task["id"]): MemoryEntry | null {
+    const existing = this.state.memory.filter((entry) => entry.sourceTaskId === taskId);
+    if (existing.length > 0) return null;
+
+    const task = this.getTask(taskId);
+    if (!task) return null;
+
+    const delivery = this.deliverySummary(taskId);
+    const verdict =
+      delivery.verdict === "approve"
+        ? "评审通过"
+        : delivery.verdict === "request_changes"
+          ? "评审未通过"
+          : "无评审结论";
+    const artifacts = delivery.artifacts.length
+      ? `产出 ${delivery.artifacts.length} 个：${delivery.artifacts
+          .map((item) => `${item.kind}「${item.title}」`)
+          .join("、")}`
+      : "没有产出";
+    const blockers = delivery.blockers.length
+      ? `；未清 blocker ${delivery.blockers.length} 条：${delivery.blockers.join("；")}`
+      : "";
+
+    return this.addMemory({
+      kind: "decision",
+      title: `任务「${task.title.slice(0, 40)}」${verdict}`,
+      body: `${artifacts}${blockers}（系统自动记录）`,
+      tags: ["auto-summary", task.scenarioId],
+      sourceTaskId: task.id,
+    });
+  }
+
+  /**
    * 任务交付摘要：当前有什么、还差什么。
    *
    * 收尾（尤其是被强制收尾）时最该告诉用户的两件事：

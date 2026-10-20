@@ -210,3 +210,87 @@ describe("HTTP", () => {
     assert.equal(badTask.status, 400);
   });
 });
+
+describe("HTTP 错误码规范", () => {
+  let studio: Studio;
+  let server: ReturnType<typeof createHttpServer>;
+  let base: string;
+
+  before(async () => {
+    studio = new Studio({ cats: CATS, mode: "mock" });
+    server = createHttpServer({
+      studio,
+      driver: {
+        submit() {},
+        setProactive() {},
+        async patrol() {},
+        async whenIdle() {},
+        stallMs: 12_000,
+      },
+      publicDir: resolve(import.meta.dirname, "../public"),
+      scenarios: SCENARIOS,
+      mode: "mock",
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", () => done()));
+    const address = server.address();
+    if (!address || typeof address !== "object") throw new Error("no port");
+    base = `http://127.0.0.1:${address.port}`;
+  });
+
+  after(async () => {
+    await new Promise<void>((done) => server.close(() => done()));
+    studio.close();
+  });
+
+  test("不存在的房间建任务 → 404", async () => {
+    const res = await fetch(`${base}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roomId: "room_nope", brief: "这是一个合法长度的需求" }),
+    });
+    assert.equal(res.status, 404);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, /房间不存在/);
+  });
+
+  test("请求体过大 → 413", async () => {
+    const huge = "x".repeat(70 * 1024);
+    const res = await fetch(`${base}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roomId: "room_cafe", brief: huge }),
+    });
+    assert.equal(res.status, 413);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, /上限/);
+  });
+
+  test("非法 JSON → 400", async () => {
+    const res = await fetch(`${base}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{not json",
+    });
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, /不是合法的 JSON/);
+  });
+
+  test("房间有推进中的任务时，再建任务 → 409", async () => {
+    const task = studio.createTask({
+      roomId: "room_cafe",
+      brief: "占着房间的任务",
+      scenarioId: "export_csv",
+    });
+    studio.updateTaskStage(task.id, "planning", "xianxian");
+
+    const res = await fetch(`${base}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roomId: "room_cafe", brief: "第二个任务" }),
+    });
+    assert.equal(res.status, 409);
+    const body = (await res.json()) as { error: string };
+    assert.match(body.error, /正在进行的任务/);
+  });
+});

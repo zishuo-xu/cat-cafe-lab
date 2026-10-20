@@ -1248,6 +1248,8 @@ export function createDriver(deps: {
             studio.finishStep(task.id, "done");
             studio.setTaskStatus(task.id, "done");
             clearStall(task.id);
+            studio.ensureTaskMemory(task.id);
+            recordTaskEpisodes(task, "abandoned");
             return;
           }
           runtime.workers += 1;
@@ -1275,6 +1277,8 @@ export function createDriver(deps: {
         studio.finishStep(task.id, "done");
         studio.setTaskStatus(task.id, "done");
         clearStall(task.id);
+        // 记忆不依赖模型自觉：模型没给 memory 时，系统兜底写一条任务摘要。
+        studio.ensureTaskMemory(task.id);
         recordTaskEpisodes(task, "done");
         return;
       }
@@ -1303,6 +1307,10 @@ export function createDriver(deps: {
     runtime: TaskRuntime,
     deliveries: readonly { turn: HandoffTurn; handoff: Handoff }[],
   ): void {
+    // 任务已经收尾就不要再派活：实测真实模型在 done 之后仍会发交接卡，
+    // 那些交接会把步骤重新打开（stage 回退到 working），任务状态却还是 done，
+    // 留下"stage=working / status=done"的不一致状态。
+    if (task.status === "done") return;
     for (const { turn, handoff } of deliveries) {
       const target = studio.getCat(turn.to);
       if (!target) continue;
@@ -1620,11 +1628,16 @@ export function createDriver(deps: {
       const busy = busyReason(taskId, current.roomId);
       if (busy) {
         runtime.lastBusyReason = busy;
+        // 排队中/正在思考/工具在跑都不算卡住，静默重新计时。
         scheduleStall(taskId);
         return;
       }
       studio.setTaskStatus(taskId, "stalled");
-      // 记一条系统消息，避免"为什么判卡住"无从查证。
+      // 同一个任务只打一次"暂停推进"系统消息，避免反复计时导致刷屏。
+      const alreadyNotified = studio.state.messages.some(
+        (m) => m.taskId === taskId && m.kind === "system" && m.text.startsWith("任务暂停推进"),
+      );
+      if (alreadyNotified) return;
       const last = runtime.lastBusyReason;
       studio.appendMessage({
         roomId: current.roomId,
