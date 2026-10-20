@@ -22,6 +22,7 @@ import {
   addScenario,
   listScenarios,
   removeScenario,
+  setValidMemberIds,
 } from "../agents/scenario-registry.ts";
 import type { CatPatch, Studio } from "./studio.ts";
 import type { Sandbox } from "../tools/sandbox.ts";
@@ -1012,12 +1013,61 @@ export function createHttpServer(deps: HttpDeps): Server {
     }
 
     if (pathname === "/api/cats" && method === "GET") {
-      json(res, 200, { cats: studio.state.cats });
+      json(res, 200, {
+        cats: studio.state.cats,
+        retired: studio.state.retiredCats,
+      });
+      return;
+    }
+
+    if (pathname === "/api/cats" && method === "POST") {
+      const body = await readBody(req);
+      if (!body || typeof body !== "object" || Array.isArray(body)) {
+        fail(res, 400, "请求体必须是对象");
+        return;
+      }
+      const record = body as Record<string, unknown>;
+      const role = record["role"];
+      if (
+        role !== "architect" &&
+        role !== "reviewer" &&
+        role !== "designer" &&
+        role !== "implementer"
+      ) {
+        fail(res, 400, "role 只能是 architect / reviewer / designer / implementer");
+        return;
+      }
+      try {
+        const cat = studio.addCat({
+          name: typeof record["name"] === "string" ? record["name"] : "",
+          role,
+          ...(typeof record["persona"] === "string" ? { persona: record["persona"] } : {}),
+        });
+        setValidMemberIds(studio.state.cats.map((item) => item.id));
+        json(res, 201, cat);
+      } catch (err) {
+        fail(res, 400, err instanceof Error ? err.message : "invalid member");
+      }
       return;
     }
 
     {
       const catMatch = /^\/api\/cats\/([^/]+)$/.exec(pathname);
+      if (catMatch && method === "DELETE") {
+        const catId = decodeURIComponent(catMatch[1] ?? "");
+        if (!studio.getCat(catId)) {
+          fail(res, 404, "成员不存在");
+          return;
+        }
+        try {
+          const retired = studio.removeCat(catId);
+          setValidMemberIds(studio.state.cats.map((item) => item.id));
+          json(res, 200, { ok: true, retired });
+        } catch (err) {
+          fail(res, 400, err instanceof Error ? err.message : "cannot remove member");
+        }
+        return;
+      }
       if (catMatch && method === "PUT") {
         const catId = decodeURIComponent(catMatch[1] ?? "");
         const body = await readBody(req);

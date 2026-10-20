@@ -25,6 +25,8 @@ import type {
   MemoryKind,
   Message,
   MessageKind,
+  Role,
+  CatModel,
   Room,
   RoomId,
   StudioState,
@@ -70,6 +72,13 @@ export interface CreateTaskInput {
   scenarioFallback?: boolean;
 }
 
+export interface CreateCatInput {
+  name: string;
+  role: Role;
+  /** 可选：自定义人格；不填给一句默认的。 */
+  persona?: string;
+}
+
 /** 成员档案可编辑字段；id / role / avatar / discipline 不可改。 */
 export interface CatPatch {
   name?: string;
@@ -104,6 +113,7 @@ function freshState(cats: Member[], mode: BrainMode): StudioState {
   return {
     rooms: [room],
     cats,
+    retiredCats: [],
     messages: [],
     tasks: [],
     handoffs: [],
@@ -118,6 +128,117 @@ function freshState(cats: Member[], mode: BrainMode): StudioState {
     mode,
     startedAt: now(),
   };
+}
+
+/**
+ * 新成员的角色默认值。
+ *
+ * 只给「新建时」用；四只内置成员的人格在 personas.ts 里，不走这里。
+ */
+const ROLE_META: Record<
+  Role,
+  { discipline: string; title: string; model: CatModel; accent: string; avatar: Member["avatar"] }
+> = {
+  architect: {
+    discipline: "架构师",
+    title: "架构师 · 需求把关与任务拆解",
+    model: "claude",
+    accent: "#c58a4a",
+    avatar: "architect",
+  },
+  reviewer: {
+    discipline: "评审",
+    title: "评审 · 证据与边界",
+    model: "gpt",
+    accent: "#6b7f8a",
+    avatar: "reviewer",
+  },
+  designer: {
+    discipline: "设计",
+    title: "设计 · 交互与文案",
+    model: "gemini",
+    accent: "#b06c8a",
+    avatar: "designer",
+  },
+  implementer: {
+    discipline: "实现",
+    title: "实现 · 编码与自测",
+    model: "opencode",
+    accent: "#5f8a6b",
+    avatar: "implementer",
+  },
+};
+
+/**
+ * 名册完整性：引擎的阶段机需要这些角色才能跑完一个任务。
+ *
+ * - 架构师：接单 / 规划 / 收尾落决策；
+ * - 评审：reviewing 阶段；
+ * - 干活的（设计或实现至少一个）：working / revising 阶段。
+ */
+function assertRosterComplete(cats: readonly Member[]): void {
+  const has = (role: Role): boolean => cats.some((cat) => cat.role === role);
+  if (!has("architect")) throw new Error("至少要保留一个架构师");
+  if (!has("reviewer")) throw new Error("至少要保留一个评审");
+  if (!cats.some((cat) => cat.role === "designer" || cat.role === "implementer")) {
+    throw new Error("至少要保留一个设计或实现成员");
+  }
+}
+
+const CAT_MODELS = new Set<CatModel>(["claude", "gpt", "gemini", "opencode"]);
+
+/** 名册能否支撑一个完整任务（不抛错版本，供存档恢复时判断）。 */
+function isRosterUsable(cats: readonly Member[]): boolean {
+  try {
+    assertRosterComplete(cats);
+    return cats.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 从存档恢复一个「用户自己加的」成员（不在内置 CATS 里的）。
+ *
+ * 存档可能是手改的，所以每个字段都要兜底：缺字段回落到角色默认值，
+ * 非法值直接丢弃。恢复不出来就返回 null（该成员被跳过，不拖垮整个应用）。
+ */
+function restoreCustomCat(record: Record<string, unknown>): Member | null {
+  const id = typeof record["id"] === "string" ? record["id"].trim() : "";
+  const name = typeof record["name"] === "string" ? record["name"].trim() : "";
+  const role = record["role"];
+  if (!id || !name) return null;
+  if (typeof role !== "string" || !(role in ROLE_META)) return null;
+  const meta = ROLE_META[role as Role];
+
+  const text = (key: string, fallback: string, max: number): string => {
+    const value = record[key];
+    if (typeof value !== "string") return fallback;
+    const trimmed = value.trim();
+    return trimmed ? trimmed.slice(0, max) : fallback;
+  };
+  const accent = typeof record["accent"] === "string" ? record["accent"].trim() : "";
+  const model = record["model"];
+  const avatar = record["avatar"];
+
+  const base: Member = {
+    id,
+    name: name.slice(0, 8),
+    discipline: text("discipline", meta.discipline, 20),
+    role: role as Role,
+    title: text("title", meta.title, 24),
+    model: typeof model === "string" && CAT_MODELS.has(model as CatModel) ? (model as CatModel) : meta.model,
+    persona: text("persona", `我是${name}，${meta.discipline}。`, 100),
+    catchphrase: text("catchphrase", "先做，再说。", 50),
+    accent: /^#[0-9a-fA-F]{6}$/.test(accent) ? accent : meta.accent,
+    avatar:
+      typeof avatar === "string" && avatar in ROLE_META
+        ? (avatar as Member["avatar"])
+        : meta.avatar,
+    greeting: text("greeting", `我是${name}。`, 100),
+  };
+  // 模型覆盖 / 工具 / 技能这些可编辑字段复用同一套清洗逻辑。
+  return { ...base, ...sanitizeCatOverrides(record), id };
 }
 
 function titleFromBrief(brief: string): string {
@@ -868,6 +989,101 @@ export class Studio {
     return next;
   }
 
+  // ── 成员增删（成员数量可配置） ─────────────────────────
+
+  /**
+   * 新增成员。
+   *
+   * 成员数量不写死：名册渲染、房间 catIds、@ 路由、提示词都按 `state.cats` 动态走，
+   * 引擎只要求角色齐全（一个架构师 + 一个评审 + 至少一个干活的），
+   * 所以架构师/评审限制各最多一个，设计与实现可以有任意多个。
+   */
+  addCat(input: CreateCatInput): Member {
+    const name = String(input.name ?? "").trim();
+    if (name.length < 1 || name.length > 8) throw new Error("名字需要 1–8 个字符");
+    if (this.state.cats.some((cat) => cat.name === name)) {
+      throw new Error(`名字「${name}」已经被其他成员用了`);
+    }
+    const role = input.role;
+    if (!ROLE_META[role]) throw new Error(`未知角色：${String(role)}`);
+    const exclusive = role === "architect" || role === "reviewer";
+    if (exclusive) {
+      const existing = this.state.cats.find((cat) => cat.role === role);
+      if (existing) {
+        throw new Error(
+          `已经有一个${ROLE_META[role].discipline}了（${existing.name}）；` +
+            `${ROLE_META[role].discipline}只能有一个`,
+        );
+      }
+    }
+
+    const meta = ROLE_META[role];
+    const cat: Member = {
+      id: ids.cat(),
+      name,
+      discipline: meta.discipline,
+      role,
+      title: meta.title,
+      model: meta.model,
+      persona: `（新成员，还没写人格）我是${name}，${meta.discipline}。`,
+      catchphrase: "先做，再说。",
+      accent: meta.accent,
+      avatar: meta.avatar,
+      greeting: `我是${name}，${meta.discipline}。有活派给我。`,
+      ...(input.persona?.trim() ? { persona: input.persona.trim() } : {}),
+    };
+    this.state.cats.push(cat);
+    for (const room of this.state.rooms) room.catIds.push(cat.id);
+    this.notify();
+    return cat;
+  }
+
+  /**
+   * 移除成员：进 `retiredCats` 存档（历史消息仍能显示名字），不再参与协作。
+   *
+   * 拒绝的两种情况：
+   * - 移除后角色不齐（没有架构师 / 评审 / 干活的人）；
+   * - 这个成员手上还有没结束的任务（先让它收尾或换人，避免任务卡死）。
+   */
+  removeCat(catId: MemberId): Member {
+    const index = this.state.cats.findIndex((cat) => cat.id === catId);
+    const cat = this.state.cats[index];
+    if (index < 0 || !cat) throw new Error(`成员不存在：${catId}`);
+
+    const busyTask = this.state.tasks.find(
+      (task) => task.status !== "done" && task.owner === catId,
+    );
+    if (busyTask) {
+      throw new Error(
+        `「${cat.name}」还负责着进行中的任务「${busyTask.title}」，` +
+          `先让它收尾或换个负责人再移除`,
+      );
+    }
+
+    const remaining = this.state.cats.filter((item) => item.id !== catId);
+    assertRosterComplete(remaining);
+
+    this.state.cats = remaining;
+    if (!this.state.retiredCats.some((item) => item.id === catId)) {
+      this.state.retiredCats.push(cat);
+    }
+    for (const room of this.state.rooms) {
+      room.catIds = room.catIds.filter((id) => id !== catId);
+      if (this.state.typing[room.id] === catId) this.state.typing[room.id] = null;
+    }
+    delete this.state.catSessions[catId];
+    this.notify();
+    return cat;
+  }
+
+  /** 按 id 找成员，包含已移除的（历史记录渲染用）。 */
+  getCatIncludingRetired(catId: MemberId): Member | undefined {
+    return (
+      this.state.cats.find((cat) => cat.id === catId) ??
+      this.state.retiredCats.find((cat) => cat.id === catId)
+    );
+  }
+
   // ── 订阅 / 持久化 ─────────────────────────────────────
 
   subscribe(listener: Listener): () => void {
@@ -965,22 +1181,32 @@ export class Studio {
       // 草稿是瞬态：重启后不恢复（否则会留下永远不消失的半截气泡）。
       this.state.drafts = {};
 
-      // 成员档案：以代码里的 CATS 为底，只接受安全的字段覆盖。
+      // 成员档案：内置成员以代码里的 CATS 为底（只接受安全字段覆盖），
+      // 用户后来加的成员按存档原样恢复 —— 成员数量不再写死成 4 个。
       const baseCats = this.state.cats;
       const savedCats = Array.isArray(parsed.cats) ? (parsed.cats as unknown[]) : [];
       if (savedCats.length > 0) {
-        const overrides = new Map<string, Partial<Member>>();
+        const restored: Member[] = [];
         for (const raw of savedCats) {
           if (!raw || typeof raw !== "object") continue;
           const record = raw as Record<string, unknown>;
-          if (typeof record["id"] !== "string") continue;
-          const patch = sanitizeCatOverrides(record);
-          if (Object.keys(patch).length > 0) overrides.set(record["id"], patch);
+          const id = typeof record["id"] === "string" ? record["id"] : "";
+          if (!id) continue;
+          const base = baseCats.find((cat) => cat.id === id);
+          if (base) {
+            const patch = sanitizeCatOverrides(record);
+            restored.push(Object.keys(patch).length > 0 ? { ...base, ...patch, id: base.id } : base);
+          } else {
+            const custom = restoreCustomCat(record);
+            if (custom) restored.push(custom);
+          }
         }
-        this.state.cats = this.state.cats.map((base) => {
-          const patch = overrides.get(base.id);
-          return patch ? { ...base, ...patch, id: base.id } : base;
-        });
+        // 存档被手工改坏（角色不齐）时退回代码默认名册，别让应用起不来。
+        if (restored.length > 0 && isRosterUsable(restored)) {
+          this.state.cats = restored;
+        } else {
+          console.warn("[studio] 存档里的成员名册不可用（角色不齐），改用默认名册");
+        }
         // 防止手工改坏存档导致重名：重名的那只回退默认名。
         const seenNames = new Set<string>();
         for (const cat of this.state.cats) {
@@ -990,7 +1216,19 @@ export class Studio {
           }
           seenNames.add(cat.name);
         }
+        // 房间成员跟着名册走：已移除的成员不再留在房间里。
+        const activeIds = new Set(this.state.cats.map((cat) => cat.id));
+        for (const room of this.state.rooms) {
+          room.catIds = room.catIds.filter((id) => activeIds.has(id));
+          if (room.catIds.length === 0) room.catIds = this.state.cats.map((cat) => cat.id);
+        }
       }
+
+      // 已移除成员：只用于历史渲染。
+      const retired = Array.isArray(parsed.retiredCats) ? (parsed.retiredCats as unknown[]) : [];
+      this.state.retiredCats = retired
+        .map((raw) => (raw && typeof raw === "object" ? restoreCustomCat(raw as Record<string, unknown>) : null))
+        .filter((cat): cat is Member => cat !== null);
 
       this.state.startedAt = parsed.startedAt ?? now();
       this.state.seq = parsed.seq ?? 0;

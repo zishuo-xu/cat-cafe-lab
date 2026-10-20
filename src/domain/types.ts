@@ -280,6 +280,14 @@ export interface MemberSession {
 export interface StudioState {
   rooms: Room[];
   cats: Member[];
+  /**
+   * 已移除的成员（只用于历史渲染，不参与协作）。
+   *
+   * 为什么不直接删：消息 / 交接 / 产物的 author 都是成员 id，直接删会让历史记录
+   * 变成「未知作者」。移除的成员放这里，前端仍能显示名字，但引擎、名册、@ 路由
+   * 都只看 `cats`，所以不需要在几十处调用点做过滤。
+   */
+  retiredCats: Member[];
   messages: Message[];
   tasks: Task[];
   handoffs: Handoff[];

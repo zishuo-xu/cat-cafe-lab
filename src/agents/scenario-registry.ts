@@ -43,6 +43,11 @@ export function initScenarios(dataDir: string, catIds: string[]): void {
   }
 }
 
+/** 成员增删后同步「合法成员 id 列表」，否则导入自定义剧本会校验失败。 */
+export function setValidMemberIds(catIds: string[]): void {
+  validMemberIds = [...catIds];
+}
+
 export function listScenarios(): ScenarioWithSource[] {
   return SCENARIOS.map((scenario) => ({
     scenario,

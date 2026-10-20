@@ -249,9 +249,52 @@ data: {"seq":42,"state":{...}}
 
 ### `GET /api/cats`
 
+返回在职成员与已移除成员（后者只用于历史渲染，不参与协作）：
+
 ```json
-{ "cats": [ { "id": "xianxian", "name": "林知远", "role": "architect", "...": "..." } ] }
+{
+  "cats": [ { "id": "linzhiyuan", "name": "林知远", "role": "architect", "...": "..." } ],
+  "retired": []
+}
 ```
+
+> 成员数量不写死：可以自由增删成员，成员数量由 `cats` 决定，房间的 `catIds`
+> 会跟着更新。完整名册也随 `GET /api/state` 返回（`cats` / `retiredCats`）。
+
+### `POST /api/cats`
+
+新增成员。角色只能发生在四种之一：
+
+```json
+{ "name": "小满", "role": "implementer", "persona": "（可选）干活快，不爱废话" }
+```
+
+```json
+{
+  "id": "cat_xxx",
+  "name": "小满",
+  "role": "implementer",
+  "discipline": "实现",
+  "title": "实现 · 编码与自测",
+  "avatar": "implementer",
+  "...": "..."
+}
+```
+
+- `name` 1–8 字且不能与在职成员重名；`role` 必填。
+- **约束**：`architect` / `reviewer` 各最多一个（引擎的阶段机按角色找人）；
+  `designer` / `implementer` 可以有任意多个。
+- 新成员自动加入所有房间。
+- 错误：`400` + 可读原因（如「已经有一个架构师了（林知远）」）。
+
+### `DELETE /api/cats/:id`
+
+移除成员：进 `retiredCats` 存档（历史消息仍能显示名字），退出所有房间，
+清掉它的成员会话。返回 `{ "ok": true, "retired": Member }`。
+
+- **拒绝的情况**（`400`）：名册角色不齐（会没有架构师 / 评审 / 干活的人）；
+  该成员手上还有未结束的任务。
+- 不存在返回 `404`。
 
 ### `PUT /api/cats/:id`
 

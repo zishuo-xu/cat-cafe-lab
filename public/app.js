@@ -98,7 +98,7 @@ const app = {
   unread: 0,
   /** artifactId -> 是否展开（重建右栏后恢复用户的展开状态） */
   expanded: new Set(),
-  timeline: { ids: [], lastTaskId: null, initialized: false },
+  timeline: { ids: [], lastTaskId: null, initialized: false, rosterSig: null },
   sig: {
     roster: null,
     tasks: null,
@@ -140,6 +140,25 @@ const settingsState = {
 
 /** 团队档案编辑对话框状态。 */
 const catEditState = { catId: null, saving: false, accent: "#D9A066" };
+
+/** 设置面板「成员管理」：新增表单与移除确认的临时状态。 */
+const catManageState = {
+  addOpen: false,
+  creating: false,
+  createError: "",
+  pendingRemoveId: null,
+  removingId: null,
+  rowErrorId: "",
+  rowError: "",
+};
+
+/** 新成员可选角色（展示用；校验仍以服务端为准）。 */
+const CAT_ROLE_OPTIONS = [
+  { value: "architect", label: "架构师", exclusive: true },
+  { value: "reviewer", label: "评审", exclusive: true },
+  { value: "designer", label: "设计", exclusive: false },
+  { value: "implementer", label: "实现", exclusive: false },
+];
 
 /** 剧本库 / 新任务场景选择的临时状态。 */
 const scenarioState = {
@@ -480,7 +499,25 @@ function roomCats() {
 
 function catById(id) {
   if (!id) return null;
-  return (app.state?.cats ?? []).find((cat) => cat.id === id) ?? null;
+  return (
+    (app.state?.cats ?? []).find((cat) => cat.id === id) ??
+    (app.state?.retiredCats ?? []).find((cat) => cat.id === id) ??
+    null
+  );
+}
+
+/** 这个 id 是否属于已移除成员（历史消息/旧任务仍引用它们）。 */
+function isRetiredCat(id) {
+  if (!id) return false;
+  if ((app.state?.cats ?? []).some((cat) => cat.id === id)) return false;
+  return (app.state?.retiredCats ?? []).some((cat) => cat.id === id);
+}
+
+/** 名册签名：成员增删/改名后需要重绘历史消息的作者与「已移除」标识。 */
+function rosterSignature() {
+  return [...(app.state?.cats ?? []), ...(app.state?.retiredCats ?? [])]
+    .map((cat) => `${cat.id}:${cat.name}:${cat.role ?? ""}:${cat.accent ?? ""}`)
+    .join("|");
 }
 
 function taskById(id) {
@@ -1020,6 +1057,14 @@ function cacheDom() {
   els.modelProfileConfirmError = $("#model-profile-confirm-error");
   els.modelProfileApplyBtn = $("#model-profile-apply-btn");
   els.catModelList = $("#cat-model-list");
+  els.catManageList = $("#cat-manage-list");
+  els.catAddPanel = $("#cat-add-panel");
+  els.catAddToggle = $("#cat-add-toggle");
+  els.catAddName = $("#cat-add-name");
+  els.catAddRole = $("#cat-add-role");
+  els.catAddPersona = $("#cat-add-persona");
+  els.catAddSubmit = $("#cat-add-submit");
+  els.catAddError = $("#cat-add-error");
   els.catEditModal = $("#cat-edit-modal");
   els.catEditForm = $("#cat-edit-form");
   els.catEditAvatar = $("#cat-edit-avatar");
@@ -2437,6 +2482,9 @@ function renderTimeline() {
   const messages = roomMessages();
   const draft = currentDraft();
   const timeline = app.timeline;
+  const rosterSig = rosterSignature();
+  const rosterChanged = timeline.rosterSig !== rosterSig;
+  timeline.rosterSig = rosterSig;
 
   if (!messages.length) {
     if (draft) {
@@ -2463,6 +2511,7 @@ function renderTimeline() {
     host.querySelector(".msg, .sys-line, .task-divider, [data-synthetic-tool]"),
   );
   let rebuild =
+    rosterChanged ||
     timeline.ids.length > messages.length ||
     (timeline.ids.length === 0 && hasStaleTimelineChildren);
   if (!rebuild) {
@@ -2595,22 +2644,36 @@ function messageNode(message, animate) {
 
 function messageHead(message, cat, isUser) {
   const name = isUser ? "负责人" : (cat?.name ?? "团队");
-  const author = isUser
-    ? h("span", { class: "msg-author", text: name })
-    : h("button", {
-        type: "button",
-        class: "msg-author",
-        "data-action": "mention-cat",
-        "data-cat-id": cat?.id ?? "",
-        title: `点一下 @${name}`,
-        text: name,
-      });
+  const retired = !isUser && isRetiredCat(cat?.id);
+  const author =
+    isUser || retired
+      ? h("span", {
+          class: `msg-author${retired ? " is-retired" : ""}`,
+          title: retired ? `「${name}」已移除，历史消息保留` : null,
+          text: name,
+        })
+      : h("button", {
+          type: "button",
+          class: "msg-author",
+          "data-action": "mention-cat",
+          "data-cat-id": cat?.id ?? "",
+          title: `点一下 @${name}`,
+          text: name,
+        });
   const role = cat ? h("span", { class: "msg-role", text: String(cat.title ?? "").split(" / ")[0] }) : null;
+  const retiredBadge = retired
+    ? h("span", {
+        class: "msg-retired-badge",
+        title: "该成员已移除，历史消息仍保留",
+        text: "已移除",
+      })
+    : null;
   return h(
     "header",
     { class: "msg-head" },
     author,
     role,
+    retiredBadge,
     h("time", {
       class: "msg-time",
       datetime: new Date(message.at).toISOString(),
@@ -2932,6 +2995,14 @@ function bindUi() {
     });
     els.settingsForm.addEventListener("change", onSettingsChange);
     els.settingsForm.addEventListener("input", onSettingsInput);
+  }
+  if (els.catAddPanel) {
+    // 新成员输入框按 Enter 直接创建（textarea 保留换行）；避免触发设置表单提交。
+    els.catAddPanel.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" || event.target instanceof HTMLTextAreaElement) return;
+      event.preventDefault();
+      void createCat();
+    });
   }
   if (els.settingsModal) {
     els.settingsModal.addEventListener("click", (event) => {
@@ -3340,6 +3411,24 @@ function onGlobalClick(event) {
       break;
     case "save-cat-model":
       if (actionEl.dataset.catId) void saveCatModel(actionEl.dataset.catId, actionEl);
+      break;
+    case "toggle-cat-add":
+      toggleCatAdd();
+      break;
+    case "cancel-cat-add":
+      closeCatAdd();
+      break;
+    case "create-cat":
+      void createCat();
+      break;
+    case "remove-cat":
+      if (actionEl.dataset.catId) askRemoveCat(actionEl.dataset.catId);
+      break;
+    case "confirm-remove-cat":
+      if (actionEl.dataset.catId) void confirmRemoveCat(actionEl.dataset.catId);
+      break;
+    case "cancel-remove-cat":
+      cancelRemoveCat();
       break;
     case "reload-model-profiles":
       void loadModelProfiles();
@@ -4246,6 +4335,16 @@ async function openSettings() {
   settingsState.resetConfirm = false;
   settingsState.clearKeyRequested = false;
 
+  catManageState.addOpen = false;
+  catManageState.creating = false;
+  catManageState.createError = "";
+  catManageState.pendingRemoveId = null;
+  catManageState.removingId = null;
+  catManageState.rowErrorId = "";
+  catManageState.rowError = "";
+  if (els.catAddName) els.catAddName.value = "";
+  if (els.catAddPersona) els.catAddPersona.value = "";
+
   hideSettingsError();
   hideModeWarn();
   setSettingsResetConfirm(false);
@@ -4254,6 +4353,7 @@ async function openSettings() {
   resetSettingsForm();
   renderSettingsReadonly(null);
   renderCatModelList();
+  renderCatManageList();
   renderScenarioList();
   updateSettingsButtons();
 
@@ -5356,7 +5456,7 @@ function modelProfileCard(profile) {
       h(
         "span",
         { class: "model-profile-map-item" },
-        h("strong", { text: "四个成员" }),
+        h("strong", { text: cats.length ? `${cats.length} 位成员` : "全体成员" }),
         document.createTextNode(" → "),
         h("code", { text: "跟随全局模型", title: "清空所有按成员设置" }),
       ),
@@ -5704,10 +5804,266 @@ function applyUpdatedCat(updated) {
   if (index >= 0) cats[index] = { ...cats[index], ...updated };
   renderAll();
   if (els.settingsModal?.open) {
+    renderCatManageList();
     renderCatModelList();
     renderModelProfiles();
   }
   void refreshState().catch(() => {});
+}
+
+// —— 设置 · 成员管理 ——
+
+function catRoleLabel(role) {
+  return CAT_ROLE_OPTIONS.find((item) => item.value === role)?.label ?? "成员";
+}
+
+function updateCatAddButtons() {
+  if (els.catAddToggle) {
+    els.catAddToggle.textContent = catManageState.addOpen ? "－ 收起新成员" : "＋ 新成员";
+    els.catAddToggle.setAttribute("aria-expanded", String(catManageState.addOpen));
+  }
+  if (els.catAddPanel) els.catAddPanel.hidden = !catManageState.addOpen;
+  if (els.catAddSubmit) {
+    els.catAddSubmit.disabled = catManageState.creating;
+    els.catAddSubmit.textContent = catManageState.creating ? "创建中…" : "创建成员";
+  }
+  if (els.catAddError) {
+    els.catAddError.textContent = catManageState.createError;
+    els.catAddError.hidden = !catManageState.createError;
+  }
+}
+
+/**
+ * 角色下拉：架构师 / 评审已有成员时禁用并写明「只能有一个」。
+ * 这里只做提示，真正的约束以后端 400 为准。
+ */
+function renderCatManageRoles() {
+  const select = els.catAddRole;
+  if (!select) return;
+  const cats = app.state?.cats ?? [];
+  const previous = select.value;
+  const options = CAT_ROLE_OPTIONS.map((role) => {
+    const holder = role.exclusive
+      ? cats.find((cat) => cat.role === role.value)
+      : null;
+    return h("option", {
+      value: role.value,
+      disabled: Boolean(holder),
+      text: holder ? `${role.label}（已有 ${holder.name}，只能有一个）` : role.label,
+    });
+  });
+  select.replaceChildren(...options);
+  const previousEnabled = options.find(
+    (option) => option.value === previous && !option.disabled,
+  );
+  const firstEnabled = options.find((option) => !option.disabled);
+  select.value = previousEnabled?.value ?? firstEnabled?.value ?? "";
+}
+
+function renderCatManageList() {
+  const host = els.catManageList;
+  if (!host) return;
+  const cats = app.state?.cats ?? [];
+  const retiredCount = (app.state?.retiredCats ?? []).length;
+
+  renderCatManageRoles();
+  updateCatAddButtons();
+
+  if (!cats.length) {
+    host.replaceChildren(emptyNote("团队还没到店，稍后刷新。"));
+    return;
+  }
+
+  const nodes = cats.map((cat) => catManageRow(cat));
+  if (retiredCount) {
+    nodes.push(
+      h("p", {
+        class: "cat-manage-retired",
+        text: `另有 ${retiredCount} 位已移除成员：历史消息仍显示名字并标注「已移除」。`,
+      }),
+    );
+  }
+  host.replaceChildren(...nodes);
+}
+
+function catManageRow(cat) {
+  const confirming = catManageState.pendingRemoveId === cat.id;
+  const removing = catManageState.removingId === cat.id;
+  const error = catManageState.rowErrorId === cat.id ? catManageState.rowError : "";
+
+  const actions = confirming
+    ? [
+        h("button", {
+          type: "button",
+          class: "btn btn--tiny btn--danger",
+          "data-action": "confirm-remove-cat",
+          "data-cat-id": cat.id,
+          disabled: removing,
+          text: removing ? "移除中…" : "确认移除",
+        }),
+        h("button", {
+          type: "button",
+          class: "btn btn--tiny btn--ghost",
+          "data-action": "cancel-remove-cat",
+          "data-cat-id": cat.id,
+          disabled: removing,
+          text: "取消",
+        }),
+      ]
+    : h("button", {
+        type: "button",
+        class: "btn btn--tiny btn--ghost",
+        "data-action": "remove-cat",
+        "data-cat-id": cat.id,
+        text: "移除",
+      });
+
+  return h(
+    "div",
+    {
+      class: "cat-manage-row",
+      "data-cat-id": cat.id,
+      style: `--accent:${safeCss(cat.accent)}`,
+    },
+    h("span", {
+      class: "cat-avatar",
+      "aria-hidden": "true",
+      html: avatarSvg(cat, { size: 32 }),
+    }),
+    h(
+      "div",
+      { class: "cat-manage-id" },
+      h(
+        "span",
+        { class: "cat-manage-name-row" },
+        h("strong", { text: cat.name }),
+        h("span", {
+          class: "cat-model-badge",
+          "data-role": cat.role ?? "",
+          text: catRoleLabel(cat.role),
+        }),
+      ),
+      h("span", {
+        class: "cat-manage-meta",
+        text: cat.title ?? cat.discipline ?? "",
+      }),
+    ),
+    h("div", { class: "cat-manage-actions" }, actions),
+    error
+      ? h("span", { class: "cat-manage-row-error", role: "alert", text: error })
+      : null,
+  );
+}
+
+function toggleCatAdd() {
+  catManageState.addOpen = !catManageState.addOpen;
+  catManageState.createError = "";
+  if (!catManageState.addOpen) {
+    if (els.catAddName) els.catAddName.value = "";
+    if (els.catAddPersona) els.catAddPersona.value = "";
+  }
+  renderCatManageList();
+  if (catManageState.addOpen) {
+    requestAnimationFrame(() => els.catAddName?.focus());
+  }
+}
+
+function closeCatAdd() {
+  catManageState.addOpen = false;
+  catManageState.createError = "";
+  if (els.catAddName) els.catAddName.value = "";
+  if (els.catAddPersona) els.catAddPersona.value = "";
+  updateCatAddButtons();
+}
+
+function showCatAddError(message) {
+  catManageState.createError = String(message ?? "");
+  updateCatAddButtons();
+}
+
+async function createCat() {
+  if (catManageState.creating) return;
+  const name = els.catAddName?.value.trim() ?? "";
+  if (!name) {
+    showCatAddError("名字需要 1–8 个字符");
+    els.catAddName?.focus();
+    return;
+  }
+  const role = els.catAddRole?.value ?? "";
+  if (!role) {
+    showCatAddError("请选择角色");
+    return;
+  }
+  const persona = els.catAddPersona?.value.trim() ?? "";
+
+  catManageState.creating = true;
+  catManageState.createError = "";
+  updateCatAddButtons();
+  try {
+    const response = await fetch("/api/cats", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, role, ...(persona ? { persona } : {}) }),
+    });
+    if (!response.ok) throw new Error(await readApiError(response));
+    const created = await response.json();
+    await refreshState().catch(() => {});
+    catManageState.addOpen = false;
+    if (els.catAddName) els.catAddName.value = "";
+    if (els.catAddPersona) els.catAddPersona.value = "";
+    toast(`已新增成员「${created?.name ?? name}」`);
+  } catch (error) {
+    catManageState.createError = error.message;
+  } finally {
+    catManageState.creating = false;
+    updateCatAddButtons();
+    if (els.settingsModal?.open) {
+      renderCatManageList();
+      renderCatModelList();
+      renderModelProfiles();
+    }
+  }
+}
+
+function askRemoveCat(catId) {
+  catManageState.pendingRemoveId = catId;
+  catManageState.rowErrorId = "";
+  catManageState.rowError = "";
+  renderCatManageList();
+}
+
+function cancelRemoveCat() {
+  catManageState.pendingRemoveId = null;
+  catManageState.rowErrorId = "";
+  catManageState.rowError = "";
+  renderCatManageList();
+}
+
+async function confirmRemoveCat(catId) {
+  if (catManageState.removingId) return;
+  const cat = (app.state?.cats ?? []).find((item) => item.id === catId) ?? null;
+  catManageState.removingId = catId;
+  catManageState.rowErrorId = "";
+  catManageState.rowError = "";
+  renderCatManageList();
+  try {
+    const response = await fetch(`/api/cats/${encodeURIComponent(catId)}`, {
+      method: "DELETE",
+    });
+    if (!response.ok) throw new Error(await readApiError(response));
+    await refreshState().catch(() => {});
+    catManageState.pendingRemoveId = null;
+    toast(`已移除成员「${cat?.name ?? "成员"}」`);
+  } catch (error) {
+    // 失败时展示后端 error 原文（例如：成员手上还有进行中的任务）。
+    catManageState.rowErrorId = catId;
+    catManageState.rowError = error.message;
+  } finally {
+    catManageState.removingId = null;
+    renderCatManageList();
+    renderCatModelList();
+    renderModelProfiles();
+  }
 }
 
 // —— 团队档案对话框 ——

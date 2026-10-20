@@ -878,7 +878,77 @@
             </div>
           </fieldset>
 
-          <!-- 6. 成员与模型 -->
+          <!-- 6. 成员管理 -->
+          <fieldset class="settings-section" id="settings-members-section">
+            <legend class="settings-legend">成员管理</legend>
+            <p class="settings-desc">
+              成员数量不写死：架构师与评审各只能有一位，设计与实现可以按需增加。
+              移除成员后，历史消息仍会显示名字并标注「已移除」。
+            </p>
+            <div id="cat-manage-list" class="cat-manage-list" data-testid="cat-manage-list">
+              <div class="empty"><span>正在读取团队…</span></div>
+            </div>
+            <div class="cat-add">
+              <button
+                type="button"
+                class="btn btn--ghost btn--tiny"
+                data-action="toggle-cat-add"
+                id="cat-add-toggle"
+                aria-expanded="false"
+                aria-controls="cat-add-panel"
+              >
+                ＋ 新成员
+              </button>
+              <div class="cat-add-panel" id="cat-add-panel" hidden>
+                <div class="cat-add-grid">
+                  <label class="field">
+                    <span class="field-label">名字</span>
+                    <input
+                      type="text"
+                      id="cat-add-name"
+                      maxlength="8"
+                      autocomplete="off"
+                      spellcheck="false"
+                      placeholder="1–8 个字"
+                    />
+                  </label>
+                  <label class="field">
+                    <span class="field-label">角色</span>
+                    <select id="cat-add-role" aria-label="新成员角色"></select>
+                  </label>
+                  <label class="field cat-add-persona">
+                    <span class="field-label">人格（可选）</span>
+                    <textarea
+                      id="cat-add-persona"
+                      rows="2"
+                      maxlength="800"
+                      placeholder="留空则使用后端默认人格"
+                    ></textarea>
+                  </label>
+                </div>
+                <div class="cat-add-actions">
+                  <button
+                    type="button"
+                    class="btn btn--tiny btn--primary"
+                    data-action="create-cat"
+                    id="cat-add-submit"
+                  >
+                    创建成员
+                  </button>
+                  <button
+                    type="button"
+                    class="btn btn--tiny btn--ghost"
+                    data-action="cancel-cat-add"
+                  >
+                    取消
+                  </button>
+                  <span class="cat-add-error" id="cat-add-error" role="alert" hidden></span>
+                </div>
+              </div>
+            </div>
+          </fieldset>
+
+          <!-- 7. 成员与模型 -->
           <fieldset class="settings-section" id="settings-cats-section">
             <legend class="settings-legend">成员与模型</legend>
             <p class="settings-desc">
@@ -900,7 +970,7 @@
                 </button>
               </div>
               <p class="field-hint">
-                一键把四个成员配置成不同模型。应用会覆盖每个成员当前的模型/温度设置；「统一模型」会清空所有覆盖、跟随全局。
+                一键把当前成员配置成不同模型。应用会覆盖每个成员当前的模型/温度设置；「统一模型」会清空所有覆盖、跟随全局。
               </p>
               <div id="model-profile-list" class="model-profile-list">
                 <div class="empty"><span>读取模型档案…</span></div>
@@ -912,7 +982,7 @@
             </div>
           </fieldset>
 
-          <!-- 7. 回复节奏 -->
+          <!-- 8. 回复节奏 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">回复节奏</legend>
             <p class="settings-desc">只影响演出与真实模式的打字节奏。</p>
@@ -943,7 +1013,7 @@
             </div>
           </fieldset>
 
-          <!-- 8. 剧本库 -->
+          <!-- 9. 剧本库 -->
           <fieldset class="settings-section" id="settings-scenarios-section">
             <legend class="settings-legend">剧本库</legend>
             <p class="settings-desc">
@@ -1019,7 +1089,7 @@
             </div>
           </fieldset>
 
-          <!-- 9. 数据 -->
+          <!-- 10. 数据 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">数据</legend>
             <div class="settings-danger-row">
@@ -1054,7 +1124,7 @@
             </div>
           </fieldset>
 
-          <!-- 10. 关于 / 只读 -->
+          <!-- 11. 关于 / 只读 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">关于 / 运行信息</legend>
             <dl class="settings-info" id="settings-info">
@@ -1678,7 +1748,7 @@
         </header>
         <p class="modal-sub" id="model-profile-confirm-sub">确认应用这套模型分工？</p>
         <p class="model-profile-warning">
-          会覆盖四个成员当前的模型与温度设置，可能影响真实模式下的调用成本与速度。
+          会覆盖当前所有成员的模型与温度设置，可能影响真实模式下的调用成本与速度。
           「统一模型」会清空所有按成员设置，全部跟随全局模型。
         </p>
         <p class="form-error" id="model-profile-confirm-error" role="alert" hidden></p>

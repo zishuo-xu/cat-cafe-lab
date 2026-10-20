@@ -14,7 +14,8 @@
 ```ts
 interface StudioState {
   rooms: Room[];
-  cats: Cat[];
+  cats: Cat[];           // 在职成员（数量可配置）
+  retiredCats: Cat[];    // 已移除成员，仅用于历史渲染
   messages: Message[];
   tasks: Task[];
   handoffs: Handoff[];
@@ -41,6 +42,7 @@ interface StudioState {
 | `artifacts` | 产物（spec / design / patch / review / decision），带版本号 | 无上限 |
 | `memory` | 共享记忆（decision / lesson / preference） | 无上限 |
 | `catSessions` | 每个成员的跨任务经历 | 按成员 8 条 episode + 12 条 lesson |
+| `retiredCats` | 已移除成员 | 只做历史渲染，不参与协作；引擎/名册/@ 路由只看 `cats` |
 | `toolCalls` | 沙盒 / MCP 工具调用记录 | 最多 300 条 |
 | `llmCalls` | 模型调用记录（可观测性） | 最多 200 条 |
 | `typing` | 当前谁在打字 | 每房间 1 个 |

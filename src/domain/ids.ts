@@ -16,6 +16,7 @@ export function newId(prefix: string): string {
 }
 
 export const ids = {
+  cat: () => newId("cat"),
   room: () => newId("room"),
   message: () => newId("msg"),
   task: () => newId("task"),
