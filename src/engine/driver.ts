@@ -603,6 +603,9 @@ export function createDriver(deps: {
         let turns: AgentTurn[] = [];
         // 本轮模型调用 id：产物要记「我是哪次调用写出来的」，用于任务轨迹里的溯源。
         let roundLlmCallId: string | undefined;
+        // 本轮是否降级（brains 通过 onReport 告知）。降级轮退回的是演出台词，
+        // 其中的「决策 / 教训」是剧本写的，和真实需求无关，不能进共享记忆。
+        let roundDegraded = false;
         try {
           await wait(THINK_DELAY_MS);
           const call = studio.startLlmCall({
@@ -622,6 +625,7 @@ export function createDriver(deps: {
           });
           context.onReport = (next) => {
             report = { ...report, ...next };
+            if (next.degraded) roundDegraded = true;
           };
           try {
             turns = await brain.think(context);
@@ -652,6 +656,7 @@ export function createDriver(deps: {
         const applied = await applyTurns(room, cat, task, effectiveTurns, {
           ...(roundLlmCallId ? { llmCallId: roundLlmCallId } : {}),
           trigger: trigger.kind,
+          ...(roundDegraded ? { degraded: true } : {}),
         });
         mergeApplied(merged, applied);
 
@@ -699,8 +704,8 @@ export function createDriver(deps: {
     cat: Member,
     task: Task | null,
     turns: readonly AgentTurn[],
-    /** 本轮来源：产物溯源用它记「哪次模型调用写的」。 */
-    source?: { llmCallId?: string; trigger?: TriggerKind },
+    /** 本轮来源：产物溯源用它记「哪次模型调用写的」，以及这一轮是否是降级轮。 */
+    source?: { llmCallId?: string; trigger?: TriggerKind; degraded?: boolean },
   ): Promise<AppliedTurns> {
     const applied: AppliedTurns = {
       handoffs: [],
@@ -758,6 +763,19 @@ export function createDriver(deps: {
         }
 
         case "handoff": {
+          // done 是终态：这一阶段的派活会被 routeHandoffs 忽略，
+          // 那就别落一张永远不会被投递的交接卡（UI 上会误导）。
+          if (task && (task.status === "done" || task.stage === "done")) {
+            studio.appendMessage({
+              roomId: room.id,
+              author: cat.id,
+              kind: "chat",
+              text: turn.text ?? turn.card.what,
+              mentions: [],
+              taskId: task.id,
+            });
+            break;
+          }
           if (!task) {
             // 没有任务上下文时，交接降级成普通消息，避免脏数据。
             studio.appendMessage({
@@ -924,7 +942,7 @@ export function createDriver(deps: {
           // 剧本自带的决策/教训是给那个剧本写的，套到不相干的需求上会污染后续任务
           // 的上下文（实测：拿「记住我」剧本演「优化首页速度」，共享记忆里多出
           // 两条 token 过期策略，且 sourceTaskId 指向那条无关需求）。
-          if (!task.scenarioFallback) {
+          if (!task.scenarioFallback && !source?.degraded) {
             for (const entry of turn.memory) {
               studio.addMemory({
                 kind: entry.kind,
@@ -940,8 +958,8 @@ export function createDriver(deps: {
         }
 
         case "memory": {
-          // 近似剧本里写的记忆同样不可信：只保留对话，不落共享记忆。
-          if (!task?.scenarioFallback) {
+          // 近似剧本 / 降级轮里写的记忆同样不可信：只保留对话，不落共享记忆。
+          if (!task?.scenarioFallback && !source?.degraded) {
             studio.addMemory({
               kind: turn.memory.kind,
               title: turn.memory.title,
@@ -1355,7 +1373,11 @@ export function createDriver(deps: {
     // 任务已经收尾就不要再派活：实测真实模型在 done 之后仍会发交接卡，
     // 那些交接会把步骤重新打开（stage 回退到 working），任务状态却还是 done，
     // 留下"stage=working / status=done"的不一致状态。
-    if (task.status === "done") return;
+    //
+    // 判 `stage === "done"` 同样重要：review approve 时先 beginStage(done)、
+    // status 还是 active，架构师在这一轮里发的交接会趁这个窗口把阶段拉回 working
+    // （真跑实测：状态 done/working 卡死）。done 阶段就是终态，进来的交接一律忽略。
+    if (task.status === "done" || task.stage === "done") return;
     for (const { turn, handoff } of deliveries) {
       const target = studio.getCat(turn.to);
       if (!target) continue;

@@ -174,7 +174,19 @@ export function createLlmBrain(
 
       // 推理型模型的思考链也消耗 completion budget：被截断时用更大预算重试一次，
       // 仍失败才降级到 mock。retried 是每个成员每次 think 的状态。
-      const useStream = Boolean(options.streaming) && typeof ctx.onDelta === "function";
+      const canStream = Boolean(options.streaming) && typeof ctx.onDelta === "function";
+      // 流式可能被 provider 提前断开（实测 opencode zen 的 go/v1：流结束却没有
+      // finish_reason，JSON 断在半句）。这种情况下退回非流式重试一次，
+      // 而不是直接把整轮降级成演出台词。
+      let streamMode = canStream;
+      let streamFellBack = false;
+      const retryWithoutStream = (why: string): boolean => {
+        if (!streamMode || streamFellBack) return false;
+        streamFellBack = true;
+        streamMode = false;
+        warn(`[llm-brain] ${why}，改用非流式重试一次`);
+        return true;
+      };
       let retried = false;
       let attemptTokens = maxTokens;
       for (;;) {
@@ -182,7 +194,7 @@ export function createLlmBrain(
           model,
           temperature,
           max_tokens: attemptTokens,
-          stream: useStream,
+          stream: streamMode,
           messages: [
             { role: "system", content: buildSystemPrompt(ctx, model) },
             { role: "user", content: buildUserPrompt(ctx) },
@@ -190,7 +202,7 @@ export function createLlmBrain(
         });
 
         const controller = new AbortController();
-        const effectiveTimeout = useStream ? streamTimeoutMs : timeoutMs;
+        const effectiveTimeout = streamMode ? streamTimeoutMs : timeoutMs;
         const timer = setTimeout(() => controller.abort(), effectiveTimeout);
         timer.unref?.();
 
@@ -211,9 +223,10 @@ export function createLlmBrain(
           let content: string | null;
           let finish: string | null;
           let payload: unknown = null;
-          if (useStream) {
+          if (streamMode) {
             const streamed = await consumeStream(response, ctx, warn);
             if (streamed === null) {
+              if (retryWithoutStream("流式响应无法解析")) continue;
               return await downgrade("流式响应无法解析");
             }
             content = streamed.content;
@@ -237,8 +250,9 @@ export function createLlmBrain(
             continue;
           }
           if (content === null) {
-            if (useStream) {
+            if (streamMode) {
               warn("[llm-brain] 流式响应里没有拿到 content（可能是空流或端点不支持流式）");
+              if (retryWithoutStream("流式响应没有 content")) continue;
             }
             if (finish === "length") {
               return await downgrade(
@@ -255,6 +269,10 @@ export function createLlmBrain(
           }
 
           const turns = parseTurns(content, ctx);
+          if (turns.length === 0 && streamMode && !streamFellBack && finish === null) {
+            // 流在没有 finish_reason 的情况下结束 = 被提前断开，JSON 大概率是半句。
+            if (retryWithoutStream("流式输出不完整（没有 finish_reason）")) continue;
+          }
           if (turns.length === 0) {
             // 兜底：模型偶尔无视 JSON 约束、直接说人话（opencode zen 上实测）。
             // 与其整轮降级成 mock 台词，不如把这段人话当成一条 message 收下。
@@ -263,6 +281,7 @@ export function createLlmBrain(
               warn("模型未按 JSON 输出，已把纯文本包成一条 message");
               return [{ kind: "message", text: plain.slice(0, 400) }];
             }
+            if (retryWithoutStream("流式输出解析不出 turn")) continue;
             // 排查用：把模型原文的前 300 字打出来（已 scrub），否则只知道"解析失败"。
             const preview = content.replace(/\s+/g, " ").slice(0, 300);
             return await downgrade(
@@ -273,14 +292,14 @@ export function createLlmBrain(
           ctx.onReport?.({
             model,
             engine: "api",
-            streamed: useStream,
+            streamed: streamMode,
             retried,
             ...usageFrom(payload),
           });
           return turns;
         } catch (err) {
           const reason = controller.signal.aborted
-            ? `请求超时 ${useStream ? streamTimeoutMs : timeoutMs}ms${useStream ? "（流式）" : ""}`
+            ? `请求超时 ${streamMode ? streamTimeoutMs : timeoutMs}ms${streamMode ? "（流式）" : ""}`
             : `网络错误：${errorMessage(err)}`;
           return await downgrade(reason);
         } finally {
@@ -1077,6 +1096,8 @@ export function buildSystemPrompt(ctx: TurnContext, model: string): string {
         "然后立刻交付「复述需求 + 风险 + 拆活 + 交接卡」。",
       "- working / revising：才允许 read_file / write_file / run_command，并且先跑测试拿证据。",
       "- reviewing：先跑测试或读 diff 作为证据，再给 verdict。",
+      "- done（已完成）：只做收尾——写 decision / memory / message，把没做完的遗留写进 memory；" +
+        "**不要再 handoff 派活**，任务已经终态，派活会被忽略。",
       "",
       "工具使用纪律：",
       '- 一轮可以同时请求多个工具，会按数组顺序执行；执行完会用 trigger.kind="tool_result" 把回执再发给你一次。',

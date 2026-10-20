@@ -2237,3 +2237,87 @@ describe("worker 轮崩溃时的兜底", () => {
     }
   });
 });
+
+describe("done 阶段是终态：不再派活", () => {
+  /**
+   * 回归（真跑发现）：review approve 时先 beginStage(done)，此时 status 还是 active。
+   * 架构师在 done 阶段如果又发交接卡，会把阶段拉回 working，
+   * 留下 status=done / stage=working 的不一致状态，任务卡死。
+   */
+  test("架构师在 done 阶段发交接会被忽略，阶段不回退", async () => {
+    const studio = makeStudio();
+    const task = studio.createTask({
+      roomId: ROOM_ID,
+      brief: "修三个 bug，让测试全绿",
+      scenarioId: SCENARIO_ID,
+    });
+
+    const brain = scriptedBrain((ctx) => {
+      const stage = ctx.task?.stage ?? null;
+      const cat = ctx.cat.id;
+
+      if (cat === "linzhiyuan" && stage === "intake") {
+        return [message("接住，先拆活。")];
+      }
+      if (cat === "linzhiyuan" && stage === "planning") {
+        return [
+          { kind: "handoff", to: "chenshi", card: card("实现三个修复"), text: "@陈实 交给你。" },
+        ];
+      }
+      if (cat === "chenshi" && (stage === "working" || stage === "revising")) {
+        return [
+          {
+            kind: "handoff",
+            to: "shenyan",
+            card: card("review 修复"),
+            text: "@沈砚 看下。",
+          },
+        ];
+      }
+      if (cat === "shenyan" && stage === "reviewing") {
+        return [
+          { kind: "review", title: "评审通过", verdict: "approve", findings: [], text: "通过。" },
+        ];
+      }
+      if (cat === "linzhiyuan" && stage === "done") {
+        // 真实模型会这样：验收过了还想补 minor，于是又发一张交接。
+        return [
+          {
+            kind: "decision",
+            artifact: { title: "收尾", body: "7/7 绿" },
+            text: "收工。",
+            memory: [],
+          },
+          {
+            kind: "handoff",
+            to: "chenshi",
+            card: card("顺手修两个 minor"),
+            text: "@陈实 补一下。",
+          },
+        ];
+      }
+      return [message("收到。")];
+    });
+
+    const driver = makeDriver(studio, brain);
+    try {
+      driver.submit({ type: "task_created", roomId: ROOM_ID, taskId: task.id });
+      await driver.whenIdle();
+
+      const after = studio.getTask(task.id);
+      assert.ok(after);
+      assert.equal(after.status, "done", "任务应保持已完成");
+      assert.equal(after.stage, "done", `阶段不该回退，实际 ${after.stage}`);
+      assert.ok(
+        !after.steps.some((step) => step.stage === "working" && step.status === "active"),
+        "不该有重新打开的 working 步骤",
+      );
+      const lateHandoffs = studio.state.handoffs.filter(
+        (handoff) => handoff.taskId === task.id && handoff.to === "chenshi",
+      );
+      assert.equal(lateHandoffs.length, 1, "只该有 planning 阶段那一张交接，done 后的被忽略");
+    } finally {
+      studio.close();
+    }
+  });
+});

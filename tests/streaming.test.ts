@@ -137,12 +137,17 @@ describe("流式输出", () => {
     assert.match(last, /"stream":false/);
   });
 
-  test("流式响应损坏时降级到 fallback", async () => {
+  test("流式响应损坏时改用非流式重试（不直接降级）", async () => {
     sseChunks = ["data: not-json\n\n"];
+    const before = received.length;
     const brain = createLlmBrain({ ...SETTINGS, baseUrl }, makeFallback(), { streaming: true });
     const turns = await brain.think(makeContext(() => undefined));
+
+    // 先流式（损坏）→ 再非流式重试，拿到完整回复；不该退化成演出台词。
+    assert.equal(received.length, before + 2, "应有流式 + 非流式两次请求");
+    assert.match(received.at(-1) ?? "", /"stream":false/);
     assert.equal(turns[0]?.kind, "message");
-    assert.match((turns[0] as { text: string }).text, /fallback/);
+    assert.match((turns[0] as { text: string }).text, /非流式/);
   });
 });
 

@@ -438,11 +438,15 @@ export class Studio {
       ? `；未清 blocker ${delivery.blockers.length} 条：${delivery.blockers.join("；")}`
       : "";
 
+    // 降级过的任务：摘要里明说产出可能不可信，别让后续任务把它当可信结论。
+    const degraded = task.health?.degradedCount ?? 0;
+    const degradedNote =
+      degraded > 0 ? `；本任务有 ${degraded} 次模型降级，产出可能不可信` : "";
     return this.addMemory({
       kind: "decision",
       title: `任务「${task.title.slice(0, 40)}」${verdict}`,
-      body: `${artifacts}${blockers}（系统自动记录）`,
-      tags: ["auto-summary", task.scenarioId],
+      body: `${artifacts}${blockers}（系统自动记录${degradedNote}）`,
+      tags: ["auto-summary", task.scenarioId, ...(degraded > 0 ? ["degraded"] : [])],
       sourceTaskId: task.id,
     });
   }

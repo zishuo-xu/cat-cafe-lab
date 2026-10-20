@@ -15,6 +15,7 @@ import { after, before, describe, test } from "node:test";
 import { buildSystemPrompt, buildUserPrompt } from "../src/agents/llm-brain.ts";
 import { CATS, SCENARIOS } from "../src/agents/personas.ts";
 import type { Task, TurnContext } from "../src/domain/types.ts";
+import { createDriver } from "../src/engine/driver.ts";
 import { createHttpServer } from "../src/server/http.ts";
 import { Studio } from "../src/server/studio.ts";
 import { fakeDriver } from "./helpers/fake-driver.ts";
@@ -180,5 +181,108 @@ describe("轨迹条目可区分消息与产物", () => {
       );
     }
     assert.ok(checked > 0, "应至少校验到一条消息条目");
+  });
+});
+
+describe("降级轮不污染共享记忆", () => {
+  test("模型降级退回演出台词时，剧本里的决策/教训不写进共享记忆", async () => {
+    const studio = new Studio({ cats: CATS.map((cat) => ({ ...cat })), mode: "mock" });
+    const task = studio.createTask({
+      roomId: "room_cafe",
+      brief: "修 order-service 三个 bug",
+      scenarioId: "export_csv",
+    });
+
+    // 模拟真实模式：第一轮就降级，返回剧本风格的 decision（带 memory）。
+    let calls = 0;
+    const brain = {
+      mode: "llm" as const,
+      async think(ctx: TurnContext) {
+        calls += 1;
+        ctx.onReport?.({ model: "fake", engine: "api", degraded: true, degradeReason: "流被截断" });
+        if (calls === 1) {
+          return [
+            {
+              kind: "decision" as const,
+              artifact: { title: "决策 · 导出 CSV 走异步", body: "权限在 service 层再判一次" },
+              text: "这次落两条记忆：导出走异步。",
+              memory: [
+                {
+                  kind: "decision" as const,
+                  title: "后台导出 CSV 走异步任务",
+                  body: "剧本写的决策，和当前需求无关",
+                  tags: ["export", "csv"],
+                },
+              ],
+            },
+          ];
+        }
+        return [{ kind: "message" as const, text: "收工。" }];
+      },
+    };
+    const driver = createDriver({
+      studio,
+      brain,
+      wait: async () => {},
+      stallMs: 60_000,
+    });
+
+    try {
+      driver.submit({ type: "task_created", roomId: "room_cafe", taskId: task.id });
+      await driver.whenIdle();
+
+      const polluted = studio.state.memory.filter(
+        (entry) => entry.sourceTaskId === task.id && entry.tags.includes("export"),
+      );
+      assert.equal(polluted.length, 0, `降级轮的剧本记忆不该落库：${JSON.stringify(polluted)}`);
+
+      const updated = studio.getTask(task.id);
+      assert.ok((updated?.health?.degradedCount ?? 0) >= 1, "应记录降级次数");
+    } finally {
+      studio.close();
+    }
+  });
+
+  test("自动摘要会标注降级过，避免后续任务把它当可信结论", async () => {
+    const studio = new Studio({ cats: CATS.map((cat) => ({ ...cat })), mode: "mock" });
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "修 order-service 三个 bug",
+        scenarioId: "export_csv",
+      });
+      const call = studio.startLlmCall({
+        catId: "linzhiyuan",
+        model: "fake",
+        engine: "api",
+        taskId: task.id,
+        stage: "working",
+      });
+      studio.finishLlmCall(call.id, { degraded: true, degradeReason: "流被截断" });
+
+      const summary = studio.ensureTaskMemory(task.id);
+      assert.ok(summary, "应生成自动摘要");
+      assert.match(summary?.body ?? "", /模型降级/);
+      assert.ok(summary?.tags.includes("degraded"));
+    } finally {
+      studio.close();
+    }
+  });
+
+  test("没有降级时摘要不出现降级字样（不误伤）", () => {
+    const studio = new Studio({ cats: CATS.map((cat) => ({ ...cat })), mode: "mock" });
+    try {
+      const task = studio.createTask({
+        roomId: "room_cafe",
+        brief: "导出 CSV 加 BOM",
+        scenarioId: "export_csv",
+      });
+      const summary = studio.ensureTaskMemory(task.id);
+      assert.ok(summary);
+      assert.ok(!summary?.body.includes("模型降级"));
+      assert.ok(!summary?.tags.includes("degraded"));
+    } finally {
+      studio.close();
+    }
   });
 });

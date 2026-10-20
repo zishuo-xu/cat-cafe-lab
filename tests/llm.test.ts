@@ -1392,3 +1392,81 @@ describe("流式超时与非流式超时不同", () => {
     assert.deepEqual(timeouts, [1], "有 onDelta 时应发流式请求");
   });
 });
+
+describe("流式被提前断开时退回非流式重试", () => {
+  /** 造一个「流结束但没有 finish_reason、JSON 断在半句」的 SSE 响应。 */
+  function truncatedStream(): Response {
+    const half = '[{"kind":"message","text":"先说结论，再拆。三处修改都是不同文件里的小改动，可';
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder();
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify({ choices: [{ delta: { content: half } }] })}\n\n`),
+        );
+        controller.close();
+      },
+    });
+    return new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } });
+  }
+
+  function goodJson(): Response {
+    const content = JSON.stringify([{ kind: "message", text: "完整回答在这里。" }]);
+    return new Response(
+      JSON.stringify({ choices: [{ message: { content }, finish_reason: "stop" }] }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  }
+
+  test("流被截断时自动改用非流式，拿到完整 turn 而不是降级", async () => {
+    const seenStreamFlags: boolean[] = [];
+    const fake = (async (_url: string, init: { body?: string }) => {
+      const body = JSON.parse(String(init.body)) as { stream?: boolean };
+      seenStreamFlags.push(body.stream === true);
+      return body.stream ? truncatedStream() : goodJson();
+    }) as unknown as typeof fetch;
+
+    const fallback = makeFallback();
+    const reports: Array<{ streamed?: boolean; degraded?: boolean }> = [];
+    const brain = createLlmBrain(
+      { baseUrl: "https://example.test/v1", model: "m", apiKey: "k", temperature: 0.7 },
+      fallback.brain,
+      { fetchImpl: fake, streaming: true },
+    );
+
+    const turns = await brain.think(
+      makeContext({
+        // onDelta 是流式生效的前提；onReport 收成功路径的用量回报。
+        onDelta: () => undefined,
+        onReport: (report) => {
+          reports.push(report);
+        },
+      }),
+    );
+
+    assert.deepEqual(seenStreamFlags, [true, false], "应先流式、再非流式重试");
+    assert.equal(fallback.calls(), 0, "不该降级到演出台词");
+    assert.equal(turns.length, 1);
+    assert.match(String((turns[0] as { text?: string }).text), /完整回答/);
+    assert.equal(reports[0]?.streamed, false, "报告应记为非流式成功、未降级");
+    assert.equal(reports[0]?.degraded, undefined);
+  });
+
+  test("非流式也拿不到就仍然降级（不无限重试）", async () => {
+    let calls = 0;
+    const fake = (async () => {
+      calls += 1;
+      return truncatedStream();
+    }) as unknown as typeof fetch;
+
+    const fallback = makeFallback();
+    const brain = createLlmBrain(
+      { baseUrl: "https://example.test/v1", model: "m", apiKey: "k", temperature: 0.7 },
+      fallback.brain,
+      { fetchImpl: fake, streaming: true },
+    );
+    const turns = await brain.think(makeContext({ onDelta: () => undefined }));
+    assert.equal(calls, 2, "流式一次 + 非流式一次，不再多试");
+    assert.equal(fallback.calls(), 1, "最终仍降级");
+    assert.match(String((turns[0] as { text?: string }).text), /fallback/);
+  });
+});
