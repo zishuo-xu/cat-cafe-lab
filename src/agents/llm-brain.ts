@@ -1015,10 +1015,10 @@ export function buildSystemPrompt(ctx: TurnContext, model: string): string {
         `当前阶段：${STAGE_LABEL[task.stage] ?? task.stage}`,
         `阶段负责人：${task.owner === selfId ? `你（${cat.name}）` : task.owner}`,
         `任务状态：${task.status}`,
-        // 近似剧本的 id 跟当前需求无关，写进 prompt 只会把模型往那个剧本上带偏。
-        task.scenarioFallback
-          ? `场景 id：（没有匹配的演示剧本，按需求本身处理）`
-          : `场景 id：${task.scenarioId}`,
+        // 刻意不透传 scenarioId：那是「内置演出剧本」的内部标识，只在 mock 模式有意义。
+        // 实测真跑时它会把模型带偏——需求是修三个 bug，模型却在产物标题和评语里
+        // 写「导出 CSV v2」「权限在 service 层兜住了」，因为场景叫 export_csv。
+        // 真实模式下模型应该只依据需求原文和仓库事实。
       ].join("\n")
     : "【当前任务】没有进行中的任务，你只是在房间里聊天。";
 

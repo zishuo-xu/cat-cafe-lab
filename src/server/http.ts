@@ -694,7 +694,12 @@ export function createHttpServer(deps: HttpDeps): Server {
               ? { actor: message.author, actorName: names.get(message.author) ?? message.author }
               : { actor: message.author }),
             detail: message.text.slice(0, 200),
-            ...(message.mentions.length ? { meta: { mentions: message.mentions } } : {}),
+            // 消息条目一律带 messageId：轨迹里有三种条目都叫 artifact（消息 / 产物），
+            // 靠 meta.artifactId 区分产物、meta.messageId 区分消息，外部集成才不会混。
+            meta: {
+              messageId: message.id,
+              ...(message.mentions.length ? { mentions: message.mentions } : {}),
+            },
           });
         }
         for (const handoff of state.handoffs) {

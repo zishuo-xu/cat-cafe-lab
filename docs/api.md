@@ -484,6 +484,9 @@ CSV 的任务，但忘了在哪个房间」这类检索。
 
 **产物溯源**：`artifact` 条目的 `meta.llmCallId` 对应某个 `llm` 条目的 `meta.id`，
 前端据此从产物跳回产生它的那次模型调用（老数据可能没有 `llmCallId`）。
+
+**区分消息与产物**：`kind` 同为 `artifact` 的条目有两种来源——消息条目带
+`meta.messageId`，真产物条目带 `meta.artifactId`（另有 `version / stage / llmCallId`）。
 错误：`404`（任务不存在）。
 
 ### `GET /api/tasks/:id/diff`
