@@ -84,24 +84,46 @@
           <div id="room-list" class="room-list" role="list"></div>
         </section>
 
-        <section class="card card--roster" aria-labelledby="roster-title">
+        <section class="card card--roster is-collapsible is-collapsed" aria-labelledby="roster-title">
           <div class="card-head">
-            <h2 id="roster-title">成员名册</h2>
-            <span class="count" data-roster-count>0 只</span>
+            <button
+              type="button"
+              class="card-toggle"
+              data-action="toggle-card"
+              data-target="roster-body"
+              aria-expanded="false"
+              aria-controls="roster-body"
+            >
+              <h2 id="roster-title">成员名册</h2>
+            </button>
+            <span class="count" data-roster-count>0</span>
             <span class="card-hint">点名字 @ 它</span>
           </div>
-          <div id="cat-roster" class="roster" data-testid="cat-roster"></div>
+          <div id="roster-body" class="card-body">
+            <div id="cat-roster" class="roster" data-testid="cat-roster"></div>
+          </div>
         </section>
 
-        <section class="card card--tasks" aria-labelledby="tasks-title">
+        <section class="card card--tasks is-collapsible" aria-labelledby="tasks-title">
           <div class="card-head">
-            <h2 id="tasks-title">任务列表</h2>
+            <button
+              type="button"
+              class="card-toggle"
+              data-action="toggle-card"
+              data-target="tasks-body"
+              aria-expanded="true"
+              aria-controls="tasks-body"
+            >
+              <h2 id="tasks-title">任务列表</h2>
+            </button>
             <span class="count" data-task-count>0</span>
             <button type="button" class="btn btn--tiny btn--primary" data-action="new-task">
               ＋ 新任务
             </button>
           </div>
-          <div id="task-list" class="task-list" data-testid="task-list"></div>
+          <div id="tasks-body" class="card-body">
+            <div id="task-list" class="task-list" data-testid="task-list"></div>
+          </div>
         </section>
         <p class="side-note">
           <span aria-hidden="true">▸</span>
@@ -246,9 +268,18 @@
           <p class="work-sub">任务进度 · 交接卡 · 产物 · 沙盒 · 共享记忆</p>
         </header>
         <div class="work-scroll">
-          <section class="card card--current-workspace" aria-labelledby="current-workspace-title">
+          <section class="card card--current-workspace is-collapsible is-collapsed" aria-labelledby="current-workspace-title">
             <div class="card-head">
-              <h2 id="current-workspace-title">当前工作区</h2>
+              <button
+                type="button"
+                class="card-toggle"
+                data-action="toggle-card"
+                data-target="current-workspace-body"
+                aria-expanded="false"
+                aria-controls="current-workspace-body"
+              >
+                <h2 id="current-workspace-title">当前工作区</h2>
+              </button>
               <span class="count" data-current-workspace-policy></span>
               <button
                 type="button"

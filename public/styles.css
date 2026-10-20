@@ -5771,7 +5771,9 @@ button {
 }
 
 .tool-output pre {
-  max-height: 220px;
+  /* 默认高度收窄：聊天区里工具输出的长日志会严重挤压信息流。
+     需要看全的时候点「展开输出」会解除限制。 */
+  max-height: 120px;
   margin: 0;
   padding: 10px 12px;
   overflow: auto;
@@ -6641,4 +6643,137 @@ button {
 
 .room-busy button:hover {
   background: #fbedd6;
+}
+
+/* ── 卡片折叠（降低信息密度） ───────────────────────────────────────── */
+
+.card-toggle {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+
+/* 折叠指示三角：展开时朝下，收起时朝右。 */
+.card-toggle::after {
+  content: "▾";
+  font-size: 9px;
+  line-height: 1;
+  color: var(--ink-faint);
+  transition: transform 0.16s ease;
+  transform-origin: center;
+}
+
+.is-collapsible.is-collapsed .card-toggle::after {
+  transform: rotate(-90deg);
+}
+
+.card-toggle:hover h2 {
+  color: var(--ink);
+}
+
+.card-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* 收起时隐藏内容并减少卡片占位。 */
+.is-collapsible.is-collapsed .card-body {
+  display: none;
+}
+
+.is-collapsible.is-collapsed {
+  padding-bottom: 8px;
+}
+
+.is-collapsible.is-collapsed .card-hint {
+  display: none;
+}
+
+/* 工具输出：未展开时限制高度，"展开输出"后放开。 */
+.tool-output pre {
+  max-height: 120px;
+}
+
+.tool-card[data-user-expanded="true"] .tool-output pre,
+.tool-card:has(.tool-output:not([hidden])) pre {
+  max-height: 420px;
+}
+
+/* ── 右栏密度优化 ───────────────────────────────────────────────────── */
+
+/* 恢复面板：原本标题 + 徽标 + 长说明 + 三个带副标题的按钮，占了半屏。
+   现在压成：一行标题 + 一行原因 + 三个紧凑按钮。 */
+.task-recovery {
+  margin-top: 10px;
+  padding: 10px 11px;
+  border-radius: 12px;
+}
+
+.task-recovery-head {
+  gap: 6px;
+}
+
+.task-recovery-title {
+  font-size: 11.5px;
+}
+
+.task-recovery-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+}
+
+.task-recovery-reason {
+  margin: 6px 0 8px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  /* 原因最多两行，超出省略——完整原因在轨迹里能看 */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.task-recovery-actions {
+  gap: 6px;
+}
+
+.task-recovery-btn {
+  padding: 6px 8px;
+  gap: 1px;
+}
+
+.task-recovery-btn span {
+  font-size: 11.5px;
+}
+
+/* 按钮副标题（"再给它一次机会"）在窄屏右栏里是噪音，藏掉。 */
+.task-recovery-btn small {
+  display: none;
+}
+
+/* 右栏卡片之间的间距从 12px 收到 8px */
+.work-scroll {
+  gap: 8px;
+}
+
+/* 右栏各卡片内边距收紧 */
+.work-scroll > .card {
+  padding: 10px 11px;
+}
+
+/* 移动端：工具输出再收窄一档，避免长日志把对话挤出屏幕。 */
+@media (max-width: 640px) {
+  .tool-output pre,
+  .tool-card:has(.tool-output:not([hidden])) pre {
+    max-height: 140px;
+  }
 }

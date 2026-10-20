@@ -12,6 +12,9 @@ import { avatarSvg, userAvatarSvg, brandMarkSvg } from "./avatars.js";
 
 // ── 常量 ────────────────────────────────────────────────────────────────
 
+/** 卡片折叠状态（记录用户收起了哪些卡片）。 */
+const CARD_STATE_KEY = "deliverylab.collapsedCards";
+
 const STAGES = [
   { id: "intake", label: "接单" },
   { id: "planning", label: "规划" },
@@ -81,6 +84,8 @@ const FULL_FMT = new Intl.DateTimeFormat("zh-CN", {
 // ── 状态 ────────────────────────────────────────────────────────────────
 
 const app = {
+  /** 用户手动收起的卡片（key = DOM id）。 */
+  collapsedCards: {},
   state: null,
   lastSeq: -1,
   conn: "connecting", // connecting | online | offline
@@ -753,6 +758,28 @@ function handoffMissing(card) {
 }
 
 // ── 启动 ────────────────────────────────────────────────────────────────
+
+/** 从 localStorage 恢复用户收起过的卡片。 */
+function restoreCardState() {
+  try {
+    const raw = localStorage.getItem(CARD_STATE_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return;
+    app.collapsedCards = parsed;
+    for (const [targetId, collapsed] of Object.entries(parsed)) {
+      if (!collapsed) continue;
+      const target = document.getElementById(targetId);
+      const card = target?.closest(".is-collapsible");
+      if (!card) continue;
+      card.classList.add("is-collapsed");
+      const toggle = card.querySelector(".card-toggle");
+      toggle?.setAttribute("aria-expanded", "false");
+    }
+  } catch {
+    // 解析失败就当没存过
+  }
+}
 
 async function boot() {
   cacheDom();
@@ -3049,6 +3076,22 @@ function onGlobalClick(event) {
     case "select-task":
       if (actionEl.dataset.taskId) selectTask(actionEl.dataset.taskId);
       break;
+    case "toggle-card": {
+      const targetId = actionEl.dataset.target;
+      const target = targetId ? document.getElementById(targetId) : null;
+      if (!target) break;
+      const card = target.closest(".is-collapsible");
+      const collapsed = card ? card.classList.toggle("is-collapsed") : false;
+      actionEl.setAttribute("aria-expanded", String(!collapsed));
+      // 记住用户的选择，刷新后保持。
+      app.collapsedCards[targetId] = collapsed;
+      try {
+        localStorage.setItem(CARD_STATE_KEY, JSON.stringify(app.collapsedCards));
+      } catch {
+        // localStorage 不可用时静默跳过
+      }
+      break;
+    }
     case "new-task":
       openNewTaskModal();
       break;
@@ -4914,6 +4957,8 @@ function traceEntryNode(entry, maxLlmDuration) {
 // ── 模型分工档案 ───────────────────────────────────────────────────────
 
 const MODEL_PROFILE_STORAGE_KEY = "deliverylab.modelProfileId";
+/** 卡片折叠状态（记录用户收起了哪些卡片）。 */
+
 
 function modelProfileGlobalModel() {
   return String(settingsState.data?.llm?.model ?? app.globalModel ?? "").trim();
@@ -10739,3 +10784,4 @@ window.catCafe = {
 };
 
 boot();
+restoreCardState();
