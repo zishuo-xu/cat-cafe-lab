@@ -295,6 +295,11 @@ interface TaskRuntime {
   stallTimer: ReturnType<typeof setTimeout> | null;
   /** 已发生的「打回 → 修订」轮数。 */
   revisions: number;
+  /**
+   * 上一次 stall 判定时任务为什么在忙（排查用）。
+   * 没有它的话，"任务一直不判卡住"会变成一个无法解释的现象。
+   */
+  lastBusyReason: string | null;
 }
 
 interface ReviewApplied {
@@ -1562,6 +1567,44 @@ export function createDriver(deps: {
 
   // ── stall watchdog ────────────────────────────────────
 
+  /**
+   * 判断任务是否「正在进行中」（只是慢，不是卡住）。
+   *
+   * 返回忙碌原因；返回 null 表示确实没有任何进展 → 可以判卡住。
+   *
+   * 为什么需要这么多条件：真实用户场景里，"慢"的形态很多——
+   * 模型在想、工具在跑、等铲屎官批、巡查在排队、别的任务占着房间队列。
+   * 少排除任何一条，用户都会看到假的"卡住了"并去干预正常流程。
+   */
+  function busyReason(taskId: TaskId, roomId: RoomId): string | null {
+    // 1) 房间队列里还有活（要么是这个任务自己的 wake 在排队，要么别的任务占着）。
+    if ((roomPending.get(roomId) ?? 0) > 0) return "排队中";
+
+    // 2) 有一次模型调用还在进行（推理模型单轮可能 20~60 秒）。
+    const llmInFlight = studio.state.llmCalls.some(
+      (call) => call.taskId === taskId && !call.finishedAt,
+    );
+    if (llmInFlight) return "模型思考中";
+
+    // 3) 有工具正在执行（跑测试可能几十秒）。
+    const toolRunning = studio.state.toolCalls.some(
+      (call) => call.taskId === taskId && call.status === "running",
+    );
+    if (toolRunning) return "工具执行中";
+
+    // 4) 有工具在等铲屎官批准（人可能在开会，不该算猫卡住）。
+    const toolPending = studio.state.toolCalls.some(
+      (call) =>
+        call.taskId === taskId &&
+        call.status === "pending" &&
+        call.approvalRequestedAt !== undefined &&
+        call.approvalDecidedAt === undefined,
+    );
+    if (toolPending) return "等待审批";
+
+    return null;
+  }
+
   function scheduleStall(taskId: TaskId): void {
     const task = studio.getTask(taskId);
     if (!task || task.status !== "active") return;
@@ -1571,21 +1614,28 @@ export function createDriver(deps: {
       runtime.stallTimer = null;
       const current = studio.getTask(taskId);
       if (!current || current.status !== "active") return;
-      // 房间队列里还有活（别的任务在跑 / 自己的 wake 在排队）就不算卡住，重新计时。
-      if ((roomPending.get(current.roomId) ?? 0) > 0) {
-        scheduleStall(taskId);
-        return;
-      }
-      // 有一次模型调用还在进行 → 这是"慢"，不是"卡住"。
-      // 真实场景里推理模型单轮可能跑 20~60 秒，远超 stallMs，误报会让用户去干预正常流程。
-      const inFlight = studio.state.llmCalls.some(
-        (call) => call.taskId === taskId && !call.finishedAt,
-      );
-      if (inFlight) {
+
+      // 判定「卡住」的唯一依据：这个任务确实没有任何事情在进行中。
+      // 任何一条 busyReason 成立都说明它在动，只是慢——重新计时而不是报卡住。
+      const busy = busyReason(taskId, current.roomId);
+      if (busy) {
+        runtime.lastBusyReason = busy;
         scheduleStall(taskId);
         return;
       }
       studio.setTaskStatus(taskId, "stalled");
+      // 记一条系统消息，避免"为什么判卡住"无从查证。
+      const last = runtime.lastBusyReason;
+      studio.appendMessage({
+        roomId: current.roomId,
+        author: "system",
+        kind: "system",
+        text: last
+          ? `任务暂停推进（${stallMs}ms 没有任何动作）。最后观察到的活动：${last}。`
+          : `任务暂停推进（${stallMs}ms 没有任何动作，也没有排队/思考/工具在执行）。`,
+        mentions: [],
+        taskId,
+      });
     }, stallMs);
     runtime.stallTimer.unref?.();
   }
@@ -1602,7 +1652,14 @@ export function createDriver(deps: {
   function runtimeFor(taskId: TaskId): TaskRuntime {
     let runtime = runtimes.get(taskId);
     if (!runtime) {
-      runtime = { workers: 0, deferredReviewer: null, missed: null, stallTimer: null, revisions: 0 };
+      runtime = {
+        workers: 0,
+        deferredReviewer: null,
+        missed: null,
+        stallTimer: null,
+        revisions: 0,
+        lastBusyReason: null,
+      };
       runtimes.set(taskId, runtime);
     }
     return runtime;

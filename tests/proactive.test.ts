@@ -365,3 +365,114 @@ describe("房间忙时的新需求（方案 A）", () => {
     }
   });
 });
+
+describe("stall 判定：四种「在忙」都不该报卡住", () => {
+  function setup(stallMs = 120) {
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    const driver = createDriver({
+      studio,
+      brain: stallingBrain(),
+      wait: () => Promise.resolve(),
+      stallMs,
+    });
+    const task = studio.createTask({
+      roomId: "room_cafe",
+      brief: "stall 判定测试",
+      scenarioId: "export_csv",
+    });
+    return { studio, driver, task };
+  }
+
+  test("有工具正在执行 → 不判卡住", async () => {
+    const { studio, driver, task } = setup();
+    try {
+      driver.submit({ type: "task_created", roomId: "room_cafe", taskId: task.id });
+      await driver.whenIdle();
+      const call = studio.addToolCall({
+        catId: "jinjianceng",
+        tool: "run_command",
+        args: { cmd: "node", args: ["--test"] },
+        label: "跑测试",
+        taskId: task.id,
+        status: "running",
+      });
+      assert.ok(call.id);
+      // 再跑一轮让它重新计时（此时工具 status=running）
+      await driver.patrol();
+      await driver.whenIdle();
+      await new Promise((resolve) => setTimeout(resolve, 320));
+      assert.notEqual(studio.getTask(task.id)?.status, "stalled", "工具在跑不该判卡住");
+    } finally {
+      studio.close();
+    }
+  });
+
+  test("有工具在等审批 → 不判卡住", async () => {
+    const { studio, driver, task } = setup();
+    try {
+      driver.submit({ type: "task_created", roomId: "room_cafe", taskId: task.id });
+      await driver.whenIdle();
+      const call = studio.addToolCall({
+        catId: "jinjianceng",
+        tool: "run_command",
+        args: { cmd: "node", args: ["--test"] },
+        label: "跑测试",
+        taskId: task.id,
+        status: "pending",
+      });
+      assert.ok(call.approvalRequestedAt, "pending 时应记录审批请求时间");
+      await driver.patrol();
+      await driver.whenIdle();
+      await new Promise((resolve) => setTimeout(resolve, 320));
+      assert.notEqual(studio.getTask(task.id)?.status, "stalled", "等审批不该判卡住");
+    } finally {
+      studio.close();
+    }
+  });
+
+  test("审批已决定、工具已跑完 → 正常判卡住", async () => {
+    const { studio, driver, task } = setup();
+    try {
+      // 走真实路径：先创建任务让 driver 在 processWake 结束时启动 stall 计时
+      driver.submit({ type: "task_created", roomId: "room_cafe", taskId: task.id });
+      await driver.whenIdle();
+
+      const call = studio.addToolCall({
+        catId: "jinjianceng",
+        tool: "run_command",
+        args: { cmd: "node", args: ["--test"] },
+        label: "跑测试",
+        taskId: task.id,
+        status: "pending",
+      });
+      studio.startToolCall(call.id);
+      studio.finishToolCall(call.id, { status: "ok", output: "done" });
+      studio.setTaskStatus(task.id, "active");
+
+      // 再跑一轮让它重新计时
+      await driver.patrol();
+      await driver.whenIdle();
+      await new Promise((resolve) => setTimeout(resolve, 320));
+      assert.equal(
+        studio.getTask(task.id)?.status,
+        "stalled",
+        "没有任何进行中的事就该判卡住",
+      );
+    } finally {
+      studio.close();
+    }
+  });
+
+  test("完全没有进行中的事情 → 正常判卡住", async () => {
+    const { studio, driver, task } = setup();
+    try {
+      driver.submit({ type: "task_created", roomId: "room_cafe", taskId: task.id });
+      await driver.whenIdle();
+      // processWake 结束时已启动 stall 计时
+      await new Promise((resolve) => setTimeout(resolve, 320));
+      assert.equal(studio.getTask(task.id)?.status, "stalled", "确实没人动就该判卡住");
+    } finally {
+      studio.close();
+    }
+  });
+});
