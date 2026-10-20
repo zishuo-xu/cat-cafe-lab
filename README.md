@@ -54,6 +54,7 @@
 要求 **Node.js >= 24**（项目直接用 Node 原生 TypeScript，无运行时依赖）。
 
 ```bash
+git clone https://github.com/zishuo-xu/cat-cafe-lab.git
 cd cat-cafe-lab
 pnpm install          # 只装 typescript + @types/node 两个 devDependency
 node src/main.ts
@@ -64,7 +65,7 @@ node src/main.ts
 点「＋ 新任务」→ 选「记住我」示例 → 「让猫猫开工」，然后看着就行。
 
 ```bash
-node --test tests/    # 236 个测试（也可以直接在页面上跑）
+node --test tests/    # 293 个测试（也可以直接在页面上跑）
 npx tsc --noEmit      # 类型检查
 ```
 
@@ -604,7 +605,7 @@ cat-cafe-lab/
 ├── public/            index.html、app.js、styles.css、avatars.js
 ├── tools/             probe.py、matrix.py（真实模型测试驱动）
 ├── examples/mcp/      零依赖示例 MCP server（猫咖记事本）
-├── tests/             21 个测试文件、63 个套件、282 个测试
+├── tests/             21 个测试文件、67 个套件、293 个测试
 ├── docs/              见下方「文档地图」
 ├── data/              studio.json、settings.json、workspaces.json、mcp.json、workspace/（gitignore）
 └── PLAN.md            设计与分工记录

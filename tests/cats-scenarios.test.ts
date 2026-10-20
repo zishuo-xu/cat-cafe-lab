@@ -17,6 +17,7 @@ import { validateScenario } from "../src/agents/scenario-validation.ts";
 import type { Driver, Scenario } from "../src/domain/types.ts";
 import { createHttpServer } from "../src/server/http.ts";
 import { Studio } from "../src/server/studio.ts";
+import { fakeDriver } from "./helpers/fake-driver.ts";
 
 function cloneBuiltin(id: string): Scenario {
   const source = SCENARIOS.find((scenario) => scenario.id === id);
@@ -27,19 +28,6 @@ function cloneBuiltin(id: string): Scenario {
   return copy;
 }
 
-function fakeDriver(): Driver & { events: unknown[] } {
-  const events: unknown[] = [];
-  return {
-    events,
-    submit(event) {
-      events.push(event);
-    },
-    setProactive() {},
-    async patrol() {},
-    async whenIdle() {},
-    stallMs: 12000,
-  };
-}
 
 async function listen(server: ReturnType<typeof createHttpServer>): Promise<number> {
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", () => done()));

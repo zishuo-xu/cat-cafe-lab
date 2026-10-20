@@ -15,16 +15,8 @@ import { createDriver } from "../src/engine/driver.ts";
 import { createHttpServer } from "../src/server/http.ts";
 import { Studio } from "../src/server/studio.ts";
 import { BUILTIN_TOOLS } from "../src/tools/builtin.ts";
+import { fakeDriver } from "./helpers/fake-driver.ts";
 
-function fakeDriver(): Driver {
-  return {
-    submit() {},
-    setProactive() {},
-    async patrol() {},
-    async whenIdle() {},
-    stallMs: 12000,
-  };
-}
 
 function makeContext(
   onReport?: (r: BrainReport) => void,

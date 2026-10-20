@@ -11,16 +11,8 @@ import type { Driver } from "../src/domain/types.ts";
 import { createHttpServer } from "../src/server/http.ts";
 import { MODEL_PROFILES, suggestedProfile } from "../src/server/model-profiles.ts";
 import { Studio } from "../src/server/studio.ts";
+import { fakeDriver } from "./helpers/fake-driver.ts";
 
-function fakeDriver(): Driver {
-  return {
-    submit() {},
-    setProactive() {},
-    async patrol() {},
-    async whenIdle() {},
-    stallMs: 12000,
-  };
-}
 
 async function listen(server: ReturnType<typeof createHttpServer>): Promise<string> {
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", () => done()));

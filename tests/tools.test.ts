@@ -12,16 +12,8 @@ import { createHttpServer } from "../src/server/http.ts";
 import { Studio } from "../src/server/studio.ts";
 import { Sandbox } from "../src/tools/sandbox.ts";
 import { SEED_FILES } from "../src/tools/seed.ts";
+import { fakeDriver } from "./helpers/fake-driver.ts";
 
-function fakeDriver(): Driver {
-  return {
-    submit() {},
-    setProactive() {},
-    async patrol() {},
-    async whenIdle() {},
-    stallMs: 12000,
-  };
-}
 
 function sandboxAt(dir: string): Sandbox {
   const sandbox = new Sandbox(join(dir, "workspace"));

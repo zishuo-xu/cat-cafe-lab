@@ -60,12 +60,12 @@ node src/main.ts
 | `node src/main.ts` | 启动服务 | 正常监听 4318 |
 | `npm start` / `make dev` | 同上（脚本别名） | 见 `package.json` / `Makefile` |
 | `node --watch src/main.ts` | 改代码自动重启 | 平时开发用 |
-| `node --test tests/` | 全量测试 | **282 tests / 282 pass / ~31s** |
+| `node --test tests/` | 全量测试 | **293 tests / 293 pass / ~32s** |
 | `node --test tests/engine.test.ts` | 只跑引擎测试 | 只加载该文件 |
 | `node --test --test-name-pattern="最后一个房间" tests/rooms.test.ts` | 按用例名过滤 | 只跑匹配用例 |
 | `npx tsc --noEmit` | 类型检查 | 无输出即通过 |
 | `npm run check` / `make check` | 同上（脚本别名） | 通过 |
-| `npm test` / `make test` | 全量测试（脚本别名） | 282 pass |
+| `npm test` / `make test` | 全量测试（脚本别名） | 293 pass |
 
 > 测试数量会随迭代增长；上面的数字是写本文档时的值。
 
@@ -149,7 +149,7 @@ cat-cafe-lab/
 │   ├── mcp/                 MCP JSON-RPC 客户端 + server 管理器
 │   └── skills/registry.ts   技能包（按角色/猫注入 prompt）
 ├── public/                  原生 ESM + CSS 前端（无构建）
-├── tests/                   node:test 套件；fixtures/ 放假 MCP server 等
+├── tests/                   node:test 套件；fixtures/ 放假的 MCP server，helpers/ 放共享测试工具
 ├── docs/                    架构 / 引擎 / 前端 / 部署 / MCP / LLM 等文档与截图
 ├── tools/                   真实模型压测脚本（matrix.py / probe.py）
 ├── examples/mcp/            示例 MCP server

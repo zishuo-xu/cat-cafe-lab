@@ -13,6 +13,7 @@ import type { Driver, LlmSettings, StudioSettings } from "../src/domain/types.ts
 import { createHttpServer } from "../src/server/http.ts";
 import { SettingsStore, SwitchableBrain } from "../src/server/settings-store.ts";
 import { Studio } from "../src/server/studio.ts";
+import { fakeDriver } from "./helpers/fake-driver.ts";
 
 function baseSettings(overrides: Partial<StudioSettings> = {}): StudioSettings {
   return {
@@ -40,15 +41,6 @@ function makeStore(dir: string, overrides: Partial<StudioSettings> = {}) {
   return { studio, mock, switchable, store };
 }
 
-function fakeDriver(): Driver {
-  return {
-    submit() {},
-    setProactive() {},
-    async patrol() {},
-    async whenIdle() {},
-    stallMs: 12000,
-  };
-}
 
 async function listen(server: Server): Promise<number> {
   await new Promise<void>((done) => server.listen(0, "127.0.0.1", () => done()));

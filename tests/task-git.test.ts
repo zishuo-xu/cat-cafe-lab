@@ -12,6 +12,7 @@ import type { Driver } from "../src/domain/types.ts";
 import { createHttpServer } from "../src/server/http.ts";
 import { Studio } from "../src/server/studio.ts";
 import { WorkspaceManager } from "../src/workspaces/manager.ts";
+import { fakeDriver } from "./helpers/fake-driver.ts";
 
 function makeRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), "catcafe-git-"));
@@ -43,15 +44,6 @@ function resetRepo(dir: string): void {
   }
 }
 
-function fakeDriver(): Driver {
-  return {
-    submit() {},
-    setProactive() {},
-    async patrol() {},
-    async whenIdle() {},
-    stallMs: 12000,
-  };
-}
 
 describe("C-2 任务 git 工作流", () => {
   let dataDir: string;

@@ -10,20 +10,8 @@ import { CATS, SCENARIOS } from "../src/agents/personas.ts";
 import type { Driver, EngineEvent } from "../src/domain/types.ts";
 import { createHttpServer } from "../src/server/http.ts";
 import { Studio } from "../src/server/studio.ts";
+import { fakeDriver } from "./helpers/fake-driver.ts";
 
-function fakeDriver(): Driver & { events: EngineEvent[] } {
-  const events: EngineEvent[] = [];
-  return {
-    events,
-    submit(event) {
-      events.push(event);
-    },
-    setProactive() {},
-    async patrol() {},
-    async whenIdle() {},
-    stallMs: 12000,
-  };
-}
 
 describe("Studio", () => {
   test("新房间有四只猫的招呼和一条系统消息", () => {

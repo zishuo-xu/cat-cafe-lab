@@ -11,16 +11,8 @@ import type { Driver } from "../src/domain/types.ts";
 import { createHttpServer } from "../src/server/http.ts";
 import { Studio } from "../src/server/studio.ts";
 import { ApprovalQueue } from "../src/tools/approval.ts";
+import { fakeDriver } from "./helpers/fake-driver.ts";
 
-function fakeDriver(): Driver {
-  return {
-    submit() {},
-    setProactive() {},
-    async patrol() {},
-    async whenIdle() {},
-    stallMs: 12000,
-  };
-}
 
 describe("ApprovalQueue", () => {
   test("request 悬挂，resolve 后拿到决定", async () => {

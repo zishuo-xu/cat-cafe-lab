@@ -105,6 +105,11 @@
 | 14 | 模型调用进行中被误判"卡住了" | stall 判定排除飞行中的调用 |
 | 15 | 审批卡被折叠进历史后找不到 | 待审批浮条常驻 |
 | 16 | 房间忙时新需求与在跑任务交叉 | 系统提醒 + `force` 显式放行 |
+| 17 | 任务完成但共享记忆为空 | `ensureTaskMemory()` 系统兜底，模型写过则不重复 |
+| 18 | 任务 done 后仍派活，stage 回退成 working | `routeHandoffs` 加 done 保护 |
+| 19 | 同房间允许并行建多个任务 | 有推进中任务时返回 409 |
+| 20 | stall 排队时刷屏「任务暂停推进」 | 排队/思考/工具执行时静默重计时，同任务只提示一次 |
+| 21 | 错误码统一 500（房间不存在、请求体过大也是 500） | 404 / 413 / 400 分别返回 |
 
 详细的现象、根因、修法见 [real-model-test-report.md](real-model-test-report.md) 和
 [user-scenario-test.md](user-scenario-test.md)。

@@ -16,18 +16,10 @@ import type { Driver, HandoffCard, Room, StudioState } from "../src/domain/types
 import { createHttpServer } from "../src/server/http.ts";
 import { Studio } from "../src/server/studio.ts";
 import { WorkspaceManager } from "../src/workspaces/manager.ts";
+import { fakeDriver } from "./helpers/fake-driver.ts";
 
 const ROOM_ID = "room_cafe";
 
-function fakeDriver(): Driver {
-  return {
-    submit() {},
-    setProactive() {},
-    async patrol() {},
-    async whenIdle() {},
-    stallMs: 12_000,
-  };
-}
 
 interface Harness {
   studio: Studio;

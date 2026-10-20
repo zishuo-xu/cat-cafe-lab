@@ -11,6 +11,7 @@ import type { Driver } from "../src/domain/types.ts";
 import { createHttpServer } from "../src/server/http.ts";
 import { Studio } from "../src/server/studio.ts";
 import { TestRunner, type TestStreamEvent } from "../src/server/test-runner.ts";
+import { fakeDriver } from "./helpers/fake-driver.ts";
 
 /**
  * 用临时 fixture 项目跑 unit，而不是真实项目：
@@ -34,15 +35,6 @@ function makeFixtureProject(): string {
   return dir;
 }
 
-function fakeDriver(): Driver {
-  return {
-    submit() {},
-    setProactive() {},
-    async patrol() {},
-    async whenIdle() {},
-    stallMs: 12000,
-  };
-}
 
 async function waitFor(
   predicate: () => boolean,
