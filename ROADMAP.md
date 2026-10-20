@@ -84,7 +84,9 @@ stash 可恢复回滚；只读/脏树/未收尾分支都有明确拒绝。181 �
 
 ## D. 收尾轮（可继续）
 
-- **真实 provider 联调**：见 [real-model.md](./docs/real-model.md)，需要真实 key；
+- ~~真实 provider 联调~~：已完成（2026-10-20）——CLI（`claude -p`）与 API（opencode zen
+  `deepseek-v4.1-flash`）两种引擎都在真实仓库上跑通「修 bug → 测试全绿 → commit → merge」，
+  报告见 [real-case-order-service](./docs/reports/real-case-order-service.md)；
 - ~~房间编辑/解绑~~：已完成（PATCH / DELETE /api/rooms/:id + 左栏房间菜单）；
 - ~~MCP 鉴权~~：已完成（stdio env / http headers，值不泄露）；
 - ~~任务分支 merge 收尾~~：已完成（`POST /api/tasks/:id/merge` + 任务 Git 区「合并到 base」

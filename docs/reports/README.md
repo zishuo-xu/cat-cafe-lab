@@ -19,6 +19,7 @@
 | [real-model-test-report](real-model-test-report.md) | 2026-10-18 | DeepSeek `deepseek-flash` 9 场景矩阵 | **11 个真实缺陷的现象与根因**；推理型模型的 token 预算问题 |
 | [user-scenario-test](user-scenario-test.md) | 2026-10-19 | 模拟真实用户从零用一遍 | **第一次使用会踩的坑**（P0–P6）；交接卡与评审的实际质量样例 |
 | [full-test-report](full-test-report.md) | 2026-10-20 | 功能矩阵 + 复杂任务 + 边界并发 | **性能剖面**（模型思考 62%、token 分布、单次调用峰值）；边界与错误码问题 |
+| [real-case-order-service](real-case-order-service.md) | 2026-10-20 | 真实仓库 3 个 bug + 7 个红测试，CLI 与 API 两种引擎各跑一遍 | **两种引擎的耗时/token/降级对照**；真跑暴露的 5 个平台缺陷（剧本 id 泄漏、流式截断、降级污染记忆、done 阶段回派活等） |
 
 ---
 
