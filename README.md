@@ -20,9 +20,10 @@
 | 改前端 | [docs/frontend.md](docs/frontend.md) |
 | 改代码 / 加功能 | [docs/development.md](docs/development.md) |
 | 接 MCP server | [docs/mcp.md](docs/mcp.md) |
-| 看真实模型跑出来的问题 | [docs/real-model-test-report.md](docs/real-model-test-report.md) |
-| 看真实用户怎么用它 | [docs/user-scenario-test.md](docs/user-scenario-test.md) |
 | **知道哪里会踩坑** | **[docs/known-issues.md](docs/known-issues.md)** |
+| 看历史测试报告 | [docs/reports/](docs/reports/README.md) |
+
+**完整文档索引**：[docs/README.md](docs/README.md)（按角色分类，含推荐阅读路径）
 
 ---
 
@@ -157,7 +158,7 @@ run_command node --test ...      ✓ exit 0（砚砚放行）
 > **已用真实 provider 验证**：DeepSeek `deepseek-flash` 下 A/B/C 机制全部跑通，
 > 并修复了 6 个只有真实模型才会暴露的问题（推理 token 截断、JSON 尾随文字、
 > intake 阶段工具循环、沙盒参数限制未告知、工具失败无上限、排队误判卡住）。
-> 详见 [真实模型测试报告](docs/real-model-test-report.md)。
+> 详见 [真实模型测试报告](docs/reports/real-model-test-report.md)。
 
 ---
 
@@ -615,22 +616,19 @@ cat-cafe-lab/
 
 ## 文档地图
 
-| 文档 | 解决什么问题 | 读它的时机 |
-|---|---|---|
-| [getting-started](docs/getting-started.md) | 怎么跑、怎么用、界面怎么看 | 第一次接触 |
-| [architecture](docs/architecture.md) | 整体分层、模块职责、关键取舍 | 想理解设计 |
-| [engine](docs/engine.md) | 协作引擎：事件驱动、阶段机、ReAct、审批、巡查、stall | 想改协作逻辑 |
-| [data-model](docs/data-model.md) | 核心类型、状态结构、持久化边界 | 想知道数据长什么样 |
-| [api](docs/api.md) | 所有 HTTP 端点、SSE 流、错误格式 | 写脚本或集成 |
-| [frontend](docs/frontend.md) | 前端结构、状态管理、各类 UI 机制 | 改界面 |
-| [development](docs/development.md) | 加工具/场景/端点/测试，调试技巧，坑 | 参与开发 |
-| [deployment](docs/deployment.md) | 环境变量全表、持久化、安全边界、排障 | 部署或运维 |
-| [llm](docs/llm.md) | 真实模式配置、prompt 构造、失败降级 | 接模型 |
-| [mcp](docs/mcp.md) | MCP 接入、鉴权、示例 server | 扩展工具 |
-| [real-model](docs/real-model.md) | 真实模型联调流程 | 换 provider |
-| [real-model-test-report](docs/real-model-test-report.md) | 11 个真实缺陷的现象/根因/修法 | 想知道踩过什么坑 |
-| [user-scenario-test](docs/user-scenario-test.md) | 真实用户模拟测试与发现的问题 | 想知道用户会踩什么坑 |
-| [known-issues](docs/known-issues.md) | 已知问题、能力边界、修复史 | **用之前建议先看一眼** |
+完整索引见 **[docs/README.md](docs/README.md)**。分六组：
+
+| 组 | 文档 |
+|---|---|
+| **入门** | [getting-started](docs/getting-started.md) · [architecture](docs/architecture.md) |
+| **理解机制** | [engine](docs/engine.md) · [data-model](docs/data-model.md) |
+| **动手改** | [development](docs/development.md) · [frontend](docs/frontend.md) · [api](docs/api.md) |
+| **部署接模型** | [deployment](docs/deployment.md) · [llm](docs/llm.md) · [mcp](docs/mcp.md) |
+| **出问题** | [known-issues](docs/known-issues.md) |
+| **历史报告** | [reports/](docs/reports/README.md)（3 份，标注了"不代表现状"） |
+
+> 前五组描述**系统当前状态**，随代码更新；最后一组是**历史快照**，只用于回溯：
+> 当时发现了什么、怎么修的、性能基线是多少。
 
 ---
 

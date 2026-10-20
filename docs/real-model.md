@@ -106,3 +106,122 @@ node src/main.ts
 
 如果某个 provider 持续不听话，可以在 `llm-brain.ts` 里加 provider 特判（例如 tool calling 原生 API），
 但那是后续工作，当前实现坚持"纯 JSON 输出 + 容错解析"。
+
+---
+
+## 7. 各 provider 实测差异（重要）
+
+这一节是**真跑出来的**，不是查文档抄的。换 provider 前先看这里能省很多时间。
+
+### 7.1 DeepSeek 官方端点
+
+```bash
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_MODEL=deepseek-chat          # 非推理型，快
+# 或 deepseek-reasoner            # 推理型，慢但更会拆活
+```
+
+| 特性 | 表现 |
+|---|---|
+| JSON 服从度 | 良好，基本能稳定输出数组 |
+| 速度 | `deepseek-chat` 单轮 2–10 秒；`reasoner` 30–90 秒 |
+| token 预算 | reasoning 会占 completion 预算，已内置 4096→8192 重试 |
+| 特殊注意事项 | 无 |
+
+### 7.2 opencode zen
+
+```bash
+LLM_BASE_URL=https://opencode.ai/zen/go/v1
+LLM_MODEL=deepseek-v4.1-flash
+LLM_API_KEY=oc_sk_...
+LLM_HEADERS='{"x-opencode-session":"catcafe-任意标识"}'   # ← 必须！否则 400
+```
+
+**两个必须知道的点**：
+
+1. **必须带 `x-opencode-session` 请求头**
+   否则返回 `400 MissingSessionID`。这是个容易卡很久的坑——错误信息不会告诉你要加什么头。
+
+2. **模型名带点号**：是 `deepseek-v4.1-flash` 不是 `deepseek-v4-flash`。
+   写错了 CLII/客户端可能长时间无响应而不是直接报错。
+
+| 模型 | 特性 |
+|---|---|
+| `deepseek-v4.1-flash` | 推理型，实测可用，单任务 5–20 分钟 |
+| `qwen3.7-max` | 响应用，适合 review |
+| `mimo-v2.6-flash` | 快，但有输出噪声（见下） |
+| `claude-haiku-5-5` / `gpt-6-luna` | **不支持 `chat/completions` 协议**，返回 `ModelProtocolUnsupported` |
+| `gemini-4-argon-contributor` | 会训练请求数据，且上游经常失败 |
+
+**`mimo-v2.6-flash` 的三个输出怪癖**（已在解析层兼容）：
+
+```
+① JSON 前后夹噪声标记：</think>{"kind":...}```json [...]
+② 工具参数平铺在顶层：{"kind":"tool","tool":"write_file","path":"...","content":"..."}
+   （规范写法应该放在 input 里）
+③ 有时返回裸对象而不是数组
+```
+
+### 7.3 其他兼容端点
+
+理论上任何 OpenAI 兼容端点都能用，但要注意：
+
+| 检查项 | 怎么验 |
+|---|---|
+| 支持 `stream: true` | 设「流式输出」开关后看日志有没有 `流式响应无法解析` |
+| model 列表能拉到 | 设置 →「测试连接」能列出模型数 |
+| 不强制特殊请求头 | 直接 curl 一次 `chat/completions` 确认 200 |
+
+---
+
+## 8. 换 provider 的完整检查清单
+
+按顺序做，每步都有明确的成功标准：
+
+```
+□ 1. curl 直接打通
+     curl -X POST $LLM_BASE_URL/chat/completions -H "authorization: Bearer $KEY" \
+          -H 'content-type: application/json' \
+          -d '{"model":"'$LLM_MODEL'","messages":[{"role":"user","content":"hi"}]}'
+     期望：200 + choices[0].message.content
+
+□ 2. 启动服务 + 测试连接
+     设置 →「测试连接」→ 期望显示"连接成功，可用模型 N 个"
+
+□ 3. 跑一个简单任务
+     新建任务「给页面加个按钮」→ 期望：能走完 intake → planning 并发出交接卡
+
+□ 4. 检查有没有降级
+     查看任务轨迹 → 期望：「降级」计数为 0
+
+□ 5. 跑一个带工具的任务
+     需求里明确要求「跑测试」→ 期望：出现待批准的工具卡，批准后能继续
+
+□ 6. 记录基线
+     记下这次任务的：总耗时 / 模型调用次数 / token / 降级次数
+     下次换 provider 时用来对比
+```
+
+**任何一步失败**，先看服务端日志里的 `[llm-brain]` 行——它会说明是超时、
+HTTP 错误、还是输出解析失败，并带上模型名和阶段。
+
+---
+
+## 9. 性能参考基线
+
+实测数据（opencode zen · deepseek-v4.1-flash · 一次中等复杂度任务）：
+
+| 指标 | 数值 | 说明 |
+|---|---|---|
+| 总耗时 | 5 分 52 秒 | |
+| 模型调用 | 18 次 | |
+| **模型思考占比** | **62%** | 其余是工具执行与等待 |
+| token | 97k in / 24k out | |
+| 工具调用 | 27 次 | |
+| 单次调用峰值 | 43 秒 | 出现在重试时 |
+| 降级 | 0 次 | |
+
+**怎么理解这个数字**：模型思考占大头，说明优化方向是
+「减少调用轮数」或「换更快的模型」，而不是「优化工具执行」。
+
+想知道你自己环境的基线，跑完任务后看「🔍 查看轨迹」顶部的百分比。

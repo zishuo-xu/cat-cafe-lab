@@ -320,15 +320,15 @@ git 只读查询、手动 commit、不会自动 push/merge，回滚走 stash（�
 | [llm.md](llm.md) | 真实模式配置、prompt 构造、失败降级 |
 | [mcp.md](mcp.md) | MCP 接入、鉴权、示例 server |
 | [real-model.md](real-model.md) | 真实模型联调流程 |
-| [real-model-test-report.md](real-model-test-report.md) | 11 个真实缺陷的现象/根因/修法 |
-| [user-scenario-test.md](user-scenario-test.md) | 真实用户模拟测试与发现的问题 |
+| [real-model-test-report.md](reports/real-model-test-report.md) | 11 个真实缺陷的现象/根因/修法 |
+| [user-scenario-test.md](reports/user-scenario-test.md) | 真实用户模拟测试与发现的问题 |
 | [known-issues.md](known-issues.md) | 已知问题、能力边界、修复史（**用之前建议先看一眼**） |
 
 推荐路径：
 
-- **想判断它值不值得看**：本文跑一下 → [user-scenario-test.md](user-scenario-test.md) 看真实使用效果；
+- **想判断它值不值得看**：本文跑一下 → [user-scenario-test.md](reports/user-scenario-test.md) 看真实使用效果；
 - **想理解设计**：[architecture.md](architecture.md) → [engine.md](engine.md) → [data-model.md](data-model.md)；
 - **想改代码**：[development.md](development.md) → [engine.md](engine.md) / [frontend.md](frontend.md) / [api.md](api.md)；
-- **想接自己的模型**：[deployment.md](deployment.md) → [llm.md](llm.md) → [real-model-test-report.md](real-model-test-report.md)。
+- **想接自己的模型**：[deployment.md](deployment.md) → [llm.md](llm.md) → [real-model-test-report.md](reports/real-model-test-report.md)。
 
 仓库根目录还有：[README.md](../README.md)（完整功能导览）、[PLAN.md](../PLAN.md)（设计初衷与验收清单）、[ROADMAP.md](../ROADMAP.md)（阶段规划）。

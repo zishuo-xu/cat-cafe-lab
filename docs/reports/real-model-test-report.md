@@ -1,8 +1,19 @@
 # 真实模型测试报告（deepseek-flash）
 
+> 📅 **历史快照 · 2026-10-18**
+>
+> 这份报告记录的是**当时的**测试结果与问题，不是系统的当前状态。
+> 文中提到的测试数量、缺陷状态都可能已经变化——**当前有效信息请看
+> [known-issues.md](../known-issues.md)（已知问题）与 [README](../../README.md)（能力清单）**。
+>
+> 保留这份报告是为了：① 记录 11 个真实缺陷的现象与根因，避免后人重踩；
+> ② 保留下"同一个机制在不同 provider 上的表现差异"这一手证据。
+
+---
+
 > 日期：2026-10-18 · provider：DeepSeek · model：`deepseek-flash`（推理型）
 > 测试方式：真实实例（端口 4320）+ `tools/matrix.py` 驱动 9 个场景
-> 测试脚本：[tools/probe.py](../tools/probe.py)、[tools/matrix.py](../tools/matrix.py)
+> 测试脚本：[tools/probe.py](../../tools/probe.py)、[tools/matrix.py](../../tools/matrix.py)
 
 ## 一、结论
 
