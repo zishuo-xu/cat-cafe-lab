@@ -26,6 +26,26 @@ import type {
 import type { Studio } from "./studio.ts";
 
 const SPEED_FACTOR: Record<Speed, number> = { slow: 1.7, normal: 1, fast: 0.5 };
+
+/**
+ * 还没接上模型时的大脑。
+ *
+ * 产品只有真实模式：没有模型就**不能干活**，但也不该假装在演。
+ * 这里只给一句诚实的说明，派活在 API 层直接被拦（412），不会建出假任务。
+ */
+const UNCONFIGURED_BRAIN: AgentBrain = {
+  mode: "mock",
+  async think(): Promise<{ kind: "message"; text: string }[]> {
+    return [
+      {
+        kind: "message",
+        text:
+          "还没接上模型，我现在只能说话、不能读文件或跑测试。" +
+          "点右上角的「未配置」把模型接上，我才能真正开工。",
+      },
+    ];
+  },
+};
 const DEFAULT_VERSION = "0.1.0";
 
 /** 可替换 brain：driver 只持这个壳，设置面板换模式时原地换芯。 */
@@ -120,7 +140,9 @@ export class SettingsStore implements SettingsApi {
     const persisted = this.load();
     const env = opts.settings.llm;
 
-    this.mode = persisted.mode ?? opts.settings.mode;
+    // 产品只有真实模式：mode 恒为 llm，能不能干活由 hasLlmConfig() 决定。
+    void persisted.mode;
+    this.mode = "llm";
     this.speed = persisted.speed ?? "normal";
     this.toolsEnabled = persisted.toolsEnabled ?? opts.settings.toolsEnabled ?? true;
     this.toolApproval = persisted.toolApproval ?? opts.settings.toolApproval ?? "commands";
@@ -136,11 +158,9 @@ export class SettingsStore implements SettingsApi {
     this.apiKey = env?.apiKey ?? "";
     this.keySource = this.apiKey ? "env" : null;
 
-    // 存了 llm 模式但配置不完整（比如换机器、清过配置），回落到演出模式。
-    if (this.mode === "llm" && !this.hasLlmConfig()) this.mode = "mock";
-
+    // 配置不完整时不再「回落演出模式」：换成诚实提示脑 + 派活拦截。
     this.applyBrain();
-    this.studio.setMode(this.mode);
+    this.studio.setMode("llm");
   }
 
   factor(): number {
@@ -169,7 +189,8 @@ export class SettingsStore implements SettingsApi {
 
   getPublic(): PublicSettings {
     return {
-      mode: this.mode,
+      mode: "llm",
+      configured: this.hasLlmConfig(),
       speed: this.speed,
       llm: {
         baseUrl: this.baseUrl,
@@ -195,9 +216,7 @@ export class SettingsStore implements SettingsApi {
   }
 
   async update(patch: SettingsPatch): Promise<PublicSettings> {
-    if (patch.mode !== undefined && patch.mode !== "mock" && patch.mode !== "llm") {
-      throw new Error("mode 只能是 mock 或 llm");
-    }
+    // mode 已废弃：只有真实模式。老脚本传 mode 时静默忽略，不报错。
     if (patch.streaming !== undefined && typeof patch.streaming !== "boolean") {
       throw new Error("streaming 必须是布尔值");
     }
@@ -228,7 +247,6 @@ export class SettingsStore implements SettingsApi {
       throw new Error("toolApproval 只能是 auto / commands / all");
     }
 
-    const nextMode = patch.mode ?? this.mode;
     const nextSpeed = patch.speed ?? this.speed;
     const nextToolsEnabled = patch.toolsEnabled ?? this.toolsEnabled;
     const nextStreaming = patch.streaming ?? this.streaming;
@@ -266,10 +284,6 @@ export class SettingsStore implements SettingsApi {
       }
     }
 
-    if (nextMode === "llm" && !(baseUrl && model)) {
-      throw new Error("切到真实模式前，请先填写 Base URL 和模型名");
-    }
-
     const llmChanged =
       baseUrl !== this.baseUrl ||
       model !== this.model ||
@@ -278,7 +292,7 @@ export class SettingsStore implements SettingsApi {
       nextStreaming !== this.streaming ||
       nextEngine !== this.engine;
 
-    this.mode = nextMode;
+    this.mode = "llm";
     this.speed = nextSpeed;
     this.toolsEnabled = nextToolsEnabled;
     this.streaming = nextStreaming;
@@ -292,8 +306,8 @@ export class SettingsStore implements SettingsApi {
     this.apiKey = apiKey;
     this.keySource = keySource;
 
-    if (llmChanged || patch.mode !== undefined) this.applyBrain();
-    this.studio.setMode(this.mode);
+    if (llmChanged) this.applyBrain();
+    this.studio.setMode("llm");
     this.persist();
     return this.getPublic();
   }
@@ -348,8 +362,17 @@ export class SettingsStore implements SettingsApi {
     return this.baseUrl.length > 0 && this.model.length > 0;
   }
 
+  /** 模型是否已配好（baseUrl + model）。没配好时只能聊天，不能派活。 */
+  isConfigured(): boolean {
+    return this.hasLlmConfig();
+  }
+
   private applyBrain(): void {
     const streamingEnabled = this.streaming;
+    if (!this.hasLlmConfig()) {
+      this.switchable.set(UNCONFIGURED_BRAIN);
+      return;
+    }
     if (this.mode === "llm") {
       const settings: LlmSettings = {
         baseUrl: this.baseUrl,
@@ -397,7 +420,7 @@ export class SettingsStore implements SettingsApi {
     try {
       mkdirSync(dirname(this.file), { recursive: true });
       const payload: PersistedSettings = {
-        mode: this.mode,
+        mode: "llm",
         speed: this.speed,
         toolsEnabled: this.toolsEnabled,
         toolApproval: this.toolApproval,

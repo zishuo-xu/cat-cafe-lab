@@ -8,7 +8,7 @@ import { after, before, describe, test } from "node:test";
 
 import { createCliBrain } from "../src/agents/cli-brain.ts";
 import { CATS } from "../src/agents/personas.ts";
-import type { AgentBrain, LlmSettings, TurnContext } from "../src/domain/types.ts";
+import type { AgentBrain, BrainReport, LlmSettings, TurnContext } from "../src/domain/types.ts";
 import { BUILTIN_TOOLS } from "../src/tools/builtin.ts";
 
 const SETTINGS: LlmSettings = {
@@ -104,14 +104,23 @@ describe("CLI brain", () => {
     if (turns[0]?.kind === "message") assert.match(turns[0].text, /CLI 说你好/);
   });
 
-  test("is_error=true → 降级 fallback", async () => {
+  test("is_error=true → 上报失败信号并返回空轮次，不退回 fallback", async () => {
     const fallback = makeFallback();
+    const reports: BrainReport[] = [];
     const brain = createCliBrain(SETTINGS, fallback.brain, {
       command: makeFakeCli(dir, "error"),
       cwd: dir,
     });
-    await brain.think(makeContext());
-    assert.equal(fallback.calls(), 1);
+    const turns = await brain.think({
+      ...makeContext(),
+      onReport: (report) => reports.push(report),
+    });
+    assert.deepEqual(turns, [], "失败轮不再编造演出台词");
+    assert.equal(fallback.calls(), 0, "失败时不能退回 fallback brain");
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0]?.degraded, true);
+    assert.equal(reports[0]?.failed, true, "必须带上 failed 让 driver 暂停任务");
+    assert.match(reports[0]?.degradeReason ?? "", /is_error/);
   });
 
   test("纯文本输出 → 包成一条 message，不降级", async () => {
@@ -126,17 +135,18 @@ describe("CLI brain", () => {
     if (turns[0]?.kind === "message") assert.match(turns[0].text, /纯文本/);
   });
 
-  test("空 result → 降级", async () => {
+  test("空 result → 返回空轮次，不退回 fallback", async () => {
     const fallback = makeFallback();
     const brain = createCliBrain(SETTINGS, fallback.brain, {
       command: makeFakeCli(dir, "plain"),
       cwd: dir,
     });
-    await brain.think(makeContext());
-    assert.equal(fallback.calls(), 1);
+    const turns = await brain.think(makeContext());
+    assert.deepEqual(turns, [], "空 result 不能编造内容");
+    assert.equal(fallback.calls(), 0, "失败时不能退回 fallback brain");
   });
 
-  test("超时 → kill 并降级", async () => {
+  test("超时 → kill 并返回空轮次，不退回 fallback", async () => {
     const fallback = makeFallback();
     const brain = createCliBrain(SETTINGS, fallback.brain, {
       command: makeFakeCli(dir, "sleep"),
@@ -144,20 +154,22 @@ describe("CLI brain", () => {
       timeoutMs: 800,
     });
     const started = Date.now();
-    await brain.think(makeContext());
+    const turns = await brain.think(makeContext());
     const elapsed = Date.now() - started;
     assert.ok(elapsed < 5000, `应在超时后很快返回，实际 ${elapsed}ms`);
-    assert.equal(fallback.calls(), 1);
+    assert.deepEqual(turns, []);
+    assert.equal(fallback.calls(), 0, "超时不能退回 fallback brain");
   });
 
-  test("命令不存在 → 降级而不是抛错", async () => {
+  test("命令不存在 → 返回空轮次而不是抛错", async () => {
     const fallback = makeFallback();
     const brain = createCliBrain(SETTINGS, fallback.brain, {
       command: "/nonexistent/claude-xyz",
       cwd: dir,
     });
-    await brain.think(makeContext());
-    assert.equal(fallback.calls(), 1);
+    const turns = await brain.think(makeContext());
+    assert.deepEqual(turns, []);
+    assert.equal(fallback.calls(), 0);
   });
 
   test("onDelta 会收到一次草稿", async () => {

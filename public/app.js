@@ -115,6 +115,10 @@ const app = {
   ticker: null,
   /** 卡住判定的时间阈值，优先取 /api/health 的 stallMs。 */
   stallMs: FALLBACK_STALL_MS,
+  /** 模型是否已配好（/api/health.configured）；null = 还没读到。 */
+  configured: null,
+  /** 当前模型名（/api/health.model）。 */
+  model: "",
   /** 全局 LLM 模型名（来自 /api/settings），用于「跟随全局」标签。 */
   globalModel: "",
   /** /api/tools 工具目录（用于来源徽标与按成员权限）。 */
@@ -1030,7 +1034,6 @@ function cacheDom() {
   els.settingsNotice = $("#settings-notice");
   els.settingsError = $("#settings-error");
   els.settingsInfo = $("#settings-info");
-  els.settingsModeInputs = $$('input[name="settings-mode"]');
   els.settingsSpeedInputs = $$('input[name="settings-speed"]');
   els.settingsStreaming = $("#settings-streaming");
   els.settingsStreamingHint = $("#settings-streaming-hint");
@@ -1045,7 +1048,7 @@ function cacheDom() {
   els.settingsTempValue = $("#settings-temp-value");
   els.settingsTestBtn = $("#settings-test-btn");
   els.settingsTestResult = $("#settings-test-result");
-  els.settingsModeWarn = $("#settings-mode-warn");
+  els.modelStatusPill = $("#model-status-pill");
   els.settingsLlmSection = $("#settings-llm-section");
   els.settingsResetBtn = $("#settings-reset-btn");
   els.settingsResetConfirm = $("#settings-reset-confirm");
@@ -1164,6 +1167,31 @@ function cacheDom() {
 
 // ── 网络：初始快照 / SSE / 去重 ─────────────────────────────────────────
 
+/**
+ * 顶部「模型连接状态」。
+ *
+ * 产品只有真实模式：没接上模型时这里必须一眼看出来，而不是让用户以为能用。
+ */
+function renderModelStatus() {
+  const pill = els.modelStatusPill;
+  if (!pill) return;
+  if (app.configured === null) {
+    pill.dataset.state = "unknown";
+    pill.textContent = "模型状态未知";
+    pill.title = "正在读取模型连接状态…";
+    return;
+  }
+  if (app.configured === false) {
+    pill.dataset.state = "unconfigured";
+    pill.textContent = "模型未配置 · 去设置";
+    pill.title = "还没接上模型：现在只能聊天，派活前请先配置连接";
+    return;
+  }
+  pill.dataset.state = "connected";
+  pill.textContent = app.model ? `模型：${app.model}` : "模型已连接";
+  pill.title = `${app.model || "模型已连接"}（点击打开设置）`;
+}
+
 async function refreshHealth() {
   try {
     const response = await fetch("/api/health", {
@@ -1174,6 +1202,9 @@ async function refreshHealth() {
     const payload = await response.json();
     const stallMs = Number(payload?.stallMs);
     if (Number.isFinite(stallMs) && stallMs > 0) app.stallMs = stallMs;
+    app.configured = Boolean(payload?.configured);
+    app.model = typeof payload?.model === "string" ? payload.model : "";
+    renderModelStatus();
   } catch {
     /* /api/health 不可用时沿用默认阈值 */
   }
@@ -1313,8 +1344,7 @@ function paintChrome() {
   const safeSeq = Number.isFinite(seq) && seq > 0 ? seq : 0;
   for (const node of els.seqs ?? []) node.textContent = `seq ${safeSeq}`;
 
-  const mode = snapshot?.mode === "llm" ? "真实 LLM 模式" : "演出模式";
-  for (const node of els.modes ?? []) node.textContent = mode;
+  renderModelStatus();
 
   const room = currentRoom();
   if (els.roomName && room) els.roomName.textContent = room.name;
@@ -1338,7 +1368,6 @@ function renderRoster() {
 
   const workTask = latestActiveTask();
   const statuses = cats.map((cat) => catState(cat.id));
-  const mode = app.state?.mode ?? "mock";
   const sig = cats
     .map((cat, index) => {
       const state = statuses[index];
@@ -1350,7 +1379,6 @@ function renderRoster() {
         state,
         state === "working" ? workTask?.stage : "",
         cat.llmModel ?? "",
-        mode,
         app.globalModel,
       ].join(":");
     })
@@ -1411,7 +1439,7 @@ function renderRoster() {
         const model = catModelLabel(cat);
         return h("span", {
           class: "cat-model-tag",
-          "data-mode": app.state?.mode === "llm" ? "llm" : "mock",
+          "data-mode": "llm",
           title: model.title,
           text: model.text,
         });
@@ -1424,10 +1452,6 @@ function renderRoster() {
 
 /** 名册/设置里的「当前模型」标签。 */
 function catModelLabel(cat) {
-  const mode = app.state?.mode ?? "mock";
-  if (mode !== "llm") {
-    return { text: "演出", title: "演出模式：不调用模型" };
-  }
   const override = String(cat?.llmModel ?? "").trim();
   if (override) return { text: override, title: `模型覆盖：${override}` };
   const globalModel = String(app.globalModel ?? "").trim();
@@ -1538,16 +1562,9 @@ function renderTasks() {
                 class: "task-health-badge",
                 "data-degraded": String(task.health.degradedCount),
                 title:
-                  `模型调用降级 ${task.health.degradedCount} 次，产出可能不可信` +
+                  `模型调用失败 ${task.health.degradedCount} 次，任务很可能已被暂停` +
                   (task.health.lastDegradeReason ? `。原因：${task.health.lastDegradeReason}` : ""),
-                text: `⚠ 降级 ${task.health.degradedCount}`,
-              })
-            : null,
-          task.scenarioFallback
-            ? h("span", {
-                class: "task-fallback-badge",
-                title: "需求没有匹配的演示剧本，本轮是近似演出，决策不会写进共享记忆",
-                text: "近似演出",
+                text: `⚠ 调用失败 ${task.health.degradedCount}`,
               })
             : null,
           closedUnreviewed
@@ -1656,15 +1673,8 @@ function renderTaskSearchResults(query) {
             task.health?.degradedCount > 0
               ? h("span", {
                   class: "task-health-badge",
-                  title: `模型降级 ${task.health.degradedCount} 次，产出可能不可信`,
-                  text: `⚠ 降级 ${task.health.degradedCount}`,
-                })
-              : null,
-            task.scenarioFallback
-              ? h("span", {
-                  class: "task-fallback-badge",
-                  title: "需求没有匹配的演示剧本，本轮是近似演出，决策不会写进共享记忆",
-                  text: "近似演出",
+                  title: `模型调用失败 ${task.health.degradedCount} 次`,
+                  text: `⚠ 调用失败 ${task.health.degradedCount}`,
                 })
               : null,
             task.status === "done" && lastReviewVerdictForTask(task.id) === "request_changes"
@@ -4283,6 +4293,13 @@ function insertMention(catId) {
 
 function openNewTaskModal(prefill = "") {
   if (!els.modal) return;
+  // 只有真实模式：没接上模型就别让人以为能派活。
+  if (app.configured === false) {
+    toast("先接上模型才能派活：在设置里填 Base URL 和模型名。", "error");
+    openSettings();
+    void refreshHealth();
+    return;
+  }
   hideFormError();
   if (els.newTaskRoomHint) {
     const room = currentRoom();
@@ -4354,7 +4371,17 @@ async function createTask() {
         ...(els.taskScenario?.value ? { scenarioId: els.taskScenario.value } : {}),
       }),
     });
-    if (!response.ok) throw new Error(await readApiError(response));
+    if (!response.ok) {
+      const detail = await readApiError(response);
+      if (response.status === 412) {
+        closeNewTaskModal();
+        toast(`${detail}`, "error");
+        openSettings();
+        void refreshHealth();
+        return;
+      }
+      throw new Error(detail);
+    }
     await response.json();
     closeNewTaskModal();
     // 不自动「聚焦」新任务：进度面板默认跟最新未完成任务即可，避免多出一个「看全部」。
@@ -4390,7 +4417,7 @@ async function refreshGlobalModel() {
       renderRoster();
     }
   } catch {
-    /* 设置接口未就绪时名册显示「演出」/「跟随全局」即可 */
+    /* 设置接口未就绪时名册显示「跟随全局」即可 */
   }
 }
 
@@ -4430,6 +4457,12 @@ async function openSettings() {
   updateSettingsButtons();
 
   if (!modal.open) modal.showModal();
+  // 没接上模型时，直接把人带到「模型连接」——这是唯一需要先做的事。
+  if (app.configured === false) {
+    window.setTimeout(() => {
+      els.settingsLlmSection?.scrollIntoView({ block: "start", behavior: "auto" });
+    }, 60);
+  }
   void loadScenarios();
   void loadMcp();
   void loadToolCatalog();
@@ -4494,7 +4527,6 @@ async function loadSettings() {
 }
 
 function resetSettingsForm() {
-  setModeRadios(app.state?.mode === "llm" ? "llm" : "mock");
   setSpeedRadios("normal");
   settingsState.streamingAvailable = null;
   if (els.settingsStreaming) {
@@ -4503,7 +4535,7 @@ function resetSettingsForm() {
   }
   if (els.settingsStreamingHint) {
     els.settingsStreamingHint.textContent =
-      "开启后真实模式下成员的话会逐段出现；关闭则等整段说完再显示。演出模式不受影响。";
+      "开启后成员的话会逐段出现（首句更快）；关闭则等整段说完再显示。";
     delete els.settingsStreamingHint.dataset.missing;
   }
   if (els.settingsBaseUrl) els.settingsBaseUrl.value = "";
@@ -4529,7 +4561,6 @@ function fillSettingsForm(data) {
   const speed = ["slow", "normal", "fast"].includes(data?.speed) ? data.speed : "normal";
   const llm = data?.llm ?? {};
 
-  setModeRadios(mode);
   setSpeedRadios(speed);
   const streamingAvailable = typeof data?.streaming === "boolean";
   settingsState.streamingAvailable = streamingAvailable;
@@ -4540,7 +4571,7 @@ function fillSettingsForm(data) {
   if (els.settingsStreamingHint) {
     if (streamingAvailable) {
       els.settingsStreamingHint.textContent =
-        "开启后真实模式下成员的话会逐段出现；关闭则等整段说完再显示。演出模式不受影响。";
+        "开启后成员的话会逐段出现（首句更快）；关闭则等整段说完再显示。";
       delete els.settingsStreamingHint.dataset.missing;
     } else {
       els.settingsStreamingHint.textContent =
@@ -4588,11 +4619,6 @@ function fillSettingsForm(data) {
   renderModelProfiles();
 }
 
-function setModeRadios(mode) {
-  for (const input of els.settingsModeInputs) input.checked = input.value === mode;
-  syncSettingsSegments();
-}
-
 function setSpeedRadios(speed) {
   for (const input of els.settingsSpeedInputs) input.checked = input.value === speed;
   syncSettingsSegments();
@@ -4604,10 +4630,6 @@ function syncSettingsSegments() {
     const input = segment.querySelector('input[type="radio"]');
     segment.classList.toggle("is-active", Boolean(input?.checked));
   }
-}
-
-function currentModeChoice() {
-  return els.settingsModeInputs.find((input) => input.checked)?.value ?? "mock";
 }
 
 function currentSpeedChoice() {
@@ -4687,7 +4709,7 @@ function renderSettingsReadonly(data) {
     ["端口", data?.port != null ? String(data.port) : "—"],
     ["Node", data?.node ?? "—"],
     ["启动时间", data?.startedAt ? fmtFull(data.startedAt) : "—"],
-    ["当前模式", mode === "llm" ? "真实模式（LLM）" : "演出模式"],
+    ["当前模型", data?.llm?.model || "未配置"],
     ["stallMs", Number.isFinite(stallMs) ? `${stallMs} ms` : `${app.stallMs} ms（本地阈值）`],
   ];
 
@@ -4780,34 +4802,11 @@ function updateSettingsButtons() {
 function onSettingsChange(event) {
   const target = event.target;
   if (!(target instanceof HTMLInputElement)) return;
-  if (target.name === "settings-mode") {
-    syncSettingsSegments();
-    onSettingsModeChange();
-  } else if (target.name === "settings-speed") {
+  if (target.name === "settings-speed") {
     syncSettingsSegments();
   } else if (target === els.settingsToolsToggle) {
     updateToolsHint();
   }
-}
-
-function onSettingsModeChange() {
-  const mode = currentModeChoice();
-  const baseUrl = els.settingsBaseUrl?.value.trim() ?? "";
-  const model = els.settingsModel?.value.trim() ?? "";
-  if (mode !== "llm") {
-    hideModeWarn();
-    return;
-  }
-  if (baseUrl && model) {
-    hideModeWarn();
-    return;
-  }
-  showModeWarn("真实模式需要先填写 Base URL 和模型名，已定位到 LLM 连接。");
-  els.settingsLlmSection?.scrollIntoView({
-    block: "center",
-    behavior: prefersReducedMotion() ? "auto" : "smooth",
-  });
-  els.settingsBaseUrl?.focus({ preventScroll: true });
 }
 
 function onSettingsInput(event) {
@@ -4823,19 +4822,10 @@ function onSettingsInput(event) {
     }
     return;
   }
-  if (
-    (target === els.settingsBaseUrl || target === els.settingsModel) &&
-    currentModeChoice() === "llm" &&
-    els.settingsBaseUrl?.value.trim() &&
-    els.settingsModel?.value.trim()
-  ) {
-    hideModeWarn();
-  }
 }
 
 function collectSettingsPatch() {
   const patch = {
-    mode: currentModeChoice(),
     speed: currentSpeedChoice(),
     toolsEnabled: els.settingsToolsToggle ? Boolean(els.settingsToolsToggle.checked) : true,
     toolApproval: els.settingsToolApproval?.value ?? "commands",
@@ -4910,7 +4900,8 @@ async function testLlmConnection() {
 
   if (!baseUrl || !model) {
     setTestResult("error", "先填 Base URL 和模型名再测试。");
-    onSettingsModeChange();
+    els.settingsLlmSection?.scrollIntoView({ block: "center", behavior: "smooth" });
+    els.settingsBaseUrl?.focus({ preventScroll: true });
     return;
   }
 

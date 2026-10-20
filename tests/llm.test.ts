@@ -21,6 +21,7 @@ import type {
   Member,
   AgentBrain,
   AgentTurn,
+  BrainReport,
   LlmSettings,
   Message,
   Role,
@@ -361,8 +362,8 @@ describe("llm-brain · 正常解析", () => {
   });
 });
 
-describe("llm-brain · 失败降级", () => {
-  test("模型输出坏 JSON → 降级 fallback，且日志不含 apiKey", async () => {
+describe("llm-brain · 失败暂停（不再退回演出）", () => {
+  test("模型输出坏 JSON → 上报失败并返回空轮次，且日志不含 apiKey", async () => {
     // 截断的数组：JSON.parse 一定失败。
     const content = '[{"kind":"message","text":}]';
 
@@ -370,12 +371,19 @@ describe("llm-brain · 失败降级", () => {
       (_req, res) => sendOpenAi(res, content),
       async (fake) => {
         const fallback = makeFallback();
+        const reports: BrainReport[] = [];
         const brain = createLlmBrain({ ...SETTINGS, baseUrl: fake.baseUrl }, fallback.brain);
 
-        const { result, warns } = await withWarnCapture(() => brain.think(makeContext()));
+        const { result, warns } = await withWarnCapture(() =>
+          brain.think(makeContext({ onReport: (report) => reports.push(report) })),
+        );
 
-        assert.equal(fallback.calls(), 1);
-        assert.deepEqual(result, [{ kind: "message", text: "（fallback）兜底台词" }]);
+        assert.deepEqual(result, [], "失败轮不再编造演出台词");
+        assert.equal(fallback.calls(), 0, "失败时不能退回 fallback brain");
+        assert.equal(reports.length, 1);
+        assert.equal(reports[0]?.degraded, true);
+        assert.equal(reports[0]?.failed, true, "必须带 failed 让 driver 暂停任务");
+        assert.match(reports[0]?.degradeReason ?? "", /AgentTurn/);
         assert.equal(warns.length, 1, "每次失败只打一行 warn");
         assert.match(warns[0] ?? "", /降级 fallback/);
         assert.ok(
@@ -404,20 +412,24 @@ describe("llm-brain · 失败降级", () => {
     );
   });
 
-  test("空输出 / [DONE] 之类仍会降级", async () => {
+  test("空输出 / [DONE] 之类 → 上报失败并返回空数组", async () => {
     await withFake(
       (_req, res) => sendOpenAi(res, "   "),
       async (fake) => {
         const fallback = makeFallback();
+        const reports: BrainReport[] = [];
         const brain = createLlmBrain({ ...SETTINGS, baseUrl: fake.baseUrl }, fallback.brain);
-        const turns = await brain.think(makeContext());
-        assert.equal(fallback.calls(), 1);
-        assert.equal(turns[0]?.kind, "message");
+        const turns = await brain.think(
+          makeContext({ onReport: (report) => reports.push(report) }),
+        );
+        assert.deepEqual(turns, []);
+        assert.equal(fallback.calls(), 0);
+        assert.equal(reports[0]?.failed, true);
       },
     );
   });
 
-  test("HTTP 500 → 降级", async () => {
+  test("HTTP 500 → 上报失败并返回空数组", async () => {
     await withFake(
       (_req, res) => {
         res.writeHead(500, { "content-type": "application/json" });
@@ -425,18 +437,23 @@ describe("llm-brain · 失败降级", () => {
       },
       async (fake) => {
         const fallback = makeFallback();
+        const reports: BrainReport[] = [];
         const brain = createLlmBrain({ ...SETTINGS, baseUrl: fake.baseUrl }, fallback.brain);
 
-        const { result, warns } = await withWarnCapture(() => brain.think(makeContext()));
+        const { result, warns } = await withWarnCapture(() =>
+          brain.think(makeContext({ onReport: (report) => reports.push(report) })),
+        );
 
-        assert.equal(fallback.calls(), 1);
-        assert.equal(result[0]?.kind, "message");
+        assert.deepEqual(result, []);
+        assert.equal(fallback.calls(), 0);
+        assert.equal(reports[0]?.failed, true);
+        assert.match(reports[0]?.degradeReason ?? "", /HTTP 500/);
         assert.match(warns[0] ?? "", /HTTP 500/);
       },
     );
   });
 
-  test("响应缺少 choices[0].message.content → 降级", async () => {
+  test("响应缺少 choices[0].message.content → 上报失败并返回空数组", async () => {
     await withFake(
       (_req, res) => {
         res.writeHead(200, { "content-type": "application/json" });
@@ -444,14 +461,19 @@ describe("llm-brain · 失败降级", () => {
       },
       async (fake) => {
         const fallback = makeFallback();
+        const reports: BrainReport[] = [];
         const brain = createLlmBrain({ ...SETTINGS, baseUrl: fake.baseUrl }, fallback.brain);
-        await brain.think(makeContext());
-        assert.equal(fallback.calls(), 1);
+        const turns = await brain.think(
+          makeContext({ onReport: (report) => reports.push(report) }),
+        );
+        assert.deepEqual(turns, []);
+        assert.equal(fallback.calls(), 0);
+        assert.equal(reports[0]?.failed, true);
       },
     );
   });
 
-  test("超时 → 降级，且不会卡住 20s", async () => {
+  test("超时 → 上报失败，且不会卡住 20s", async () => {
     // 假端点收到请求后永不响应。
     await withFake(
       () => {
@@ -459,6 +481,7 @@ describe("llm-brain · 失败降级", () => {
       },
       async (fake) => {
         const fallback = makeFallback();
+        const reports: BrainReport[] = [];
         const brain = createLlmBrain(
           { ...SETTINGS, baseUrl: fake.baseUrl },
           fallback.brain,
@@ -466,20 +489,24 @@ describe("llm-brain · 失败降级", () => {
         );
 
         const startedAt = Date.now();
-        const { result, warns } = await withWarnCapture(() => brain.think(makeContext()));
+        const { result, warns } = await withWarnCapture(() =>
+          brain.think(makeContext({ onReport: (report) => reports.push(report) })),
+        );
         const elapsed = Date.now() - startedAt;
 
-        assert.equal(fallback.calls(), 1);
-        assert.equal(result[0]?.kind, "message");
-        assert.ok(elapsed < 3000, `超时应快速降级，实际 ${elapsed}ms`);
+        assert.deepEqual(result, []);
+        assert.equal(fallback.calls(), 0);
+        assert.equal(reports[0]?.failed, true);
+        assert.ok(elapsed < 3000, `超时应快速失败，实际 ${elapsed}ms`);
         assert.match(warns[0] ?? "", /超时/);
         assert.ok(!(warns[0] ?? "").includes("sk-test-secret-key"));
       },
     );
   });
 
-  test("网络错误（端点不可达）→ 降级", async () => {
+  test("网络错误（端点不可达）→ 上报失败并返回空数组", async () => {
     const fallback = makeFallback();
+    const reports: BrainReport[] = [];
     const brain = createLlmBrain(
       // 127.0.0.1:1 几乎不可能有服务在听。
       { ...SETTINGS, baseUrl: "http://127.0.0.1:1/v1" },
@@ -487,8 +514,12 @@ describe("llm-brain · 失败降级", () => {
       { timeoutMs: 800 },
     );
 
-    const { warns } = await withWarnCapture(() => brain.think(makeContext()));
-    assert.equal(fallback.calls(), 1);
+    const { result, warns } = await withWarnCapture(() =>
+      brain.think(makeContext({ onReport: (report) => reports.push(report) })),
+    );
+    assert.deepEqual(result, []);
+    assert.equal(fallback.calls(), 0);
+    assert.equal(reports[0]?.failed, true);
     assert.match(warns[0] ?? "", /网络错误|降级 fallback/);
   });
 });
@@ -1202,7 +1233,7 @@ describe("reasoning 型模型的 token 预算", () => {
     assert.ok((requests[1]?.max_tokens ?? 0) > (requests[0]?.max_tokens ?? 0));
   });
 
-  test("连续两次截断后降级 fallback，并说明原因", async () => {
+  test("连续两次截断后上报失败（截断原因），不退回 fallback", async () => {
     const warns: string[] = [];
     const originalWarn = console.warn;
     console.warn = (...args: unknown[]) => warns.push(args.join(" "));
@@ -1215,13 +1246,21 @@ describe("reasoning 型模型的 token 预算", () => {
           { status: 200, headers: { "content-type": "application/json" } },
         )) as unknown as typeof fetch;
 
+      const fallback = makeFallback();
+      const reports: BrainReport[] = [];
       const brain = createLlmBrain(
         { baseUrl: "https://example.test/v1", model: "m", apiKey: "k", temperature: 0.7 },
-        makeFallback().brain,
+        fallback.brain,
         { fetchImpl: fake },
       );
-      const turns = await brain.think(makeThinkingCtx());
-      assert.ok(turns.length >= 1, "应降级到 fallback");
+      const turns = await brain.think({
+        ...makeThinkingCtx(),
+        onReport: (report) => reports.push(report),
+      });
+      assert.deepEqual(turns, [], "截断两次后不再编造演出台词");
+      assert.equal(fallback.calls(), 0);
+      assert.equal(reports[0]?.failed, true);
+      assert.match(reports[0]?.degradeReason ?? "", /截断/);
       assert.ok(warns.some((line) => line.includes("截断")), warns.join("\n"));
     } finally {
       console.warn = originalWarn;
@@ -1451,7 +1490,7 @@ describe("流式被提前断开时退回非流式重试", () => {
     assert.equal(reports[0]?.degraded, undefined);
   });
 
-  test("非流式也拿不到就仍然降级（不无限重试）", async () => {
+  test("流式与非流式都拿不到 → 上报失败信号 + 空数组（不无限重试）", async () => {
     let calls = 0;
     const fake = (async () => {
       calls += 1;
@@ -1459,14 +1498,22 @@ describe("流式被提前断开时退回非流式重试", () => {
     }) as unknown as typeof fetch;
 
     const fallback = makeFallback();
+    const reports: BrainReport[] = [];
     const brain = createLlmBrain(
       { baseUrl: "https://example.test/v1", model: "m", apiKey: "k", temperature: 0.7 },
       fallback.brain,
       { fetchImpl: fake, streaming: true },
     );
-    const turns = await brain.think(makeContext({ onDelta: () => undefined }));
+    const turns = await brain.think(
+      makeContext({
+        onDelta: () => undefined,
+        onReport: (report) => reports.push(report),
+      }),
+    );
     assert.equal(calls, 2, "流式一次 + 非流式一次，不再多试");
-    assert.equal(fallback.calls(), 1, "最终仍降级");
-    assert.match(String((turns[0] as { text?: string }).text), /fallback/);
+    assert.deepEqual(turns, [], "两次都失败时返回空轮次");
+    assert.equal(fallback.calls(), 0, "不再退回演出台词");
+    assert.equal(reports[0]?.failed, true, "必须上报 failed 让 driver 暂停任务");
+    assert.equal(reports[0]?.degraded, true);
   });
 });

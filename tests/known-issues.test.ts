@@ -101,37 +101,49 @@ async function postTask(base: string, body: Record<string, unknown>): Promise<Ta
   return (await res.json()) as Task;
 }
 
-describe("已知问题 · 剧本零分回落", () => {
-  test("需求没命中剧本时标记 scenarioFallback，并留一条系统说明", async () => {
+describe("已知问题 · 剧本只作示例素材（零分回落已废弃）", () => {
+  /** 字段已从 Task 删除；用属性存在性断言旧行为确实不存在了。 */
+  function scenarioFallbackOf(task: Task): unknown {
+    return (task as unknown as Record<string, unknown>)["scenarioFallback"];
+  }
+
+  test("需求没命中剧本时不再标记 scenarioFallback，也不发「近似演出」系统说明", async () => {
     const harness = await startHarness();
     try {
       const task = await postTask(harness.base, {
         roomId: "room_cafe",
         brief: UNMATCHED_BRIEF,
       });
-      assert.equal(task.scenarioFallback, true, "没命中剧本应标记 fallback");
-
-      const warn = harness.studio.state.messages.find(
-        (message) => message.taskId === task.id && message.author === "system",
+      // 只有真实模式：剧本只是示例素材，不再有「没命中就近似演出」的概念。
+      assert.equal(scenarioFallbackOf(task), undefined, "不应再标记 scenarioFallback");
+      assert.ok(
+        typeof task.scenarioId === "string" && task.scenarioId.length > 0,
+        "仍应记录一个示例剧本 id 供历史展示",
       );
-      assert.ok(warn, "应留一条系统消息说明这是近似演出");
-      assert.match(warn?.text ?? "", /没有匹配的演示剧本/);
+
+      const fallbackNote = harness.studio.state.messages.find(
+        (message) =>
+          message.taskId === task.id &&
+          message.author === "system" &&
+          /演示剧本|近似演出/.test(message.text),
+      );
+      assert.equal(fallbackNote, undefined, "不应再留「近似演出」系统消息");
     } finally {
       await harness.close();
     }
   });
 
-  test("命中剧本时不会标记 fallback", async () => {
+  test("命中剧本时同样不会标记 fallback", async () => {
     const harness = await startHarness();
     try {
       const task = await postTask(harness.base, { roomId: "room_cafe", brief: MATCHED_BRIEF });
-      assert.equal(task.scenarioFallback, undefined, "命中剧本不该有 fallback 标记");
+      assert.equal(scenarioFallbackOf(task), undefined, "不应有 fallback 标记");
     } finally {
       await harness.close();
     }
   });
 
-  test("显式指定剧本时不走回落判定（哪怕需求匹配不上）", async () => {
+  test("显式指定剧本时 scenarioId 以用户为准（需求匹配不上也一样）", async () => {
     const harness = await startHarness();
     try {
       const task = await postTask(harness.base, {
@@ -139,14 +151,14 @@ describe("已知问题 · 剧本零分回落", () => {
         brief: UNMATCHED_BRIEF,
         scenarioId: "export_csv",
       });
-      assert.equal(task.scenarioFallback, undefined, "用户显式选的剧本不算回落");
+      assert.equal(scenarioFallbackOf(task), undefined, "不应有 fallback 标记");
       assert.equal(task.scenarioId, "export_csv");
     } finally {
       await harness.close();
     }
   });
 
-  test("近似剧本跑完不写场景记忆，只留一条诚实的教训", async () => {
+  test("没命中剧本的任务按普通任务写记忆，不再留 fallback-scenario 教训", async () => {
     const harness = await startHarness();
     try {
       const task = await postTask(harness.base, { roomId: "room_cafe", brief: UNMATCHED_BRIEF });
@@ -155,15 +167,19 @@ describe("已知问题 · 剧本零分回落", () => {
       const entries = harness.studio.state.memory.filter(
         (entry) => entry.sourceTaskId === task.id,
       );
-      const polluted = entries.filter((entry) => entry.kind === "decision");
-      assert.equal(
-        polluted.length,
-        0,
-        `近似剧本不该写入决策记忆，实际：${JSON.stringify(polluted.map((entry) => entry.title))}`,
+      const fallbackLessons = entries.filter((entry) =>
+        entry.tags.includes("fallback-scenario"),
       );
-      const honest = entries.filter((entry) => entry.tags.includes("fallback-scenario"));
-      assert.equal(honest.length, 1, "应留一条 fallback-scenario 教训");
-      assert.match(honest[0]?.title ?? "", /没有匹配的演示剧本/);
+      assert.equal(
+        fallbackLessons.length,
+        0,
+        `不再有「近似演出」专用教训，实际：${JSON.stringify(fallbackLessons.map((entry) => entry.title))}`,
+      );
+      const decisions = entries.filter((entry) => entry.kind === "decision");
+      assert.ok(
+        decisions.length >= 1,
+        `剧本只是素材，任务仍应按正常交付写决策记忆，实际：${JSON.stringify(entries.map((entry) => entry.title))}`,
+      );
     } finally {
       await harness.close();
     }

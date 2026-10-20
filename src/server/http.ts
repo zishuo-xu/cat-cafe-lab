@@ -145,10 +145,7 @@ export function parseMentions(text: string, studio: Studio, roomId: RoomId): Mem
  * 跑完还往共享记忆里写 token 过期策略 —— 需求被一个不相干的剧本代表，
  * 新手会直接判断「它根本没懂」。
  */
-function pickScenario(
-  scenarios: Scenario[],
-  brief: string,
-): { id: string; matched: boolean } {
+function pickScenario(scenarios: Scenario[], brief: string): { id: string } {
   const text = brief.toLowerCase();
   let best: { id: string; score: number } | null = null;
   for (const scenario of scenarios) {
@@ -160,8 +157,7 @@ function pickScenario(
     if (!best || score > best.score) best = { id: scenario.id, score };
   }
   const fallbackId = scenarios[0]?.id ?? "remember_me";
-  if (!best) return { id: fallbackId, matched: false };
-  return { id: best.id, matched: best.score > 0 };
+  return { id: best?.id ?? fallbackId };
 }
 
 const CAT_TEXT_FIELDS = ["name", "title", "persona", "catchphrase", "greeting", "accent"] as const;
@@ -256,9 +252,15 @@ export function createHttpServer(deps: HttpDeps): Server {
     const method = req.method ?? "GET";
 
     if (method === "GET" && pathname === "/api/health") {
+      const publicSettings = settingsApi?.getPublic();
       json(res, 200, {
         ok: true,
-        mode: studio.state.mode ?? deps.mode ?? "mock",
+        // 前端不再区分「演出/真实」；mode 字段保留兼容，恒为 llm。
+        mode: studio.state.mode ?? deps.mode ?? "llm",
+        // 没接上模型时只能聊天，派活会被 412 拦下（见 POST /api/tasks）。
+        configured: publicSettings ? publicSettings.configured : true,
+        ...(publicSettings?.llm.model ? { model: publicSettings.llm.model } : {}),
+        ...(publicSettings ? { engine: publicSettings.engine } : {}),
         seq: studio.state.seq,
         stallMs: deps.stallMs ?? driver.stallMs ?? 12000,
         settings: Boolean(settingsApi),
@@ -1181,6 +1183,14 @@ export function createHttpServer(deps: HttpDeps): Server {
     }
 
     if (method === "POST" && pathname === "/api/tasks") {
+      // 只有真实模式：没接上模型就不能派活。否则会建出一个「假装在干活」的任务。
+      if (settingsApi && !settingsApi.getPublic().configured) {
+        json(res, 412, {
+          error: "还没接上模型：先在设置里填 Base URL 和模型名，再派活。",
+          code: "llm_unconfigured",
+        });
+        return;
+      }
       const body = (await readBody(req)) as {
         roomId?: unknown;
         brief?: unknown;
@@ -1217,19 +1227,12 @@ export function createHttpServer(deps: HttpDeps): Server {
         return;
       }
       // 显式指定剧本时以用户为准；否则按关键词匹配，并记住有没有真的命中。
-      const explicitScenarioId =
+      // 剧本只作为「示例素材」保留：真实任务不再依赖剧本，scenarioId 仅作历史标识。
+      const picked =
         typeof body.scenarioId === "string" && scenarios.some((s) => s.id === body.scenarioId)
-          ? body.scenarioId
-          : null;
-      const picked = explicitScenarioId
-        ? { id: explicitScenarioId, matched: true }
-        : pickScenario(scenarios, brief);
-      const task = studio.createTask({
-        roomId,
-        brief,
-        scenarioId: picked.id,
-        ...(picked.matched ? {} : { scenarioFallback: true }),
-      });
+          ? { id: body.scenarioId }
+          : pickScenario(scenarios, brief);
+      const task = studio.createTask({ roomId, brief, scenarioId: picked.id });
       // 读写 git 工作区：任务开始前建分支（工作树不干净时只记录提示，不阻塞任务）。
       const room = studio.getRoom(roomId);
       if (room && workspaces) {
@@ -1256,18 +1259,6 @@ export function createHttpServer(deps: HttpDeps): Server {
         text: brief,
         taskId: task.id,
       });
-      if (!picked.matched) {
-        studio.appendMessage({
-          roomId,
-          author: "system",
-          kind: "system",
-          taskId: task.id,
-          text:
-            `这个需求没有匹配的演示剧本，本轮用「${picked.id}」近似演出：` +
-            `过程可以参考，但台词和决策跟你的需求无关，也不会写进共享记忆。` +
-            `想看到针对性的演出，可以在「＋ 新任务」里显式选一个剧本。`,
-        });
-      }
       driver.submit({ type: "task_created", roomId, taskId: task.id });
       json(res, 201, task);
       return;

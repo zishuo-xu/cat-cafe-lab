@@ -157,15 +157,6 @@ export interface Task {
   /** git 工作流状态（仅 git 工作区）。 */
   git?: TaskGit;
   /**
-   * 这个任务是「近似剧本」：需求没有匹配到任何剧本，系统退而用第一个剧本演出。
-   *
-   * 为什么需要标记：内置剧本各自带着自己的决策/教训。拿「记住我」的剧本来演
-   * 「优化首页加载速度」，跑完会把 token 过期策略写进共享记忆，污染后续任务的上下文。
-   * 标记之后：演出照常进行（否则无 key 时什么都看不到），但**不写场景记忆**，
-   * 并在界面上明说这一轮不可信。
-   */
-  scenarioFallback?: boolean;
-  /**
    * 任务的模型健康度。
    *
    * 背景：模型调用失败会静默降级回 mock 台词，任务照常跑完，但产出质量掉档。
@@ -483,6 +474,13 @@ export interface BrainReport {
   degradeReason?: string;
   retried?: boolean;
   error?: string;
+  /**
+   * 本轮彻底失败（模型连不上 / 响应不可解析）。
+   *
+   * 产品只有真实模式：「失败」不能退回演出台词假装还在干活，
+   * driver 看到这个标记会**暂停任务**，把决定权交回给人。
+   */
+  failed?: boolean;
 }
 
 export interface AgentBrain {
@@ -758,7 +756,10 @@ export interface ApprovalGate {
 
 /** 可安全回传给前端 / 落盘的设置（绝不含 apiKey）。 */
 export interface PublicSettings {
+  /** 已废弃：现在只有真实模式。保留字段兼容老前端/脚本，恒为 "llm"。 */
   mode: BrainMode;
+  /** 是否已配好模型（baseUrl + model）。没配好时不能派活，只能聊天。 */
+  configured: boolean;
   speed: Speed;
   llm: {
     baseUrl: string;
@@ -798,6 +799,7 @@ export interface PublicSettings {
 }
 
 export interface SettingsPatch {
+  /** @deprecated 只有真实模式；传了会被忽略（保留字段兼容老脚本）。 */
   mode?: BrainMode;
   speed?: Speed;
   toolsEnabled?: boolean;

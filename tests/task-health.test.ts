@@ -21,7 +21,7 @@ function makeStudio(): Studio {
 }
 
 describe("任务健康度：降级可见", () => {
-  test("降级累加到任务上，并留下一条系统消息", () => {
+  test("降级只累加 health，不再自己发系统消息", () => {
     const studio = makeStudio();
     const task = studio.createTask({
       roomId: ROOM_ID,
@@ -45,17 +45,21 @@ describe("任务健康度：降级可见", () => {
     assert.equal(updated?.health?.degradedCount, 1, "应记 1 次降级");
     assert.equal(updated?.health?.lastDegradeReason, "LLM_MODEL 缺失");
     assert.equal(updated?.health?.lastDegradeStage, "working");
+    assert.equal(updated?.health?.warned, true, "健康度内部仍标记已提醒");
 
+    // 新语义：用户可见的提示由 driver 在暂停任务时统一发，这里不再重复刷屏。
     const systemMessages = studio.state.messages.filter(
-      (message) => message.taskId === task.id && message.author === "system",
+      (message) =>
+        message.taskId === task.id &&
+        message.author === "system" &&
+        /可能不可信/.test(message.text),
     );
-    assert.equal(systemMessages.length, 1, "第一次降级应留一条系统消息");
-    assert.match(systemMessages[0]?.text ?? "", /可能不可信/);
+    assert.equal(systemMessages.length, 0, "降级不应再自己发「产出可能不可信」系统消息");
 
     studio.close();
   });
 
-  test("多次降级只提示一次，但计数继续累加", () => {
+  test("多次降级计数继续累加，且不会发系统消息", () => {
     const studio = makeStudio();
     const task = studio.createTask({
       roomId: ROOM_ID,
@@ -77,11 +81,15 @@ describe("任务健康度：降级可见", () => {
     const updated = studio.getTask(task.id);
     assert.equal(updated?.health?.degradedCount, 5, "5 次降级都要计数");
     assert.equal(updated?.health?.lastDegradeReason, "原因 4", "记录最近一次原因");
+    assert.equal(updated?.health?.warned, true);
 
     const systemMessages = studio.state.messages.filter(
-      (message) => message.taskId === task.id && message.author === "system",
+      (message) =>
+        message.taskId === task.id &&
+        message.author === "system" &&
+        /可能不可信|模型调用失败/.test(message.text),
     );
-    assert.equal(systemMessages.length, 1, "多次降级只能提示一次，避免刷屏");
+    assert.equal(systemMessages.length, 0, "健康度汇总不再产生用户可见消息");
 
     studio.close();
   });
@@ -127,8 +135,8 @@ describe("任务健康度：降级可见", () => {
   });
 });
 
-describe("任务健康度：端到端（brain 降级 → 任务可见）", () => {
-  test("brain 通过 onReport 上报降级后，任务上能看到计数和系统消息", async () => {
+describe("任务健康度：端到端（brain 失败 → 任务暂停）", () => {
+  test("brain 通过 onReport 上报 failed 后，任务暂停并留下失败原因", async () => {
     const studio = makeStudio();
     const task = studio.createTask({
       roomId: ROOM_ID,
@@ -136,8 +144,8 @@ describe("任务健康度：端到端（brain 降级 → 任务可见）", () =>
       scenarioId: "remember_me",
     });
 
-    // 模拟真实模式的 brain：第一轮就上报降级，然后退回演出台词。
-    // 这条链路才是生产路径：brain.onReport → driver 收集 → finishLlmCall → Task.health
+    // 模拟真实模式的 brain：第一轮就上报彻底失败。
+    // 生产链路：brain.onReport({failed}) → driver 收集 → pauseTaskForModelFailure。
     const brain: AgentBrain = {
       mode: "llm",
       async think(ctx) {
@@ -145,9 +153,10 @@ describe("任务健康度：端到端（brain 降级 → 任务可见）", () =>
           model: "fake-model",
           engine: "api",
           degraded: true,
+          failed: true,
           degradeReason: "LLM 端点 502",
         });
-        return [{ kind: "message", text: "（降级后的演出台词）" }];
+        return [{ kind: "message", text: "（失败轮不该落库的台词）" }];
       },
     };
 
@@ -164,19 +173,27 @@ describe("任务健康度：端到端（brain 降级 → 任务可见）", () =>
 
       const updated = studio.getTask(task.id);
       assert.ok(updated, "任务应存在");
+      assert.equal(updated.status, "stalled", "模型失败必须暂停任务，而不是假装跑完");
       assert.ok(
         (updated.health?.degradedCount ?? 0) > 0,
-        `降级应汇总到任务上，实际 health=${JSON.stringify(updated.health)}`,
+        `失败应汇总到任务健康度，实际 health=${JSON.stringify(updated.health)}`,
       );
       assert.equal(updated.health?.lastDegradeReason, "LLM 端点 502");
 
-      const warn = studio.state.messages.find(
+      const failMessage = studio.state.messages.find(
         (message) =>
           message.taskId === task.id &&
           message.author === "system" &&
-          /可能不可信/.test(message.text),
+          /模型调用失败/.test(message.text),
       );
-      assert.ok(warn, "应留下一条「产出可能不可信」的系统消息");
+      assert.ok(failMessage, "应留下一条「模型调用失败」的系统消息");
+      assert.match(failMessage?.text ?? "", /任务已暂停/);
+      assert.match(failMessage?.text ?? "", /LLM 端点 502/, "系统消息应带失败原因");
+
+      const leaky = studio.state.messages.find((message) =>
+        message.text.includes("失败轮不该落库的台词"),
+      );
+      assert.equal(leaky, undefined, "失败轮返回的 turn 不能落库");
     } finally {
       studio.close();
     }

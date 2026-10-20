@@ -20,13 +20,14 @@ pnpm install          # 只装 typescript + @types/node 两个 devDependency
 node src/main.ts
 ```
 
-打开 <http://127.0.0.1:4318>。默认是**演出模式**（mock brain），不需要任何 API key。
+打开 <http://127.0.0.1:4318>。**首次需要接模型**（Base URL + 模型名 + key）：
+没接上时只能聊天，点「＋ 新任务」会被引导去配置。
 
 ---
 
 ## 2. 本地运行
 
-### 2.1 演出模式（默认）
+### 2.1 先启动，再配置模型
 
 ```bash
 node src/main.ts
@@ -34,10 +35,11 @@ node src/main.ts
 pnpm start
 ```
 
-没有 `LLM_BASE_URL` / `LLM_MODEL` 时 `readSettings()` 返回 `mode: "mock"`；
-四个成员的台词来自内置剧本，工具与审批照常工作，只是不调用真实模型。
+交付台只有一种运行形态（真实模型）。没有配置时也能启动：
+界面可用、可以聊天，但**派活会被 `412` 拦下**并提示去设置里配置——
+不会退回演出台词假装在干活。
 
-### 2.2 真实模式
+### 2.2 配置模型
 
 方式 A：环境变量（推荐给服务/容器）
 
@@ -61,8 +63,8 @@ node src/main.ts
 方式 B：启动后在右上角 ⚙ 设置里填 Base URL / 模型 / API Key 并「测试连接」。
 **面板里填的 key 只存在进程内存**，重启后丢失；写进环境变量的 key 每次启动都会有。
 
-`mode` 判定规则：`readSettings()` 只有在 `LLM_BASE_URL` 与 `LLM_MODEL` **都非空**时
-才生成 `llm` 配置；否则是 `mock`。没有设置 `DELIVERYLAB_MODE` 这类环境变量。
+`configured` 判定规则：`LLM_BASE_URL` 与 `LLM_MODEL` **都非空**才算配好；
+没有 `DELIVERYLAB_MODE` 这类环境变量（产品只有真实模式，`mode` 恒为 `llm`）。
 
 ### 2.3 指定端口 / 数据目录
 
@@ -172,7 +174,7 @@ data/
 | `memory` | 共享记忆 |
 | `catSessions` | 每个成员的跨任务会话记忆 |
 | `toolCalls` | 沙盒工具调用记录 |
-| `llmCalls` | 模型调用记录（耗时、token、降级等） |
+| `llmCalls` | 模型调用记录（耗时、token、是否失败等） |
 | `typing` | 每房间当前打字的成员（恢复时会被清空） |
 | `drafts` | 流式草稿（瞬态，恢复时不保留） |
 | `seq` | SSE 递增序号 |
@@ -379,11 +381,11 @@ tar czf catcafe-backup-$(date +%F).tgz data/
 | 启动报 `EADDRINUSE` | 4318 被占用 | `lsof -nP -iTCP:4318 -sTCP:LISTEN`；换 `PORT=4400`，或停止旧进程 |
 | 页面打不开 / 连接中 | 端口不对、进程没起、代理没转发 | `curl http://127.0.0.1:4318/api/health`；看启动日志；检查 `PORT` |
 | 模型 401 / 403 | key 无效、key 过期、环境变量没带进进程 | 设置里「测试连接」；`GET /api/settings` 看 `llm.hasKey` / `keySource`；确认 `LLM_BASE_URL` 是否含 `/v1`；重启后面板 key 会丢 |
-| 模型 404 / 400 | Base URL 或模型名不对；provider 需要额外 header | 用 `curl {baseUrl}/models` 检查；`LLM_HEADERS` 是否为合法 JSON；看 trace 里的降级原因 |
-| 模型 429 / 超时 | 限流；长时间 reasoning | 看任务轨迹的 llm 条目和降级标记；换模型/降低并发；不要把 `stallMs` 调得过低 |
+| 模型 404 / 400 | Base URL 或模型名不对；provider 需要额外 header | 用 `curl {baseUrl}/models` 检查；`LLM_HEADERS` 是否为合法 JSON；看任务被暂停时给出的原因 |
+| 模型 429 / 超时 | 限流；长时间 reasoning | 看任务轨迹的 llm 条目；换模型/降低并发；不要把 `stallMs` 调得过低 |
 | 工具调用一直 pending | 审批策略要求人工批准；页面没看到 Needs Me | 看左上 `Needs Me` / `#jump-latest`；5 分钟后服务端自动拒绝；重启后 pending 队列会丢，重新触发任务 |
 | 任务一直 stalled | `DELIVERYLAB_STALL_MS` 太小；审批等待被误判；漏 @ / 交接没唤醒 | 看 `GET /api/state` 的 task.status 和 `/api/tasks/:id/trace`；点「催一下」/恢复面板；确认没有 pending 工具 |
-| 真实模式没有流式草稿 | `settings.streaming=false`；provider 不走 SSE；演出模式不产生草稿 | `GET /api/settings` 看 `streaming`；设置里打开「流式输出」；演出模式没有草稿是预期 |
+| 没有流式草稿 | `settings.streaming=false`；provider 不走 SSE | `GET /api/settings` 看 `streaming`；设置里打开「流式输出」 |
 | MCP server 显示未连接 | 命令/参数路径不对、stdio 进程起不来、HTTP 不可达 | 看启动日志；检查 `data/mcp.json`（0600）里的 command/args/env/url；先手动跑该命令 |
 | 测试中心 503 / 未就绪 | 服务端未挂载 TestRunner；旧进程 | 用最新 `node src/main.ts`；`GET /api/tests/runs` 看状态；测试中心只在 `main.ts` 组装 |
 | `/api/...` 404 | 用了旧进程 / 旧版本 | 重启到当前代码；对比 `git log`；前端对 404/503 会显示“未就绪”而不是崩溃 |

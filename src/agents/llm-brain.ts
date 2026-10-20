@@ -164,9 +164,12 @@ export function createLlmBrain(
           model,
           engine: "api",
           degraded: true,
+          failed: true,
           degradeReason: reason.slice(0, 200),
         });
-        return fallback.think(ctx);
+        // 不再退回演出台词：driver 会暂停任务，让负责人决定继续/换模型/收尾。
+        void fallback;
+        return Promise.resolve([]);
       };
 
       if (!endpoint.startsWith("http")) return downgrade("LLM_BASE_URL 缺失或非法");

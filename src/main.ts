@@ -94,15 +94,16 @@ driver.setProactive(proactiveConfig.mode === "watch", proactiveConfig.intervalMs
 
 server.listen(settings.port, "127.0.0.1", () => {
   const publicSettings = settingsStore.getPublic();
-  const modeText =
-    publicSettings.mode === "llm"
-      ? `真实模式（${publicSettings.llm.model}）`
-      : "演出模式（无需 key）";
+  const modeText = publicSettings.configured
+    ? `模型 ${publicSettings.llm.model}`
+    : "模型未配置（只能聊天，不能派活）";
   console.log("");
   console.log("  🐾 Delivery Lab · 协作交付台");
-  console.log(`  ${CATS.map((c) => `${c.name}(${c.discipline})`).join("  ")}`);
+  console.log(
+    `  成员：${studio.state.cats.map((c) => `${c.name}(${c.discipline})`).join("  ")}`,
+  );
   console.log(`  http://127.0.0.1:${settings.port}`);
-  console.log(`  mode: ${modeText} · data: ${dataDir}`);
+  console.log(`  ${modeText} · data: ${dataDir}`);
   const mcpTools = registry.list().filter((tool) => tool.source === "mcp").length;
   console.log(
     `  sandbox: ${sandbox.root} · tools: ${publicSettings.toolsEnabled ? "on" : "off"} · mcp tools: ${mcpTools}`,

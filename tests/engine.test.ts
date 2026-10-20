@@ -2169,14 +2169,13 @@ describe("任务收尾后的防护", () => {
   });
 });
 
-describe("worker 轮崩溃时的兜底", () => {
+describe("worker 的 brain 抛错 → 任务暂停（不吞成空轮次）", () => {
   /**
-   * 回归：worker 的 brain 抛错时，不能把整轮吞成「什么都没发生」——
-   * 否则这只 worker 既没产出、也不会触发评审，任务就停在 working 直到 stall 超时。
-   * 现在 processWake 把 brain 异常兜成空轮次，afterTurns 仍会走 worker 分支，
-   * 计数和评审照常推进。
+   * 新语义：worker 的 brain 抛错时不再把整轮吞成「什么都没发生」，
+   * 而是走 pauseTaskForModelFailure：任务 stalled + 系统消息说明原因，
+   * 把「继续 / 换模型 / 收尾」的决定权交回负责人。
    */
-  test("worker 的 brain 抛错后，任务仍能进入 reviewing 而不是卡在 working", async () => {
+  test("worker 的 brain 抛错后，任务暂停并留下失败原因", async () => {
     const studio = makeStudio();
     const task = studio.createTask({
       roomId: ROOM_ID,
@@ -2227,11 +2226,34 @@ describe("worker 轮崩溃时的兜底", () => {
 
       const after = studio.getTask(task.id);
       assert.ok(after, "任务应存在");
-      assert.notEqual(
+      assert.equal(
         after.stage,
         "working",
-        `worker 崩溃后任务不该永久停在 working，实际 stage=${after.stage} status=${after.status}`,
+        `崩溃发生在 working，阶段不该被伪造推进，实际 stage=${after.stage}`,
       );
+      assert.equal(
+        after.status,
+        "stalled",
+        "worker 崩溃应暂停任务，而不是继续跑或一直等 stall 超时",
+      );
+
+      const failMessage = studio.state.messages.find(
+        (message) =>
+          message.taskId === task.id &&
+          message.author === "system" &&
+          /模型调用失败/.test(message.text),
+      );
+      assert.ok(failMessage, "应留下一条「模型调用失败」的系统消息");
+      assert.match(failMessage?.text ?? "", /任务已暂停/);
+      assert.match(failMessage?.text ?? "", /模拟 brain 崩溃/, "系统消息应带失败原因");
+
+      // 暂停后不应再自动进入 reviewing。
+      const reviewMessages = studio.state.messages.filter(
+        (message) =>
+          message.taskId === task.id &&
+          message.kind === "review",
+      );
+      assert.equal(reviewMessages.length, 0, "暂停后不应再伪造 reviewing 结果");
     } finally {
       studio.close();
     }

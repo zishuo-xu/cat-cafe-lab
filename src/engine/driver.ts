@@ -606,6 +606,8 @@ export function createDriver(deps: {
         // 本轮是否降级（brains 通过 onReport 告知）。降级轮退回的是演出台词，
         // 其中的「决策 / 教训」是剧本写的，和真实需求无关，不能进共享记忆。
         let roundDegraded = false;
+        let roundFailed = false;
+        let failReason = "";
         try {
           await wait(THINK_DELAY_MS);
           const call = studio.startLlmCall({
@@ -626,6 +628,10 @@ export function createDriver(deps: {
           context.onReport = (next) => {
             report = { ...report, ...next };
             if (next.degraded) roundDegraded = true;
+            if (next.failed) {
+              roundFailed = true;
+              failReason = next.degradeReason ?? next.error ?? "模型调用失败";
+            }
           };
           try {
             turns = await brain.think(context);
@@ -638,7 +644,9 @@ export function createDriver(deps: {
             });
           }
         } catch (err) {
-          console.error(`[engine] ${cat.id} 的 brain 调用失败，按空轮次继续：`, err);
+          console.error(`[engine] ${cat.id} 的 brain 调用失败：`, err);
+          roundFailed = true;
+          failReason = err instanceof Error ? err.message : "brain 调用异常";
         } finally {
           // 无论成功失败，这一轮结束后草稿都要清掉（正式消息已落库）。
           studio.setDraft(room.id, null);
@@ -646,6 +654,13 @@ export function createDriver(deps: {
 
         // 巡查轮：只允许「说话」和「沉默」，交接/评审/决策/产物都属于 owner 的职责，
         // 这里在执行前就过滤掉，否则它们会真的落库并影响后续阶段。
+        // 本轮彻底失败：不退回演出台词、也不继续往下跑，
+        // 暂停任务把「继续 / 换模型 / 收尾」的决定权交回给负责人。
+        if (roundFailed) {
+          pauseTaskForModelFailure(task, failReason);
+          return;
+        }
+
         const effectiveTurns =
           wake.purpose === "patrol"
             ? turns.filter(
@@ -942,7 +957,7 @@ export function createDriver(deps: {
           // 剧本自带的决策/教训是给那个剧本写的，套到不相干的需求上会污染后续任务
           // 的上下文（实测：拿「记住我」剧本演「优化首页速度」，共享记忆里多出
           // 两条 token 过期策略，且 sourceTaskId 指向那条无关需求）。
-          if (!task.scenarioFallback && !source?.degraded) {
+          if (!source?.degraded) {
             for (const entry of turn.memory) {
               studio.addMemory({
                 kind: entry.kind,
@@ -959,7 +974,7 @@ export function createDriver(deps: {
 
         case "memory": {
           // 近似剧本 / 降级轮里写的记忆同样不可信：只保留对话，不落共享记忆。
-          if (!task?.scenarioFallback && !source?.degraded) {
+          if (!source?.degraded) {
             studio.addMemory({
               kind: turn.memory.kind,
               title: turn.memory.title,
@@ -1440,6 +1455,33 @@ export function createDriver(deps: {
         },
       });
     }
+  }
+
+  /**
+   * 模型调用失败 → 暂停任务。
+   *
+   * 产品只有真实模式：失败时**不能**退回演出台词假装还在干活，
+   * 那会给出一个看起来完成的假结果。这里改成停下来，让负责人决定下一步
+   * （恢复面板复用现有的「继续 / 换方案 / 收尾」）。
+   */
+  function pauseTaskForModelFailure(task: Task | null, reason: string): void {
+    const detail = (reason || "模型调用失败").slice(0, 200);
+    if (!task) {
+      console.warn(`[engine] 模型调用失败（无任务上下文）：${detail}`);
+      return;
+    }
+    if (task.status === "done") return;
+    clearStall(task.id);
+    studio.appendMessage({
+      roomId: task.roomId,
+      author: "system",
+      kind: "system",
+      taskId: task.id,
+      text:
+        `模型调用失败：${detail}。` +
+        `任务已暂停（不是卡住，是真实报错）——你可以「继续试试」「换个方案」或「收尾」。`,
+    });
+    studio.setTaskStatus(task.id, "stalled");
   }
 
   /**

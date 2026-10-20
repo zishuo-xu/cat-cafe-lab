@@ -69,8 +69,6 @@ export interface CreateTaskInput {
   brief: string;
   scenarioId: string;
   title?: string;
-  /** 需求没匹配到剧本、退而用近似剧本时置 true（见 Task.scenarioFallback）。 */
-  scenarioFallback?: boolean;
 }
 
 export interface CreateCatInput {
@@ -367,7 +365,6 @@ export class Studio {
       steps: [],
       createdAt: now(),
       updatedAt: now(),
-      ...(input.scenarioFallback ? { scenarioFallback: true } : {}),
     };
     this.state.tasks.push(task);
     this.notify();
@@ -407,20 +404,6 @@ export class Studio {
 
     const task = this.getTask(taskId);
     if (!task) return null;
-
-    // 近似剧本：不要把「假戏」的决策写进共享记忆，但要留一条诚实的记录，
-    // 说明这个需求为什么没有被真正处理 —— 否则负责人下次只会觉得莫名其妙。
-    if (task.scenarioFallback) {
-      return this.addMemory({
-        kind: "lesson",
-        title: `任务「${task.title.slice(0, 40)}」没有匹配的演示剧本`,
-        body:
-          `需求没有命中任何内置剧本，本轮用「${task.scenarioId}」近似演出，` +
-          `台词与决策跟需求无关，未写入场景记忆。要真正处理这个需求，请切到真实模式或补充剧本。`,
-        tags: ["fallback-scenario", task.scenarioId],
-        sourceTaskId: task.id,
-      });
-    }
 
     const delivery = this.deliverySummary(taskId);
     const verdict =
@@ -664,10 +647,10 @@ export class Studio {
   }
 
   /**
-   * 把一次降级记到任务上，并在第一次降级时留一条系统消息。
+   * 记录一次模型调用失败（健康度汇总）。
    *
-   * 只写一次消息：一次 20 分钟任务实测降级 5 次，每次都刷屏会把聊天区淹掉；
-   * 后续计数继续累加，详情看任务轨迹。
+   * 只累加计数与最近原因，不自己发消息——用户可见的提示由 driver 统一发，
+   * 避免「暂停提示 + 降级提示」两条消息重复。
    */
   recordTaskDegradation(call: LlmCall): void {
     if (!call.taskId) return;
@@ -680,17 +663,9 @@ export class Studio {
     if (call.stage) health.lastDegradeStage = call.stage;
     task.health = health;
 
-    if (health.warned) return;
+    // 用户可见的提示由 driver 在暂停任务时统一发（模型失败 = 暂停，不再有「降级演出」），
+    // 这里只负责汇总健康度，供任务卡徽标与轨迹查看。
     health.warned = true;
-    this.appendMessage({
-      roomId: task.roomId,
-      author: "system",
-      kind: "system",
-      text:
-        `⚠️ 模型调用失败，已降级为演出台词——「${task.title}」后续产出可能不可信。` +
-        `原因：${call.degradeReason ?? "未知"}。可在任务轨迹里核对。`,
-      taskId: task.id,
-    });
   }
 
   /** 沙盒工具调用：先落一条 running，执行完再 finish。 */

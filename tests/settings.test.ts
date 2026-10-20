@@ -63,9 +63,11 @@ describe("SettingsStore", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("初始是演出模式、正常节奏、没有 key", () => {
+  test("初始只有真实模式、未配置、正常节奏、没有 key", () => {
     const pub = ctx.store.getPublic();
-    assert.equal(pub.mode, "mock");
+    assert.equal(pub.mode, "llm", "mode 恒为 llm：产品只有真实模式");
+    assert.equal(pub.configured, false, "没填 Base URL / 模型时应为未配置");
+    assert.equal(ctx.store.isConfigured(), false);
     assert.equal(pub.speed, "normal");
     assert.equal(pub.llm.hasKey, false);
     assert.equal(pub.llm.keySource, null);
@@ -83,14 +85,15 @@ describe("SettingsStore", () => {
     await ctx.store.update({ speed: "normal" });
   });
 
-  test("没有配置时不能切真实模式", async () => {
-    await assert.rejects(
-      () => ctx.store.update({ mode: "llm" }),
-      /Base URL 和模型名/,
-    );
+  test("mode 已废弃：传 mock 被忽略不报错，mode 恒为 llm", async () => {
+    const pub = await ctx.store.update({ mode: "mock" });
+    assert.equal(pub.mode, "llm", "切模式已废弃，写入被忽略");
+    assert.equal(pub.configured, false, "传 mode 不等于配置了模型");
+    assert.equal(ctx.store.getPublic().mode, "llm");
+    assert.equal(ctx.store.getPublic().configured, false);
   });
 
-  test("配置 LLM 后切真实模式，key 只进内存", async () => {
+  test("配置 LLM 后 configured=true，key 只进内存", async () => {
     const pub = await ctx.store.update({
       mode: "llm",
       llm: {
@@ -101,6 +104,8 @@ describe("SettingsStore", () => {
       },
     });
     assert.equal(pub.mode, "llm");
+    assert.equal(pub.configured, true, "baseUrl + model 齐了就应标记已配置");
+    assert.equal(ctx.store.isConfigured(), true);
     assert.equal(pub.llm.baseUrl, "http://127.0.0.1:9/v1");
     assert.equal(pub.llm.model, "cat-chat");
     assert.equal(pub.llm.temperature, 1.2);
@@ -151,6 +156,8 @@ describe("SettingsStore", () => {
     const reopened = makeStore(dir);
     const pub = reopened.store.getPublic();
     assert.equal(pub.mode, "llm");
+    assert.equal(pub.configured, true, "恢复配置后应标记为已配置");
+    assert.equal(reopened.store.isConfigured(), true);
     assert.equal(pub.llm.baseUrl, "http://127.0.0.1:9/v1");
     assert.equal(pub.llm.model, "cat-chat");
     assert.equal(pub.llm.hasKey, false);
@@ -179,6 +186,8 @@ describe("SettingsStore 环境变量", () => {
     const ctx = makeStore(dir, { mode: "llm", llm });
     const pub = ctx.store.getPublic();
     assert.equal(pub.mode, "llm");
+    assert.equal(pub.configured, true);
+    assert.equal(ctx.store.isConfigured(), true);
     assert.equal(pub.envDefaults, true);
     assert.equal(pub.llm.keySource, "env");
     assert.equal(pub.llm.hasKey, true);
@@ -271,9 +280,28 @@ describe("HTTP /api/settings", () => {
   test("GET 返回安全设置", async () => {
     const res = await fetch(`${base}/api/settings`);
     assert.equal(res.status, 200);
-    const pub = (await res.json()) as { mode: string; llm: { hasKey: boolean } };
-    assert.equal(pub.mode, "mock");
+    const pub = (await res.json()) as {
+      mode: string;
+      configured: boolean;
+      llm: { hasKey: boolean };
+    };
+    assert.equal(pub.mode, "llm", "只有真实模式");
+    assert.equal(pub.configured, false);
     assert.equal(pub.llm.hasKey, false);
+  });
+
+  test("未配置模型时 POST /api/tasks → 412 { code: llm_unconfigured }", async () => {
+    const res = await fetch(`${base}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roomId: "room_cafe", brief: "还没接模型就派活" }),
+    });
+    assert.equal(res.status, 412, "未配置模型时必须拦下派活");
+    const body = (await res.json()) as { error: string; code: string };
+    assert.equal(body.code, "llm_unconfigured");
+    assert.match(body.error, /模型/);
+    const state = (await (await fetch(`${base}/api/state`)).json()) as { tasks: unknown[] };
+    assert.equal(state.tasks.length, 0, "被拦下后不应落任务");
   });
 
   test("PUT 更新节奏；非法值 400", async () => {
@@ -306,14 +334,41 @@ describe("HTTP /api/settings", () => {
     assert.equal(res.status, 200);
     const text = await res.text();
     assert.ok(!text.includes("sk-hidden"));
-    const pub = JSON.parse(text) as { mode: string; llm: { hasKey: boolean } };
+    const pub = JSON.parse(text) as {
+      mode: string;
+      configured: boolean;
+      llm: { hasKey: boolean; model: string };
+    };
     assert.equal(pub.mode, "llm");
+    assert.equal(pub.configured, true);
+    assert.equal(pub.llm.model, "m");
     assert.equal(pub.llm.hasKey, true);
 
     const health = await fetch(`${base}/api/health`);
-    const healthBody = (await health.json()) as { mode: string; settings: boolean };
+    const healthBody = (await health.json()) as {
+      mode: string;
+      settings: boolean;
+      configured: boolean;
+      model?: string;
+      engine?: string;
+    };
     assert.equal(healthBody.mode, "llm");
     assert.equal(healthBody.settings, true);
+    assert.equal(healthBody.configured, true, "健康检查应反映配置状态");
+    assert.equal(healthBody.model, "m");
+    assert.ok(healthBody.engine === "api" || healthBody.engine === "cli");
+  });
+
+  test("配置模型后派活不再被 412 拦截", async () => {
+    const res = await fetch(`${base}/api/tasks`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ roomId: "room_cafe", brief: "配好模型后可以派活" }),
+    });
+    assert.equal(res.status, 201);
+    const task = (await res.json()) as { id: string; status: string };
+    assert.ok(task.id);
+    assert.equal(task.status, "active");
   });
 
   test("测试连接接口校验必填字段", async () => {

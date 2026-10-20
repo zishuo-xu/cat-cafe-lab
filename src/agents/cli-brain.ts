@@ -82,7 +82,8 @@ export function createCliBrain(
         });
       } catch (err) {
         warn(`[cli-brain] 调用失败，降级 fallback：${err instanceof Error ? err.message : String(err)}`);
-        return fallback.think(ctx);
+        void fallback;
+        return [];
       }
 
       if (envelope.is_error) {
@@ -91,15 +92,18 @@ export function createCliBrain(
           model: settings.model,
           engine: "cli",
           degraded: true,
+          failed: true,
           degradeReason: `CLI is_error: ${envelope.subtype ?? "unknown"}`,
         });
-        return fallback.think(ctx);
+        void fallback;
+        return [];
       }
 
       const content = typeof envelope.result === "string" ? envelope.result : "";
       if (!content.trim()) {
         warn("[cli-brain] CLI 返回空 result，降级 fallback");
-        return fallback.think(ctx);
+        void fallback;
+        return [];
       }
 
       const turns = parseTurns(content, ctx);

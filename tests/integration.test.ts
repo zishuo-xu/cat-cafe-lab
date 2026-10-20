@@ -106,6 +106,53 @@ async function waitForTaskDone(
   );
 }
 
+/**
+ * 轮询 /api/state 直到任务进入指定状态。
+ * 模型失败的新语义：任务会被 driver 暂停成 stalled，而不是降级跑完。
+ */
+async function waitForTaskStatus(
+  base: string,
+  taskId: string,
+  status: Task["status"],
+  timeoutMs = 10_000,
+): Promise<StudioState> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = await getState(base);
+    const task = findTask(state, taskId);
+    if (task.status === status) return state;
+    await sleep(40);
+  }
+  const snapshot = await getState(base);
+  const task = findTask(snapshot, taskId);
+  throw new Error(
+    `任务未在 ${timeoutMs}ms 内进入 status=${status}（实际 stage=${task.stage}, status=${task.status}）`,
+  );
+}
+
+/** 等「模型调用失败」系统消息累计到 minCount 条，且任务处于 stalled。 */
+async function waitForModelFailureMessages(
+  base: string,
+  taskId: string,
+  minCount: number,
+  timeoutMs = 10_000,
+): Promise<StudioState> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const state = await getState(base);
+    const task = findTask(state, taskId);
+    const count = state.messages.filter(
+      (message) =>
+        message.taskId === taskId &&
+        message.author === "system" &&
+        /模型调用失败/.test(message.text),
+    ).length;
+    if (count >= minCount && task.status === "stalled") return state;
+    await sleep(40);
+  }
+  throw new Error(`模型失败暂停消息未累计到 ${minCount} 条`);
+}
+
 /** 读 SSE 的第一条 data 事件（连接时服务端会先推一次全量快照）。 */
 async function readFirstSseEvent(
   base: string,
@@ -316,7 +363,7 @@ describe("集成 · 完整协作链路（mock 模式）", () => {
   });
 });
 
-describe("集成 · 真实模式降级后协作仍能跑完", () => {
+describe("集成 · 模型不可用时任务暂停", () => {
   let dataDir: string;
   let studio: Studio;
   let driver: Driver;
@@ -331,8 +378,8 @@ describe("集成 · 真实模式降级后协作仍能跑完", () => {
     dataDir = mkdtempSync(join(tmpdir(), "deliverylab-e2e-llm-"));
     studio = new Studio({ cats: CATS, mode: "llm", dataDir });
 
-    // 断头端点：真实模式每次调用都会失败 → 应该全部降级到 mock brain，
-    // 但六阶段协作链必须照常跑完。
+    // 断头端点：真实模式每次调用都会失败。新语义下不再退回演出台词，
+    // 而是暂停任务、把决定权交回负责人。
     const llm = createLlmBrain(
       {
         baseUrl: "http://127.0.0.1:1/v1",
@@ -359,7 +406,7 @@ describe("集成 · 真实模式降级后协作仍能跑完", () => {
     assert.ok(address && typeof address === "object");
     base = `http://127.0.0.1:${address.port}`;
 
-    // 收集降级日志，最后统一断言（避免刷屏）。
+    // 收集失败日志，最后统一断言（避免刷屏）。
     originalWarn = console.warn;
     warnLines = [];
     console.warn = (...args: unknown[]) => {
@@ -373,7 +420,7 @@ describe("集成 · 真实模式降级后协作仍能跑完", () => {
     });
     assert.equal(res.status, 201);
     taskId = ((await res.json()) as Task).id;
-    state = await waitForTaskDone(base, taskId);
+    state = await waitForTaskStatus(base, taskId, "stalled");
   });
 
   after(async () => {
@@ -384,29 +431,41 @@ describe("集成 · 真实模式降级后协作仍能跑完", () => {
     rmSync(dataDir, { recursive: true, force: true });
   });
 
-  test("模型全程不可用，任务仍按场景跑完并留下完整链路", () => {
+  test("模型不可用时任务暂停，并给出失败原因", () => {
     const task = findTask(state, taskId);
-    assert.equal(task.status, "done");
-    assert.ok(state.handoffs.length >= 1, "降级后台词来自 mock brain，交接仍应发生");
-    assert.ok(
-      state.artifacts.some((artifact) => artifact.kind === "review"),
-      "review 仍应落库",
+    assert.equal(task.status, "stalled", "模型失败必须暂停任务，不能假装跑完");
+    assert.notEqual(task.stage, "done", "暂停的任务不应被标记为完成");
+
+    const failMessage = state.messages.find(
+      (message) =>
+        message.taskId === taskId &&
+        message.author === "system" &&
+        /模型调用失败/.test(message.text),
+    );
+    assert.ok(failMessage, "应留下一条「模型调用失败」的系统消息");
+    assert.match(failMessage?.text ?? "", /任务已暂停/);
+    assert.match(failMessage?.text ?? "", /网络错误|超时/, "系统消息应带可读的失败原因");
+
+    // 不再退回演出台词：没有交接、产物、决策被伪造出来。
+    assert.equal(state.handoffs.length, 0, "失败后不应继续自动交接");
+    assert.equal(state.artifacts.length, 0, "失败后不应伪造产物");
+    assert.equal(
+      state.memory.filter((entry) => entry.sourceTaskId === taskId).length,
+      0,
+      "失败后不应写共享记忆",
     );
     assert.ok(
-      state.artifacts.some((artifact) => artifact.kind === "patch" && artifact.version >= 2),
-      "revise 后的 v2 patch 仍应出现",
+      (task.health?.degradedCount ?? 0) >= 1,
+      `失败应汇总到任务健康度，实际 health=${JSON.stringify(task.health)}`,
     );
-    assert.ok(
-      state.memory.some((entry) => entry.kind === "decision"),
-      "decision 仍应写进共享记忆",
-    );
+    assert.ok(task.health?.lastDegradeReason, "健康度应记录最近失败原因");
   });
 
-  test("每次 LLM 失败都降级并只打一行 warn，且不泄露 apiKey", () => {
+  test("失败日志说明原因且不泄露 apiKey", () => {
     const llmWarns = warnLines.filter((line) => line.includes("[llm-brain]"));
-    assert.ok(llmWarns.length >= 1, `应有降级日志，实际：${warnLines.join("\n")}`);
+    assert.ok(llmWarns.length >= 1, `应有失败日志，实际：${warnLines.join("\n")}`);
     for (const line of llmWarns) {
-      assert.match(line, /降级 fallback/, `降级日志格式应说明去向：${line}`);
+      assert.match(line, /降级 fallback/, `日志格式应说明去向：${line}`);
       assert.ok(
         !line.includes("sk-integration-secret-key"),
         `日志里绝不能出现 apiKey：${line}`,
@@ -414,10 +473,43 @@ describe("集成 · 真实模式降级后协作仍能跑完", () => {
     }
   });
 
-  test("真实模式下 /api/health 报告 mode=llm", async () => {
+  test("/api/health 报告 mode=llm（未接 settingsApi 时视为已配置）", async () => {
     const res = await fetch(`${base}/api/health`);
     assert.equal(res.status, 200);
-    const body = (await res.json()) as { ok: boolean; mode: string };
+    const body = (await res.json()) as {
+      ok: boolean;
+      mode: string;
+      configured: boolean;
+      settings: boolean;
+    };
     assert.equal(body.mode, "llm");
+    assert.equal(body.configured, true);
+    assert.equal(body.settings, false);
+  });
+
+  test("暂停后可以「继续」；模型仍不可用时会再次暂停并追加原因", async () => {
+    const beforeState = await getState(base);
+    const beforeCount = beforeState.messages.filter(
+      (message) =>
+        message.taskId === taskId &&
+        message.author === "system" &&
+        /模型调用失败/.test(message.text),
+    ).length;
+
+    const res = await fetch(`${base}/api/tasks/${taskId}/action`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "continue" }),
+    });
+    assert.equal(res.status, 202, "暂停的任务应接受「继续」恢复动作");
+
+    await driver.whenIdle();
+    const afterState = await waitForModelFailureMessages(base, taskId, beforeCount + 1);
+    const task = findTask(afterState, taskId);
+    assert.equal(task.status, "stalled", "恢复后再次失败应再次暂停");
+    assert.ok(
+      (task.health?.degradedCount ?? 0) > (findTask(beforeState, taskId).health?.degradedCount ?? 0),
+      "恢复后的失败也要累计到健康度",
+    );
   });
 });

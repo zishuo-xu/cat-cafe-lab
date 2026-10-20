@@ -345,6 +345,31 @@ button {
   background: linear-gradient(160deg, #f9e2d4, #f3cbb5);
 }
 
+/* 顶部「模型连接状态」：只有真实模式，未配置要一眼看到 */
+.pill--model {
+  cursor: pointer;
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.pill--model[data-state="connected"] {
+  background: #e7f1e4;
+  border-color: #cfe2c9;
+  color: #3f6b3a;
+}
+
+.pill--model[data-state="unconfigured"] {
+  background: #fde8e4;
+  border-color: #f3c9c0;
+  color: #b23b23;
+}
+
+.pill--model[data-state="unknown"] {
+  opacity: 0.7;
+}
+
 .pill {
   display: inline-flex;
   align-items: center;
@@ -766,17 +791,6 @@ button {
   border-radius: 999px;
   background: #fde8e4;
   color: #b23b23;
-  font-size: 9.5px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-/* 近似剧本：需求没命中任何剧本，本轮台词与决策不可信。 */
-.task-fallback-badge {
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: #f3e7d6;
-  color: #8a5a22;
   font-size: 9.5px;
   font-weight: 700;
   white-space: nowrap;

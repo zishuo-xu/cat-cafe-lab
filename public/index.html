@@ -28,10 +28,17 @@
           <div class="brand-mark" id="brand-mark" aria-hidden="true"></div>
           <div class="brand-text">
             <h1 class="brand-title">Delivery <span>Lab</span></h1>
-            <p class="brand-sub">协作交付台 · 四个角色，一张工作台</p>
+            <p class="brand-sub">协作交付台 · 你的 AI 团队，一张工作台</p>
           </div>
           <div class="brand-pills">
-            <span class="pill pill--mode" data-mode>演出模式</span>
+            <button
+              type="button"
+              class="pill pill--model"
+              id="model-status-pill"
+              data-action="open-settings"
+              data-state="unconfigured"
+              title="模型连接状态（点击打开设置）"
+            >模型未配置 · 去设置</button>
             <span class="pill pill--conn" data-conn data-state="connecting">
               <span class="dot" data-conn-dot></span>
               <span data-conn-text>连接中…</span>
@@ -464,7 +471,7 @@
             <option value="">自动匹配（按需求）</option>
           </select>
           <span class="field-hint" id="task-scenario-hint">
-            自动匹配：根据需求关键词挑一个演示剧本；也可以指定内置或自定义剧本。
+            可选：从示例剧本里挑一个作为需求参考；真实任务由模型按需求原文处理，不依赖剧本。
           </span>
         </div>
         <div class="chips" role="group" aria-label="示例需求">
@@ -500,7 +507,7 @@
         <header class="modal-head settings-head">
           <div class="settings-head-text">
             <h2 id="settings-title">设置</h2>
-            <p class="settings-head-sub">模式、工具、LLM、成员与剧本、运行信息</p>
+            <p class="settings-head-sub">模型连接、工具、成员、运行信息</p>
           </div>
           <button type="button" class="icon-btn" data-action="close-settings" aria-label="关闭设置">
             ✕
@@ -513,23 +520,123 @@
         </div>
 
         <div class="settings-scroll">
-          <!-- 1. 运行模式 -->
-          <fieldset class="settings-section">
-            <legend class="settings-legend">运行模式</legend>
+          <!-- 1. 模型连接（必填：没接上模型不能派活） -->
+          <fieldset class="settings-section" id="settings-llm-section">
+            <legend class="settings-legend">LLM 连接</legend>
             <p class="settings-desc">
-              演出模式不调用模型、开箱即用；真实模式走你配置的 OpenAI 兼容接口。
+              <strong>必填：</strong>没接上模型只能聊天、不能派活。填 OpenAI 兼容接口，例如
+              <code>https://api.deepseek.com/v1</code>、opencode zen
+              <code>https://opencode.ai/zen/go/v1</code>、或本地 Ollama
+              <code>http://127.0.0.1:11434/v1</code>。
             </p>
-            <div class="segmented" role="radiogroup" aria-label="运行模式">
-              <label class="segment">
-                <input type="radio" name="settings-mode" value="mock" checked />
-                <span>🎭 演出模式</span>
-              </label>
-              <label class="segment">
-                <input type="radio" name="settings-mode" value="llm" />
-                <span>🧠 真实模式</span>
-              </label>
+
+            <div class="field">
+              <label class="field-label" for="settings-base-url">Base URL</label>
+              <input
+                id="settings-base-url"
+                name="baseUrl"
+                type="url"
+                inputmode="url"
+                placeholder="https://api.deepseek.com/v1"
+                autocomplete="off"
+                spellcheck="false"
+                aria-describedby="settings-base-url-hint"
+              />
+              <span class="field-hint" id="settings-base-url-hint">
+                通常以 <code>/v1</code> 结尾，不要带 <code>/chat/completions</code>。
+              </span>
             </div>
-            <p class="settings-inline-warn" id="settings-mode-warn" role="alert" hidden></p>
+
+            <div class="field-grid">
+              <div class="field">
+                <label class="field-label" for="settings-model">模型名</label>
+                <input
+                  id="settings-model"
+                  name="model"
+                  type="text"
+                  placeholder="deepseek-chat / gpt-4o-mini"
+                  autocomplete="off"
+                  spellcheck="false"
+                />
+              </div>
+              <div class="field">
+                <label class="field-label" for="settings-api-key">
+                  API Key
+                  <span class="key-status" id="settings-key-status" data-state="empty">
+                    <i class="key-dot" aria-hidden="true"></i>
+                    <span data-key-status-text>未配置</span>
+                  </span>
+                </label>
+                <span class="input-with-action">
+                  <input
+                    id="settings-api-key"
+                    name="apiKey"
+                    type="password"
+                    placeholder="输入 API Key（可留空）"
+                    autocomplete="new-password"
+                    spellcheck="false"
+                    aria-describedby="settings-key-hint"
+                  />
+                  <button
+                    type="button"
+                    class="icon-btn icon-btn--inline"
+                    data-action="toggle-key"
+                    id="settings-key-toggle"
+                    aria-label="显示 API Key"
+                    aria-pressed="false"
+                  >
+                    👁
+                  </button>
+                </span>
+                <span class="field-hint" id="settings-key-hint">只保存在服务内存，不写盘。</span>
+                <button
+                  type="button"
+                  class="link-btn"
+                  data-action="clear-key"
+                  id="settings-clear-key"
+                  hidden
+                >
+                  清除已保存的 Key
+                </button>
+              </div>
+            </div>
+
+            <div class="field">
+              <label class="field-label" for="settings-temperature">
+                温度
+                <output id="settings-temp-value" for="settings-temperature">0.8</output>
+              </label>
+              <input
+                id="settings-temperature"
+                name="temperature"
+                type="range"
+                min="0"
+                max="2"
+                step="0.1"
+                value="0.8"
+              />
+              <span class="field-hint">越低越稳、越高越发散，推荐 0.6–0.9。</span>
+            </div>
+
+            <div class="settings-test-row">
+              <button
+                type="button"
+                class="btn btn--ghost btn--tiny"
+                data-action="test-llm"
+                id="settings-test-btn"
+              >
+                🔌 测试连接
+              </button>
+              <span
+                class="settings-test-result"
+                id="settings-test-result"
+                role="status"
+                aria-live="polite"
+                data-tone="idle"
+              >
+                填好 Base URL 与模型后可以测试。
+              </span>
+            </div>
           </fieldset>
 
           <!-- 2. 工具执行 -->
@@ -560,7 +667,7 @@
                 <option value="all">所有工具都需批准</option>
               </select>
               <span class="field-hint" id="settings-tool-approval-hint">
-                仅对真实模式下模型主动发起的工具生效；剧本工具自动放行。
+                仅对模型主动发起的工具生效。
               </span>
             </div>
           </fieldset>
@@ -767,124 +874,7 @@
             </div>
           </fieldset>
 
-          <!-- 5. LLM 连接 -->
-          <fieldset class="settings-section" id="settings-llm-section">
-            <legend class="settings-legend">LLM 连接</legend>
-            <p class="settings-desc">
-              OpenAI 兼容接口，例如 OpenAI
-              <code>https://api.openai.com/v1</code>、DeepSeek
-              <code>https://api.deepseek.com/v1</code>、Ollama
-              <code>http://127.0.0.1:11434/v1</code>。
-            </p>
 
-            <div class="field">
-              <label class="field-label" for="settings-base-url">Base URL</label>
-              <input
-                id="settings-base-url"
-                name="baseUrl"
-                type="url"
-                inputmode="url"
-                placeholder="https://api.deepseek.com/v1"
-                autocomplete="off"
-                spellcheck="false"
-                aria-describedby="settings-base-url-hint"
-              />
-              <span class="field-hint" id="settings-base-url-hint">
-                通常以 <code>/v1</code> 结尾，不要带 <code>/chat/completions</code>。
-              </span>
-            </div>
-
-            <div class="field-grid">
-              <div class="field">
-                <label class="field-label" for="settings-model">模型名</label>
-                <input
-                  id="settings-model"
-                  name="model"
-                  type="text"
-                  placeholder="deepseek-chat / gpt-4o-mini"
-                  autocomplete="off"
-                  spellcheck="false"
-                />
-              </div>
-              <div class="field">
-                <label class="field-label" for="settings-api-key">
-                  API Key
-                  <span class="key-status" id="settings-key-status" data-state="empty">
-                    <i class="key-dot" aria-hidden="true"></i>
-                    <span data-key-status-text>未配置</span>
-                  </span>
-                </label>
-                <span class="input-with-action">
-                  <input
-                    id="settings-api-key"
-                    name="apiKey"
-                    type="password"
-                    placeholder="输入 API Key（可留空）"
-                    autocomplete="new-password"
-                    spellcheck="false"
-                    aria-describedby="settings-key-hint"
-                  />
-                  <button
-                    type="button"
-                    class="icon-btn icon-btn--inline"
-                    data-action="toggle-key"
-                    id="settings-key-toggle"
-                    aria-label="显示 API Key"
-                    aria-pressed="false"
-                  >
-                    👁
-                  </button>
-                </span>
-                <span class="field-hint" id="settings-key-hint">只保存在服务内存，不写盘。</span>
-                <button
-                  type="button"
-                  class="link-btn"
-                  data-action="clear-key"
-                  id="settings-clear-key"
-                  hidden
-                >
-                  清除已保存的 Key
-                </button>
-              </div>
-            </div>
-
-            <div class="field">
-              <label class="field-label" for="settings-temperature">
-                温度
-                <output id="settings-temp-value" for="settings-temperature">0.8</output>
-              </label>
-              <input
-                id="settings-temperature"
-                name="temperature"
-                type="range"
-                min="0"
-                max="2"
-                step="0.1"
-                value="0.8"
-              />
-              <span class="field-hint">越低越稳、越高越发散，推荐 0.6–0.9。</span>
-            </div>
-
-            <div class="settings-test-row">
-              <button
-                type="button"
-                class="btn btn--ghost btn--tiny"
-                data-action="test-llm"
-                id="settings-test-btn"
-              >
-                🔌 测试连接
-              </button>
-              <span
-                class="settings-test-result"
-                id="settings-test-result"
-                role="status"
-                aria-live="polite"
-                data-tone="idle"
-              >
-                填好 Base URL 与模型后可以测试。
-              </span>
-            </div>
-          </fieldset>
 
           <!-- 6. 成员管理 -->
           <fieldset class="settings-section" id="settings-members-section">
@@ -960,7 +950,7 @@
           <fieldset class="settings-section" id="settings-cats-section">
             <legend class="settings-legend">成员与模型</legend>
             <p class="settings-desc">
-              真实模式下可以给每个成员单独指定模型和温度；留空则跟随全局。改完点行内「保存模型」。
+              可以给每个成员单独指定模型和温度；留空则跟随全局。改完点行内「保存模型」。
             </p>
 
             <div class="model-profiles" id="model-profiles-section">
@@ -993,7 +983,7 @@
           <!-- 8. 回复节奏 -->
           <fieldset class="settings-section">
             <legend class="settings-legend">回复节奏</legend>
-            <p class="settings-desc">只影响演出与真实模式的打字节奏。</p>
+            <p class="settings-desc">只影响成员打字节奏（真实模型思考时间不受影响）。</p>
             <div class="segmented" role="radiogroup" aria-label="回复节奏">
               <label class="segment">
                 <input type="radio" name="settings-speed" value="slow" />
@@ -1016,7 +1006,7 @@
                 <span class="switch-text">流式输出</span>
               </label>
               <p class="field-hint" id="settings-streaming-hint">
-                开启后真实模式下成员的话会逐段出现；关闭则等整段说完再显示。演出模式不受影响。
+                开启后成员的话会逐段出现（首句更快）；关闭则等整段说完再显示。
               </p>
             </div>
           </fieldset>
@@ -1025,7 +1015,7 @@
           <fieldset class="settings-section" id="settings-scenarios-section">
             <legend class="settings-legend">剧本库</legend>
             <p class="settings-desc">
-              内置剧本可导出；导入的自定义剧本会出现在新任务弹窗里，也可以删除。
+              剧本只作示例素材（不会被真实任务自动使用），可以导出、导入或删除。
             </p>
 
             <div class="scenario-toolbar">
@@ -1293,7 +1283,7 @@
               <button type="button" class="link-btn" data-action="clear-all-skills">清空</button>
             </span>
           </div>
-          <p class="field-hint">技能包会注入真实模式的 system prompt；未单独配置时使用默认。</p>
+          <p class="field-hint">技能包会注入 system prompt；未单独配置时使用默认。</p>
           <div id="cat-access-skills" class="access-list">
             <div class="empty"><span>读取技能包…</span></div>
           </div>
@@ -1781,7 +1771,7 @@
         </header>
         <p class="modal-sub" id="model-profile-confirm-sub">确认应用这套模型分工？</p>
         <p class="model-profile-warning">
-          会覆盖当前所有成员的模型与温度设置，可能影响真实模式下的调用成本与速度。
+          会覆盖当前所有成员的模型与温度设置，可能影响调用成本与速度。
           「统一模型」会清空所有按成员设置，全部跟随全局模型。
         </p>
         <p class="form-error" id="model-profile-confirm-error" role="alert" hidden></p>

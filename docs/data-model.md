@@ -27,7 +27,7 @@ interface StudioState {
   typing: Record<RoomId, CatId | null>;
   drafts: Record<RoomId, { catId: CatId; text: string; at: number } | null>;
   seq: number;       // 单调递增，SSE 去重
-  mode: BrainMode;   // "mock" | "llm"
+  mode: BrainMode;   // 恒为 "llm"（字段保留兼容；产品只有真实模式）
   startedAt: number;
 }
 ```
@@ -244,8 +244,7 @@ interface Task {
   updatedAt: number;
   doneAt?: number;
   git?: TaskGit;
-  health?: TaskHealth;       // 模型降级汇总，只有真实模式降级过才存在
-  scenarioFallback?: boolean; // 需求没命中剧本、退而用近似剧本演出
+  health?: TaskHealth;       // 模型调用失败汇总，失败过才存在
 }
 ```
 
@@ -253,22 +252,18 @@ interface Task {
 
 ```ts
 interface TaskHealth {
-  degradedCount: number;         // 累计降级次数
+  degradedCount: number;         // 累计模型调用失败次数
   lastDegradeReason?: string;    // 最近一次原因（截断）
   lastDegradeStage?: TaskStage;  // 最近一次发生在哪个阶段
   warned: boolean;               // 是否已提醒过负责人（避免刷屏）
 }
 ```
 
-`scenarioFallback` 为 true 时，说明需求没有命中任何剧本、只是用近似剧本把演出跑完：
-任务卡会显示「近似演出」，且**不写场景决策记忆**（只落一条 `fallback-scenario` 教训）。
+模型调用失败时**不会退回演出台词**：driver 会把任务暂停（`status = "stalled"`）并落一条
+系统消息说明原因，由负责人决定继续 / 换方案 / 收尾。失败次数汇总在 `health` 里：
 
-模型调用失败时会**静默降级**回演出台词，任务照常完成但产出质量掉档。为了让负责人
-不用翻轨迹就知道，降级会在 `finishLlmCall` 时累加到这里：
-
-- 第一次降级额外落一条系统消息（「后续产出可能不可信」）；
-- 之后只累加计数，不再刷屏；
-- 前端在任务卡和任务搜索里显示 `⚠ 降级 N` 徽标，悬停看原因。
+- 前端在任务卡与任务搜索显示 `⚠ 调用失败 N` 徽标，悬停看最近原因；
+- 任务轨迹里的 `LlmCall.degraded / degradeReason` 保留原始记录。
 
 ### 阶段
 
@@ -364,7 +359,7 @@ interface Artifact {
 
 interface ArtifactTrace {
   stage: TaskStage;      // 产出时所在阶段
-  llmCallId?: string;    // 哪次模型调用写出来的（演出模式下可能没有）
+  llmCallId?: string;    // 哪次模型调用写出来的
   trigger?: TriggerKind; // 这一轮被什么触发（handoff / review_result / nudge…）
 }
 ```
@@ -454,7 +449,7 @@ interface LlmCall {
   inputTokens?: number;
   outputTokens?: number;
   streamed?: boolean;
-  degraded?: boolean;            // 失败降级到 mock
+  degraded?: boolean;            // 本次调用失败
   degradeReason?: string;
   retried?: boolean;             // max_tokens 截断后重试
   turnKinds?: string[];          // 本轮产出了哪些 turn kind

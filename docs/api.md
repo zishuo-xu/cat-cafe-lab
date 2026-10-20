@@ -81,7 +81,10 @@
 ```json
 {
   "ok": true,
-  "mode": "mock",
+  "mode": "llm",
+  "configured": true,
+  "model": "deepseek-v4.1-flash",
+  "engine": "api",
   "seq": 41,
   "stallMs": 12000,
   "settings": true
@@ -90,7 +93,9 @@
 
 | 字段 | 说明 |
 |---|---|
-| `mode` | `mock`（演出模式）/ `llm`（真实模式） |
+| `mode` | 恒为 `llm`（产品只有真实模式，字段保留兼容） |
+| `configured` | 模型是否已配好（Base URL + 模型名）。**未配置时派活会被 412 拦下** |
+| `model` / `engine` | 当前模型名与引擎（`api` / `cli`） |
 | `seq` | 当前状态版本号，与 SSE 的 `seq` 对齐 |
 | `stallMs` | 「卡住」判定阈值（默认 12000） |
 | `settings` | 设置子系统是否启用 |
@@ -116,7 +121,7 @@
   "typing": { "room_cafe": null },
   "drafts": {},
   "seq": 41,
-  "mode": "mock",
+  "mode": "llm",
   "startedAt": 1792420785923
 }
 ```
@@ -171,7 +176,8 @@ data: {"seq":42,"state":{...}}
 
 ```json
 {
-  "mode": "mock",
+  "mode": "llm",
+  "configured": true,
   "speed": "normal",
   "llm": {
     "baseUrl": "https://api.example.com/v1",
@@ -442,10 +448,8 @@ CSV 的任务，但忘了在哪个房间」这类检索。
 
 - `roomId` 缺省为 `room_cafe`；`brief` 4–2000 字。
 - `scenarioId` 省略或不存在时，按需求关键词自动匹配剧本。
-- **没匹配到任何剧本时**：仍然会用一个剧本把演出跑完（否则无 key 时一片空白），
-  但任务会带 `scenarioFallback: true`、首条系统消息说明「近似演出」，
-  且**不写场景决策记忆**（只落一条诚实的 `fallback-scenario` 教训）。
-  显式传 `scenarioId` 时永远不算回落。详见 [known-issues.md](known-issues.md)。
+- **未配置模型时**：返回 `412 { "error": "...", "code": "llm_unconfigured" }`——不会建出一个假装在干活的任务。
+- `scenarioId` 只作历史标识（内置剧本是示例素材），真实任务由模型按需求原文处理。
 - 如果房间绑定的是**读写 git 工作区**且开启任务分支，会先创建 `deliverylab/<taskId>` 分支（失败只记录提示，不阻塞任务）。
 - 返回 `201` + `Task`（结构见 data-model）。
 - 错误：`400`（`brief` 长度不合法）；`roomId` 不存在时返回 `404`。

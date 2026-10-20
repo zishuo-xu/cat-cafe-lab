@@ -1,13 +1,14 @@
-# 真实模式（LLM）配置与行为
+# 模型配置与行为（LLM）
 
-交付台默认是**演出模式**：零 API key、确定性台词，打开就能看完一次完整协作。
-配好模型后切到**真实模式**：四个成员的台词与交接由真实模型生成，协作流程（谁接活、
-交接顺序、review 打回、谁写得进记忆）保持不变。
+交付台**只有一种运行形态**：接上模型干活。成员会真的读文件、跑测试、改代码，
+协作流程（谁接活、交接顺序、review 打回、谁写得进记忆）由引擎决定。
 
-真实模式的实现只有两处：
+**没接上模型时**只能聊天（成员会直说「还没接上模型」），派活会被 `412` 拦下并引导去配置。
 
-- `src/server/settings.ts` / `src/server/settings-store.ts` —— 环境变量默认值 + 运行时设置面板，判定与切换模式；
-- `src/agents/llm-brain.ts` —— 调用 OpenAI 兼容端点，失败时降级到 mock brain。
+实现只有两处：
+
+- `src/server/settings.ts` / `src/server/settings-store.ts` —— 环境变量默认值 + 运行时设置面板，维护连接配置；
+- `src/agents/llm-brain.ts` —— 调用 OpenAI 兼容端点；**调用失败不退回假台词**，而是把失败上报给 driver 暂停任务。
 
 ---
 
@@ -23,17 +24,17 @@
 | `DELIVERYLAB_DATA_DIR` | 否 | `data` | 状态持久化目录（`studio.json`） |
 | `DELIVERYLAB_STALL_MS` | 否 | `12000` | 任务卡住判定阈值 |
 
-**模式判定**：`LLM_BASE_URL` 和 `LLM_MODEL` 都非空才进入真实模式，否则演出模式。
-`GET /api/health` 返回的 `mode` 字段可以确认当前模式。
+**是否已配置**：`LLM_BASE_URL` 和 `LLM_MODEL` 都非空才算配好（`LLM_API_KEY` 看端点要求）。
+`GET /api/health` 的 `configured` 字段可以确认；`mode` 字段恒为 `llm`，保留兼容。
 
-> 也可以完全不用环境变量：打开工作台左上角 ⚙️ **设置面板**，填 Base URL / 模型 / Key 后
-> 点「测试连接」并保存，运行中即时切换。面板保存的值会覆盖环境变量；API Key 只存在进程内存，
+> 也可以完全不用环境变量：打开工作台左上角 ⚙️ **设置面板**（第一屏就是「LLM 连接」），
+> 填 Base URL / 模型 / Key 后点「测试连接」并保存，运行中即时生效。面板保存的值会覆盖环境变量；API Key 只存在进程内存，
 > 不回传、不落盘。下面的环境变量方式仍然可用，作为启动默认值。
 
 ### 每个成员独立模型
 
 设置面板「成员与模型」里可以给每个成员单独填 `llmModel` 和 `llmTemperature`
-（等价于 `PUT /api/cats/:id`）。真实模式下，llm-brain 每次调用按当前这个成员解析：
+（等价于 `PUT /api/cats/:id`）。llm-brain 每次调用按当前这个成员解析：
 
 - `Cat.llmModel` 非空 → 用这个成员的模型；空/缺省 → 用全局 `LLM_MODEL`；
 - `Cat.llmTemperature` 是数字（包括 `0`）→ 用它；否则回落全局 `LLM_TEMPERATURE`；
@@ -41,17 +42,17 @@
 
 这样可以让林知远用推理模型、陈实用便宜快速的模型，而不需要维护多个 brain 实例。
 
-### 真实模式与沙盒工具
+### 模型与沙盒工具
 
-真实模式下，llm-brain 的输出第 7 种 turn 是 `kind:"tool"`，可用工具来自 `TurnContext.availableTools`：
+模型的输出第 7 种 turn 是 `kind:"tool"`，可用工具来自 `TurnContext.availableTools`：
 内置沙盒四个工具 + 已连接的 MCP server 工具（按按成员权限过滤）。driver 执行后以
 `trigger.kind="tool_result"` 再叫一次，把 exitCode 和输出喂回去（最多连续 3 轮）。
 
-`TurnContext.skills` 里的技能包会以 `### <name>` + prompt 全文注入 system prompt（演出模式不生效）。
+`TurnContext.skills` 里的技能包会以 `### <name>` + prompt 全文注入 system prompt。
 MCP 工具默认风险 `needs_approval`，模型调用会进审批队列。
 
-模型主动发起的命令默认要负责人审批（`commands` 策略），拒绝会以 `rejected` 回喂；
-剧本里的工具节拍永远自动放行。详见 README「真实模式：成员会自己决定用工具」。
+模型主动发起的命令默认要负责人审批（`commands` 策略），拒绝会以 `rejected` 回喂。
+详见 README「成员会自己决定用工具」。
 
 ### 启动示例
 
@@ -194,32 +195,33 @@ Prompt 会带上：
 - `mentions`、`handoff.to` 只保留房间里存在的 catId，交接给自己或被 @ 到不存在的成员会被丢弃；
 - 一次最多接受 6 个 turn，`delayMs` 被夹到 `0 ~ 8000`。
 
-校验后一条合法 turn 都不剩，视为整轮失败 → 降级。
+校验后一条合法 turn 都不剩，视为整轮失败 → **暂停任务**（见第 3 节）。
 
 ---
 
-## 3. 降级行为
+## 3. 失败行为（不退回假台词）
 
-真实模式的核心承诺：**模型不可靠，但演出不能停**。
+核心承诺：**模型不可靠，但结果不能被伪装**。调用失败时不会退回演出台词假装还在干活，
+而是把失败上报给 driver，**暂停任务**并把决定权交回给人。
 
 | 失败情况 | 行为 | 日志（一行） |
 |---|---|---|
-| HTTP 非 2xx | `fallback.think(ctx)` | `[llm-brain] HTTP 500，降级 fallback（成员=林知远，stage=reviewing）` |
-| 响应体不是 JSON | `fallback.think(ctx)` | `…响应不是合法 JSON envelope…` |
-| 缺 `choices[0].message.content` | `fallback.think(ctx)` | `…响应缺少 choices[0].message.content…` |
-| 内容不是可用 `CatTurn[]`（坏 JSON / 全被校验过滤） | `fallback.think(ctx)` | `…模型输出不是可用的 CatTurn[]…` |
-| 请求超过 **20s** | abort → `fallback.think(ctx)` | `…请求超时 20000ms…` |
-| 网络错误（DNS / 连接失败） | `fallback.think(ctx)` | `…网络错误：fetch failed…` |
-| `LLM_BASE_URL` / `LLM_MODEL` 缺失 | `fallback.think(ctx)` | `…LLM_BASE_URL 缺失或非法…` |
+| HTTP 非 2xx | 上报 `failed`，任务暂停 | `[llm-brain] HTTP 500，降级 fallback（成员=林知远，stage=reviewing）` |
+| 响应体不是 JSON | 同上 | `…响应不是合法 JSON envelope…` |
+| 缺 `choices[0].message.content` | 同上 | `…响应缺少 choices[0].message.content…` |
+| 内容不是可用 `AgentTurn[]` | 同上 | `…模型输出不是可用的 AgentTurn[]…` |
+| 请求超时 | abort → 同上 | `…请求超时 30000ms…` |
+| 网络错误（DNS / 连接失败） | 同上 | `…网络错误：fetch failed…` |
 
 要点：
 
-- 降级调用的是 `fallback.think(ctx)`，也就是**确定性 mock brain**，所以任务状态机、
-  交接、review、记忆照常推进，只是台词变回演出稿；
-- 每次失败只 `console.warn` **一行**，不抛异常、不中断 driver；
-- 超时是 per-request 的 `AbortController`，不用全局定时器，不会影响其他成员的轮次；
-- 模型的个别 turn 不合法只丢弃该 turn，不整轮降级（只有一条都不剩才降级）；
-- 恢复不需要重启：下一次 `think()` 会重新请求模型。
+- 暂停时任务 `status` 变 `stalled`，聊天区落一条系统消息说明原因：
+  「模型调用失败：<原因>。任务已暂停（不是卡住，是真实报错）——你可以「继续试试」「换个方案」或「收尾」。」
+- 恢复面板复用现有的三选一；「继续试试」会重试，若仍失败会再次暂停并累加 `Task.health`。
+- **流式输出被提前断开**（没有 `finish_reason`）时会先改用**非流式重试一次**；
+  非流式也拿不到才判定失败，避免把「端点流式实现不完整」当成模型不可用。
+- 模型的个别 turn 不合法只丢弃该 turn（只有一条都不剩才算整轮失败）。
+- 失败的这一轮**不写共享记忆**（避免把错内容沉淀成后续任务的上下文）。
 
 ---
 
@@ -251,11 +253,11 @@ node --test tests/llm.test.ts
 ```
 
 测试覆盖：合法 JSON 被正确解析（并断言请求体带成员名与 brief）、坏 JSON / HTTP 500 /
-超时 / 网络错误全部降级、结构校验（未知 kind、缺栏卡片、非法 verdict）、以及
-“日志不出现 apiKey”。
+超时 / 网络错误都上报 `failed`（不调用 fallback、返回空数组）、结构校验（未知 kind、
+缺栏卡片、非法 verdict）、以及“日志不出现 apiKey”。
 
-集成测试（临时 dataDir + 端口 0）真跑完整链路，其中一组专门验证“真实模式端点
-全程不可用 → 每次失败降级、日志不泄 key，但六阶段协作 + review 打回 + 记忆照常跑完”：
+集成测试（临时 dataDir + 端口 0）真跑完整链路，其中一组专门验证“端点全程不可用 →
+任务暂停 + 给出原因 + 不写记忆、继续后仍失败会再次暂停”：
 
 ```bash
 node --test tests/integration.test.ts
@@ -274,11 +276,11 @@ curl -s "${LLM_BASE_URL}/chat/completions" \
 
 | 现象 | 可能原因 |
 |---|---|
-| `/api/health` 的 `mode` 仍是 `mock` | `LLM_BASE_URL` 或 `LLM_MODEL` 为空（注意 `export`） |
+| `/api/health` 的 `configured` 是 `false` | `LLM_BASE_URL` 或 `LLM_MODEL` 为空（注意 `export`） |
 | 一直看到 `HTTP 404` | `LLM_BASE_URL` 多写了 `/chat/completions`，或少了 `/v1` |
 | 一直看到 `HTTP 401/403` | key 无效或没权限访问该模型 |
-| 台词看起来像模板 | 已在降级；看服务端 stderr 的 `[llm-brain]` warn 行定位原因 |
+| 任务突然「卡住了」并提示模型调用失败 | 看服务端 stderr 的 `[llm-brain]` 行与任务轨迹，常见是端点/模型/key 配错 |
 | 模型输出被大量丢弃 | 换更强的模型，或调低 `LLM_TEMPERATURE`（如 `0.3`） |
 
-> 真实模式的协作纪律由 engine 决定，模型只负责“说什么”和“怎么交接”。
-> 因此即使模型持续失败，任务依然会按场景跑完 —— 这是有意设计。
+> 协作纪律由 engine 决定，模型只负责“说什么”和“怎么交接”。
+> 模型持续失败时任务会暂停，而不是按剧本演完——这是有意设计：不给你假结果。
