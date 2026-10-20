@@ -1403,6 +1403,7 @@ function renderTasks() {
           task.owner,
           task.updatedAt,
           task.health?.degradedCount ?? 0,
+          task.scenarioFallback ? 1 : 0,
         ].join(":"),
       )
       .join("|") +
@@ -1439,6 +1440,9 @@ function renderTasks() {
           : task.status === "done"
             ? "已完成"
             : `更新于 ${fmtTime(task.updatedAt)}`;
+      // 强制收尾（3 轮修订仍不通过）的任务状态也是 done，但交付物可能是半成品。
+      const closedUnreviewed =
+        task.status === "done" && lastReviewVerdictForTask(task.id) === "request_changes";
 
       return h(
         "button",
@@ -1476,6 +1480,20 @@ function renderTasks() {
                   `模型调用降级 ${task.health.degradedCount} 次，产出可能不可信` +
                   (task.health.lastDegradeReason ? `。原因：${task.health.lastDegradeReason}` : ""),
                 text: `⚠ 降级 ${task.health.degradedCount}`,
+              })
+            : null,
+          task.scenarioFallback
+            ? h("span", {
+                class: "task-fallback-badge",
+                title: "需求没有匹配的演示剧本，本轮是近似演出，决策不会写进共享记忆",
+                text: "近似演出",
+              })
+            : null,
+          closedUnreviewed
+            ? h("span", {
+                class: "task-unreviewed-badge",
+                title: "最后一轮评审仍要求修改，任务被强制收尾——产物可能是半成品",
+                text: "未通过评审",
               })
             : null,
         ),
@@ -1581,6 +1599,20 @@ function renderTaskSearchResults(query) {
                   text: `⚠ 降级 ${task.health.degradedCount}`,
                 })
               : null,
+            task.scenarioFallback
+              ? h("span", {
+                  class: "task-fallback-badge",
+                  title: "需求没有匹配的演示剧本，本轮是近似演出，决策不会写进共享记忆",
+                  text: "近似演出",
+                })
+              : null,
+            task.status === "done" && lastReviewVerdictForTask(task.id) === "request_changes"
+              ? h("span", {
+                  class: "task-unreviewed-badge",
+                  title: "最后一轮评审仍要求修改，任务被强制收尾——产物可能是半成品",
+                  text: "未通过评审",
+                })
+              : null,
           ),
         ),
       );
@@ -1621,6 +1653,22 @@ function reviewLoopMemoryForTask(taskId) {
       entry.tags.includes("review-loop"),
   );
   return matches.length ? matches[matches.length - 1] : null;
+}
+
+/**
+ * 任务最后一次评审的结论。
+ *
+ * 用来标记「强制收尾但没过评审」的任务：3 轮修订后仍 request_changes 会被强制收尾，
+ * 状态是 done，但交付物可能是半成品。以前只能靠翻最后一条 review 才知道，
+ * 任务卡上看起来和正常完成一模一样。
+ */
+function lastReviewVerdictForTask(taskId) {
+  if (!taskId) return null;
+  const reviews = (app.state?.artifacts ?? [])
+    .filter((artifact) => artifact.taskId === taskId && artifact.kind === "review")
+    .sort((a, b) => a.createdAt - b.createdAt);
+  const last = reviews[reviews.length - 1];
+  return last ? parseVerdict(last.body) : null;
 }
 
 /**

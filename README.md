@@ -86,7 +86,7 @@ node src/main.ts
 点「＋ 新任务」→ 选「记住我」示例 → 「让成员开工」，然后看着就行。
 
 ```bash
-node --test tests/    # 293 个测试（也可以直接在页面上跑）
+node --test tests/    # 313 个测试（也可以直接在页面上跑）
 npx tsc --noEmit      # 类型检查
 ```
 
@@ -627,7 +627,7 @@ delivery-lab/
 ├── public/            index.html、app.js、styles.css、avatars.js
 ├── tools/             probe.py、matrix.py（真实模型测试驱动）
 ├── examples/mcp/      零依赖示例 MCP server（团队记事本）
-├── tests/             21 个测试文件、67 个套件、293 个测试
+├── tests/             22 个测试文件、75 个套件、313 个测试
 ├── docs/              见下方「文档地图」
 ├── data/              studio.json、settings.json、workspaces.json、mcp.json、workspace/（gitignore）
 └── PLAN.md            设计与分工记录

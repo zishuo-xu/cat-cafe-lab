@@ -884,27 +884,36 @@ export function createDriver(deps: {
             taskId: task.id,
             artifactId: artifact.id,
           });
-          for (const entry of turn.memory) {
-            studio.addMemory({
-              kind: entry.kind,
-              title: entry.title,
-              body: entry.body,
-              tags: entry.tags,
-              sourceTaskId: task.id,
-            });
+          // 近似剧本：产物和消息照常落（演出要看得见），但**不写共享记忆**。
+          // 剧本自带的决策/教训是给那个剧本写的，套到不相干的需求上会污染后续任务
+          // 的上下文（实测：拿「记住我」剧本演「优化首页速度」，共享记忆里多出
+          // 两条 token 过期策略，且 sourceTaskId 指向那条无关需求）。
+          if (!task.scenarioFallback) {
+            for (const entry of turn.memory) {
+              studio.addMemory({
+                kind: entry.kind,
+                title: entry.title,
+                body: entry.body,
+                tags: entry.tags,
+                sourceTaskId: task.id,
+              });
+            }
           }
           applied.lastArtifact = artifact;
           break;
         }
 
         case "memory": {
-          studio.addMemory({
-            kind: turn.memory.kind,
-            title: turn.memory.title,
-            body: turn.memory.body,
-            tags: turn.memory.tags,
-            ...(task ? { sourceTaskId: task.id } : {}),
-          });
+          // 近似剧本里写的记忆同样不可信：只保留对话，不落共享记忆。
+          if (!task?.scenarioFallback) {
+            studio.addMemory({
+              kind: turn.memory.kind,
+              title: turn.memory.title,
+              body: turn.memory.body,
+              tags: turn.memory.tags,
+              ...(task ? { sourceTaskId: task.id } : {}),
+            });
+          }
           studio.appendMessage({
             roomId: room.id,
             author: cat.id,

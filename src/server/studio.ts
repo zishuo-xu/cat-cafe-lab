@@ -66,6 +66,8 @@ export interface CreateTaskInput {
   brief: string;
   scenarioId: string;
   title?: string;
+  /** 需求没匹配到剧本、退而用近似剧本时置 true（见 Task.scenarioFallback）。 */
+  scenarioFallback?: boolean;
 }
 
 /** 成员档案可编辑字段；id / role / avatar / discipline 不可改。 */
@@ -243,6 +245,7 @@ export class Studio {
       steps: [],
       createdAt: now(),
       updatedAt: now(),
+      ...(input.scenarioFallback ? { scenarioFallback: true } : {}),
     };
     this.state.tasks.push(task);
     this.notify();
@@ -282,6 +285,20 @@ export class Studio {
 
     const task = this.getTask(taskId);
     if (!task) return null;
+
+    // 近似剧本：不要把「假戏」的决策写进共享记忆，但要留一条诚实的记录，
+    // 说明这个需求为什么没有被真正处理 —— 否则负责人下次只会觉得莫名其妙。
+    if (task.scenarioFallback) {
+      return this.addMemory({
+        kind: "lesson",
+        title: `任务「${task.title.slice(0, 40)}」没有匹配的演示剧本`,
+        body:
+          `需求没有命中任何内置剧本，本轮用「${task.scenarioId}」近似演出，` +
+          `台词与决策跟需求无关，未写入场景记忆。要真正处理这个需求，请切到真实模式或补充剧本。`,
+        tags: ["fallback-scenario", task.scenarioId],
+        sourceTaskId: task.id,
+      });
+    }
 
     const delivery = this.deliverySummary(taskId);
     const verdict =

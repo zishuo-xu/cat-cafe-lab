@@ -57,6 +57,14 @@ export interface HttpDeps {
 
 const MAX_BODY = 64 * 1024;
 const MAX_TEXT = 2000;
+/**
+ * SSE 合并窗口（ms）。
+ *
+ * 一次状态变更链会连着触发很多次 notify（落一条消息、改一个状态位、清个草稿…），
+ * 每条都推全量快照会把带宽和前端渲染打满：实测 14 秒 39 个事件、共 1.8MB。
+ * 合并到每 120ms 最多一帧，只发最新状态；人眼感知不到这点延迟，长任务却稳很多。
+ */
+const SSE_COALESCE_MS = 120;
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -128,7 +136,18 @@ export function parseMentions(text: string, studio: Studio, roomId: RoomId): Mem
   return [...found];
 }
 
-function pickScenario(scenarios: Scenario[], brief: string): string {
+/**
+ * 按需求关键词选剧本。
+ *
+ * 注意 `matched`：以前不管有没有命中，都退回 `scenarios[0]`，而且外面完全不知道
+ * 这是「没匹配上」。结果是把「记住我」的剧本演给「优化首页加载速度」，
+ * 跑完还往共享记忆里写 token 过期策略 —— 需求被一个不相干的剧本代表，
+ * 新手会直接判断「它根本没懂」。
+ */
+function pickScenario(
+  scenarios: Scenario[],
+  brief: string,
+): { id: string; matched: boolean } {
   const text = brief.toLowerCase();
   let best: { id: string; score: number } | null = null;
   for (const scenario of scenarios) {
@@ -139,7 +158,9 @@ function pickScenario(scenarios: Scenario[], brief: string): string {
     }
     if (!best || score > best.score) best = { id: scenario.id, score };
   }
-  return best?.id ?? scenarios[0]?.id ?? "remember_me";
+  const fallbackId = scenarios[0]?.id ?? "remember_me";
+  if (!best) return { id: fallbackId, matched: false };
+  return { id: best.id, matched: best.score > 0 };
 }
 
 const CAT_TEXT_FIELDS = ["name", "title", "persona", "catchphrase", "greeting", "accent"] as const;
@@ -420,9 +441,19 @@ export function createHttpServer(deps: HttpDeps): Server {
         topic?: unknown;
       };
       const name = typeof body.name === "string" ? body.name.trim() : "";
-      const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId : "";
+      const workspaceId = typeof body.workspaceId === "string" ? body.workspaceId.trim() : "";
+      // 必填字段没传，和「传了但查不到」是两回事：以前都报「不存在」，
+      // 用户看着自己明明没传这个字段，不知道该怎么办。
+      if (!workspaceId) {
+        fail(
+          res,
+          400,
+          "workspaceId 必填：先选一个工作区（内置 ws_sandbox，或先在设置里添加仓库）",
+        );
+        return;
+      }
       if (!workspaces.get(workspaceId)) {
-        fail(res, 400, "workspaceId 不存在");
+        fail(res, 400, `workspaceId 不存在：${workspaceId}`);
         return;
       }
       try {
@@ -1111,11 +1142,20 @@ export function createHttpServer(deps: HttpDeps): Server {
         );
         return;
       }
-      const scenarioId =
+      // 显式指定剧本时以用户为准；否则按关键词匹配，并记住有没有真的命中。
+      const explicitScenarioId =
         typeof body.scenarioId === "string" && scenarios.some((s) => s.id === body.scenarioId)
           ? body.scenarioId
-          : pickScenario(scenarios, brief);
-      const task = studio.createTask({ roomId, brief, scenarioId });
+          : null;
+      const picked = explicitScenarioId
+        ? { id: explicitScenarioId, matched: true }
+        : pickScenario(scenarios, brief);
+      const task = studio.createTask({
+        roomId,
+        brief,
+        scenarioId: picked.id,
+        ...(picked.matched ? {} : { scenarioFallback: true }),
+      });
       // 读写 git 工作区：任务开始前建分支（工作树不干净时只记录提示，不阻塞任务）。
       const room = studio.getRoom(roomId);
       if (room && workspaces) {
@@ -1142,6 +1182,18 @@ export function createHttpServer(deps: HttpDeps): Server {
         text: brief,
         taskId: task.id,
       });
+      if (!picked.matched) {
+        studio.appendMessage({
+          roomId,
+          author: "system",
+          kind: "system",
+          taskId: task.id,
+          text:
+            `这个需求没有匹配的演示剧本，本轮用「${picked.id}」近似演出：` +
+            `过程可以参考，但台词和决策跟你的需求无关，也不会写进共享记忆。` +
+            `想看到针对性的演出，可以在「＋ 新任务」里显式选一个剧本。`,
+        });
+      }
       driver.submit({ type: "task_created", roomId, taskId: task.id });
       json(res, 201, task);
       return;
@@ -1190,7 +1242,13 @@ export function createHttpServer(deps: HttpDeps): Server {
             ...(result.commit ? { commit: result.commit } : {}),
             committedAt: Date.now(),
           });
-          json(res, 200, { ok: true, commit: result.commit, task: updated });
+          json(res, 200, {
+            ok: true,
+            commit: result.commit,
+            task: updated,
+            // 被挡下的敏感文件：告诉负责人它们还在工作区里，但没进这次提交。
+            ...(result.skipped?.length ? { skipped: result.skipped } : {}),
+          });
           return;
         }
 
@@ -1292,16 +1350,35 @@ export function createHttpServer(deps: HttpDeps): Server {
     });
     res.write("retry: 3000\n\n");
 
-    const send = (state: StudioState): void => {
+    const write = (state: StudioState): void => {
+      if (res.writableEnded) return;
       res.write(`data: ${JSON.stringify({ seq: state.seq, state })}\n\n`);
     };
-    send(studio.snapshot());
+    // 连上先给一帧全量快照，首屏不等合并窗口。
+    write(studio.snapshot());
 
-    const unsubscribe = studio.subscribe(send);
+    // 之后的变更合并推送：只保留最新状态，每 SSE_COALESCE_MS 最多发一帧。
+    let flushTimer: NodeJS.Timeout | null = null;
+    let pending: StudioState | null = null;
+    const schedule = (state: StudioState): void => {
+      pending = state;
+      if (flushTimer) return;
+      flushTimer = setTimeout(() => {
+        flushTimer = null;
+        const latest = pending;
+        pending = null;
+        if (latest) write(latest);
+      }, SSE_COALESCE_MS);
+      flushTimer.unref?.();
+    };
+
+    const unsubscribe = studio.subscribe(schedule);
     const heartbeat = setInterval(() => res.write(": ping\n\n"), 15000);
     heartbeat.unref?.();
 
     req.on("close", () => {
+      if (flushTimer) clearTimeout(flushTimer);
+      flushTimer = null;
       clearInterval(heartbeat);
       unsubscribe();
     });

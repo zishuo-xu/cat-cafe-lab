@@ -243,6 +243,7 @@ interface Task {
   doneAt?: number;
   git?: TaskGit;
   health?: TaskHealth;       // 模型降级汇总，只有真实模式降级过才存在
+  scenarioFallback?: boolean; // 需求没命中剧本、退而用近似剧本演出
 }
 ```
 
@@ -256,6 +257,9 @@ interface TaskHealth {
   warned: boolean;               // 是否已提醒过负责人（避免刷屏）
 }
 ```
+
+`scenarioFallback` 为 true 时，说明需求没有命中任何剧本、只是用近似剧本把演出跑完：
+任务卡会显示「近似演出」，且**不写场景决策记忆**（只落一条 `fallback-scenario` 教训）。
 
 模型调用失败时会**静默降级**回演出台词，任务照常完成但产出质量掉档。为了让负责人
 不用翻轨迹就知道，降级会在 `finishLlmCall` 时累加到这里：

@@ -1015,7 +1015,10 @@ export function buildSystemPrompt(ctx: TurnContext, model: string): string {
         `当前阶段：${STAGE_LABEL[task.stage] ?? task.stage}`,
         `阶段负责人：${task.owner === selfId ? `你（${cat.name}）` : task.owner}`,
         `任务状态：${task.status}`,
-        `场景 id：${task.scenarioId}`,
+        // 近似剧本的 id 跟当前需求无关，写进 prompt 只会把模型往那个剧本上带偏。
+        task.scenarioFallback
+          ? `场景 id：（没有匹配的演示剧本，按需求本身处理）`
+          : `场景 id：${task.scenarioId}`,
       ].join("\n")
     : "【当前任务】没有进行中的任务，你只是在房间里聊天。";
 

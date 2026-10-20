@@ -771,6 +771,28 @@ button {
   white-space: nowrap;
 }
 
+/* 近似剧本：需求没命中任何剧本，本轮台词与决策不可信。 */
+.task-fallback-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #f3e7d6;
+  color: #8a5a22;
+  font-size: 9.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* 强制收尾但没过评审：状态是 done，产物却可能是半成品。 */
+.task-unreviewed-badge {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: #fdeccd;
+  color: #8a5a22;
+  font-size: 9.5px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 .task-meta .mini-avatar {
   width: 15px;
   height: 15px;

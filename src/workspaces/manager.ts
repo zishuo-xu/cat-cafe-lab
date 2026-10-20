@@ -34,6 +34,29 @@ import { Sandbox } from "../tools/sandbox.ts";
 
 const MAX_GIT_OUTPUT = 100_000;
 
+/**
+ * 不允许被「一键提交」带进 git 历史的路径。
+ *
+ * 背景：成员有 write_file 权限，模型可能顺手在仓库里写出 `.env`、私钥、
+ * secrets.json。以前提交一律 `git add -A`，这些文件会被静默写进提交历史
+ * （进了历史就算删掉也还在）。真实仓库上这是最容易咬人的一条。
+ *
+ * 模板文件（.env.example / .env.sample）不在此列，它们本来就该进版本库。
+ */
+const SENSITIVE_PATH_PATTERNS: readonly RegExp[] = [
+  /(?:^|\/)\.env$/i,
+  /(?:^|\/)\.env\.(?:local|development|production|prod|dev|test|staging)$/i,
+  /(?:^|\/)(?:id_rsa|id_ed25519|id_ecdsa)(?:\.pub)?$/i,
+  /\.(?:pem|key|p12|pfx|keystore|jks)$/i,
+  /(?:^|\/)\.netrc$/i,
+  /(?:^|\/)secrets?\.(?:json|ya?ml|toml)$/i,
+  /(?:^|\/)\.npmrc$/i,
+];
+
+function isSensitivePath(path: string): boolean {
+  return SENSITIVE_PATH_PATTERNS.some((pattern) => pattern.test(path));
+}
+
 const GIT_ENV = {
   ...process.env,
   GIT_TERMINAL_PROMPT: "0",
@@ -267,7 +290,7 @@ export class WorkspaceManager {
     workspaceId: string,
     taskGit: { branch?: string; baseBranch?: string } | undefined,
     message: string,
-  ): Promise<{ ok: boolean; commit?: string; error?: string }> {
+  ): Promise<{ ok: boolean; commit?: string; error?: string; skipped?: string[] }> {
     const workspace = this.get(workspaceId);
     if (!workspace) return { ok: false, error: "工作区不存在" };
     if (!workspace.isGit) return { ok: false, error: "不是 git 仓库" };
@@ -292,6 +315,8 @@ export class WorkspaceManager {
     }
     const added = await this.git(workspace.root, ["add", "-A"]);
     if (!added.ok) return { ok: false, error: added.stderr.trim() || "git add 失败" };
+    // 把敏感文件从暂存区撤下来，别让它们进提交历史。
+    const skipped = await this.unstageSensitiveFiles(workspace.root);
     const committed = await this.git(workspace.root, ["commit", "-m", cleanMessage]);
     if (!committed.ok) {
       const detail = `${committed.stdout}\n${committed.stderr}`.trim();
@@ -302,7 +327,25 @@ export class WorkspaceManager {
     if (taskGit?.baseBranch) {
       await this.git(workspace.root, ["checkout", taskGit.baseBranch]);
     }
-    return { ok: true, ...(head.ok ? { commit: head.stdout.trim() } : {}) };
+    return {
+      ok: true,
+      ...(head.ok ? { commit: head.stdout.trim() } : {}),
+      ...(skipped.length ? { skipped } : {}),
+    };
+  }
+
+  /** 从暂存区撤下敏感文件，返回被撤下的路径（供提交结果提示）。 */
+  private async unstageSensitiveFiles(root: string): Promise<string[]> {
+    const staged = await this.git(root, ["diff", "--cached", "--name-only", "-z"]);
+    if (!staged.ok || !staged.stdout) return [];
+    const sensitive = staged.stdout
+      .split("\0")
+      .map((path) => path.trim())
+      .filter((path) => path.length > 0 && isSensitivePath(path));
+    if (!sensitive.length) return [];
+    // `git reset -- <path>`：已跟踪文件退回未暂存，新文件退回未跟踪，都不删内容。
+    await this.git(root, ["reset", "-q", "--", ...sensitive]);
+    return sensitive;
   }
 
   /**
