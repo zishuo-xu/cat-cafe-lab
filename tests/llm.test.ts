@@ -1643,3 +1643,64 @@ describe("失败原因要能指导用户下一步", () => {
     });
   }
 });
+
+describe("端点返回空内容时先换非流式重试一次", () => {
+  test("第一次空内容（finish=stop）→ 非流式重试成功", async () => {
+    let calls = 0;
+    const bodies: Array<{ stream?: boolean }> = [];
+    const fake = (async (_url: string, init: { body?: string }) => {
+      calls += 1;
+      bodies.push(JSON.parse(String(init.body)) as { stream?: boolean });
+      if (calls === 1) {
+        // 复刻线上现象：finish=stop 但 content 为空
+        return new Response(
+          JSON.stringify({ choices: [{ message: { content: "" }, finish_reason: "stop" }] }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          choices: [
+            {
+              message: { content: JSON.stringify([{ kind: "message", text: "空内容后拿到了。" }]) },
+              finish_reason: "stop",
+            },
+          ],
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }) as unknown as typeof fetch;
+
+    const fallback = makeFallback();
+    const brain = createLlmBrain(
+      { baseUrl: "https://example.test/v1", model: "m", apiKey: "k", temperature: 0.7 },
+      fallback.brain,
+      { fetchImpl: fake, streaming: false },
+    );
+    const turns = await brain.think(makeContext());
+    assert.equal(calls, 2, "应该重试一次");
+    assert.equal(fallback.calls(), 0, "不该降级");
+    assert.match(String((turns[0] as { text?: string }).text), /空内容后拿到了/);
+  });
+
+  test("连续两次空内容 → 失败文案说明是空内容而非解析失败", async () => {
+    const fake = (async () =>
+      new Response(
+        JSON.stringify({ choices: [{ message: { content: "" }, finish_reason: "stop" }] }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      )) as unknown as typeof fetch;
+    const reports: Array<{ degradeReason?: string; failed?: boolean }> = [];
+    const brain = createLlmBrain(
+      { baseUrl: "https://example.test/v1", model: "m", apiKey: "k", temperature: 0.7 },
+      makeFallback().brain,
+      { fetchImpl: fake, streaming: false },
+    );
+    await brain.think(
+      makeContext({
+        onReport: (report) => reports.push(report),
+      }),
+    );
+    assert.equal(reports[0]?.failed, true);
+    assert.match(reports[0]?.degradeReason ?? "", /空内容/);
+  });
+});

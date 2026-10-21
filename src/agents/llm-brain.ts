@@ -188,6 +188,9 @@ export function createLlmBrain(
       // 而不是直接把整轮降级成演出台词。
       let streamMode = canStream;
       let streamFellBack = false;
+      // 端点偶尔返回「finish=stop 但 content 为空」（推理模型的思考链占满预算、
+      // 或网关抖动）。这种情况换非流式再要一次，通常能拿到正常 JSON。
+      let emptyContentRetried = false;
       const retryWithoutStream = (why: string): boolean => {
         if (!streamMode || streamFellBack) return false;
         streamFellBack = true;
@@ -284,6 +287,13 @@ export function createLlmBrain(
             );
           }
 
+          if (content.trim().length === 0 && !emptyContentRetried) {
+            emptyContentRetried = true;
+            streamMode = false;
+            warn("端点返回空内容（finish=" + String(finish) + "），改用非流式重试一次");
+            continue;
+          }
+
           const turns = parseTurns(content, ctx);
           if (turns.length === 0 && streamMode && !streamFellBack && finish === null) {
             // 流在没有 finish_reason 的情况下结束 = 被提前断开，JSON 大概率是半句。
@@ -300,6 +310,11 @@ export function createLlmBrain(
             if (retryWithoutStream("流式输出解析不出 turn")) continue;
             // 排查用：把模型原文的前 300 字打出来（已 scrub），否则只知道"解析失败"。
             const preview = content.replace(/\s+/g, " ").slice(0, 300);
+            if (content.trim().length === 0) {
+              return await downgrade(
+                `端点返回了空内容（finish=${finish ?? "-"}）。可能是推理模型的思考链占满了输出预算，或网关不稳定；建议换模型或调低推理强度。`,
+              );
+            }
             return await downgrade(
               `模型输出不是可用的 AgentTurn[]（finish=${finish ?? "-"}, len=${content.length}，原文前 300 字：${preview}）`,
             );
