@@ -76,9 +76,10 @@
 `CatBrain.think(ctx) → Promise<CatTurn[]>`。driver 不关心台词从哪来：
 
 - `mock-brain` 从场景 beats 取数据，确定、离线、可测试；
-- `llm-brain` 拼 prompt 调模型，失败降级到 mock。
+- `llm-brain` 拼 prompt 调模型；失败时**不降级**，而是上报 failed 让任务暂停（见 llm.md）。
 
-**代价**：mock 演出是"半脚本"的——成员的反应由场景数据 + 当前阶段决定，
+**历史背景**：早期为了「没有 key 也能演示」，内置过一套 mock 演出（成员反应由场景数据
++ 当前阶段决定）——现在产品只有真实模式，mock 仅作为测试替身保留。当时的代价是：
 不会真的理解新需求。这是有意的取舍：没有 key 也能完整演示协作流程，接了 key 才换脑子。
 
 ### 3. @ 路由不是装饰
@@ -124,7 +125,7 @@ intake ──► planning ──► working ──► reviewing ──► done
 
 设置面板（`GET/PUT /api/settings`、`POST /api/settings/test`）背后是 `SettingsStore`：
 
-- **切模式不重启**：driver 持有 `SwitchableBrain` 这层壳，设置保存时原地换成 mock 或 llm；
+- **改配置不重启**：driver 持有 `SwitchableBrain` 这层壳，设置保存时原地重建 brain（已配置 → 真模型；未配置 → 只会说“还没接上模型”的诚实 brain）；
 - **节奏只缩放延迟**：`wait(ms)` 乘上 `slow=1.7 / normal=1 / fast=0.5`，状态机不受影响；
 - **密钥边界**：`apiKey` 只存在进程内存。`getPublic()` 只回 `hasKey/keySource`，落盘的
   `data/settings.json`（0600）只有 `mode/speed/baseUrl/model/temperature`；
@@ -144,7 +145,7 @@ intake ──► planning ──► working ──► reviewing ──► done
   白名单字段的合法覆盖（改名/称号/性格/口头禅/招呼语/主题色），并做重名回退。
   id / role / avatar / species 不可改，所以 `room.catIds`、@ 路由、历史消息都不受影响。
 - **按成员模型**是 `Cat.llmModel / llmTemperature`：llm-brain 在每次 think 时从当前 `ctx.cat`
-  解析，空值回落全局。这样不用为每个成员维护一个 brain 实例，也不影响 mock 模式。
+  解析，空值回落全局。这样不用为每个成员维护一个 brain 实例。
 - **剧本库**的核心是数组引用稳定：`SCENARIOS` 在启动时一次性交给 driver / HTTP / brain，
   导入和删除都原地 `push/splice`，所以不需要重启，也不需要重建对象。
   导入前走 `scenario-validation.ts` 的逐条校验——坏剧本宁可拒绝，也不能把运行时带崩。
@@ -184,7 +185,7 @@ driver 只依赖 `ToolRegistry`，执行时先查内置、再遍历 provider；M
 
 **技能包**：`src/skills/registry.ts` 里四个内置技能（架构拆解 / Review 清单 / 设计系统 / TDD 纪律），
 `Cat.skills` 缺省时按角色回落。driver 用 `skillsForCat(cat)` 填 `TurnContext.skills`，
-llm-brain 把 name + prompt 全文塞进 system prompt；演出模式不调用模型，技能自然不生效。
+llm-brain 把 name + prompt 全文塞进 system prompt。
 
 **鉴权**：stdio server 支持 `env`（合并进子进程环境），http server 支持 `headers`（每个 JSON-RPC
 请求都带）。值的边界很硬：不回传前端（GET 只给 `envKeys` / `headerKeys`）、不进日志、错误信息脱敏、
@@ -225,7 +226,7 @@ driver 执行后用 `trigger.kind="tool_result"` 再叫同一个成员，把 exi
 
 **审批闸门**（`src/tools/approval.ts`）：
 
-- 只对「模型驱动」生效：`brain.mode === "llm"`；mock 剧本里的工具永远自动放行；
+- 只对「模型驱动」生效：`brain.mode === "llm"`（产品只有真实模式，mock 仅测试用）；
 - 策略：`auto` 不批 / `commands` 只批 `run_command` / `all` 全批；
 - pending 流程：`addToolCall(status:"pending")` → `await gate.request()` → 批准后
   `startToolCall` 再执行；拒绝则不执行，把 `rejected` 回喂给模型；
@@ -238,7 +239,7 @@ driver 执行后用 `trigger.kind="tool_result"` 再叫同一个成员，把 exi
 
 设置面板保存 `baseUrl + model` 后进入 `llm` 模式；也可以让 `LLM_BASE_URL` / `LLM_MODEL` /
 `LLM_API_KEY` 作为启动默认值。key 只存在进程内存，不落盘、不进日志。
-任何调用失败都降级到 mock，保证界面永远有内容。详见 [llm.md](./llm.md)。
+调用失败**不会**退回假台词：任务会暂停并说明原因，由负责人决定继续/换方案/收尾。详见 [llm.md](./llm.md)。
 
 ## 有意不做的事
 

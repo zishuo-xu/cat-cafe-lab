@@ -81,7 +81,7 @@ export function createCliBrain(
           env: options.env,
         });
       } catch (err) {
-        warn(`[cli-brain] 调用失败，降级 fallback：${err instanceof Error ? err.message : String(err)}`);
+        warn(`[cli-brain] 调用失败（任务将暂停）：${err instanceof Error ? err.message : String(err)}`);
         void fallback;
         return [];
       }
@@ -101,7 +101,7 @@ export function createCliBrain(
 
       const content = typeof envelope.result === "string" ? envelope.result : "";
       if (!content.trim()) {
-        warn("[cli-brain] CLI 返回空 result，降级 fallback");
+        warn("[cli-brain] CLI 返回空 result → 任务将暂停");
         void fallback;
         return [];
       }

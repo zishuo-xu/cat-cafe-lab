@@ -37,7 +37,7 @@ node src/main.ts
 3. 任务能走到某个阶段，不卡死。
 
 **常见失败**：模型返回 markdown 围栏 / 前后解说 → llm-brain 的容错解析应该能救；
-若整段被丢弃，会降级到 mock 并在 stderr 打印 `[llm-brain]` 一行。看到降级就说明 JSON 约束没被遵守。
+若整段被丢弃，任务会暂停并在 stderr 打印 `[llm-brain]` 一行。看到这条日志就说明 JSON 约束没被遵守。
 
 ---
 
@@ -125,7 +125,7 @@ LLM_MODEL=deepseek-chat          # 非推理型，快
 |---|---|
 | JSON 服从度 | 良好，基本能稳定输出数组 |
 | 速度 | `deepseek-chat` 单轮 2–10 秒；`reasoner` 30–90 秒 |
-| token 预算 | reasoning 会占 completion 预算，已内置 4096→8192 重试 |
+| token 预算 | reasoning 会占 completion 预算，已内置 4096→8192→16384→32000 阶梯重试 |
 | 特殊注意事项 | 无 |
 
 ### 7.2 opencode zen

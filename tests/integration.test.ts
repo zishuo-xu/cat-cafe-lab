@@ -465,7 +465,7 @@ describe("集成 · 模型不可用时任务暂停", () => {
     const llmWarns = warnLines.filter((line) => line.includes("[llm-brain]"));
     assert.ok(llmWarns.length >= 1, `应有失败日志，实际：${warnLines.join("\n")}`);
     for (const line of llmWarns) {
-      assert.match(line, /降级 fallback/, `日志格式应说明去向：${line}`);
+      assert.match(line, /任务将暂停/, `日志格式应说明后果：${line}`);
       assert.ok(
         !line.includes("sk-integration-secret-key"),
         `日志里绝不能出现 apiKey：${line}`,

@@ -46,9 +46,9 @@ node src/main.ts
 
 ```
   🐾 Delivery Lab · 协作交付台
-  林知远(布偶成员)  沈砚(缅因成员)  周烁(暹罗成员)  陈实(英短陈实)
+  成员：林知远(架构师)  沈砚(评审)  周烁(设计)  陈实(实现)
   http://127.0.0.1:4318
-  mode: 演出模式（无需 key） · data: /path/to/cat-cafe-lab/data
+  模型未配置（只能聊天，不能派活） · data: /path/to/delivery-lab/data
   sandbox: /path/to/cat-cafe-lab/data/workspace · tools: on · mcp tools: 0
   workspaces: 1（真实仓库默认只读，写入需显式授权）
 ```
@@ -60,12 +60,12 @@ node src/main.ts
 | `node src/main.ts` | 启动服务 | 正常监听 4318 |
 | `npm start` / `make dev` | 同上（脚本别名） | 见 `package.json` / `Makefile` |
 | `node --watch src/main.ts` | 改代码自动重启 | 平时开发用 |
-| `node --test tests/` | 全量测试 | **293 tests / 293 pass / ~32s** |
+| `node --test tests/` | 全量测试 | **380 tests / 380 pass / ~5s** |
 | `node --test tests/engine.test.ts` | 只跑引擎测试 | 只加载该文件 |
 | `node --test --test-name-pattern="最后一个房间" tests/rooms.test.ts` | 按用例名过滤 | 只跑匹配用例 |
 | `npx tsc --noEmit` | 类型检查 | 无输出即通过 |
 | `npm run check` / `make check` | 同上（脚本别名） | 通过 |
-| `npm test` / `make test` | 全量测试（脚本别名） | 293 pass |
+| `npm test` / `make test` | 全量测试（脚本别名） | 380 pass |
 
 > 测试数量会随迭代增长；上面的数字是写本文档时的值。
 
@@ -78,15 +78,15 @@ node src/main.ts
 | `DELIVERYLAB_STALL_MS` | `12000` | 判定「卡住」的毫秒数（真实模型建议调大） |
 | `DELIVERYLAB_TOOLS` | 开启 | 设为 `0` 关闭工具执行 |
 | `DELIVERYLAB_APPROVAL` | `commands` | 审批策略：`auto / commands / all` |
-| `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` | 空 | 配置后进入真实模型模式（见 `docs/llm.md`） |
+| `LLM_BASE_URL` / `LLM_MODEL` / `LLM_API_KEY` | 空 | 模型连接（见 `docs/llm.md`）；**可以只给一部分**，与 settings.json 合并 |
 | `LLM_TEMPERATURE` | `0.8` | 全局温度 |
-| `LLM_HEADERS` | 空 | JSON 字符串形式的额外请求头（键值都不进日志/前端） |
+| `LLM_HEADERS` | 空 | 额外请求头（如 `x-opencode-session`）；值不进日志/前端 |
 
 ### 30 秒冒烟
 
 ```bash
 curl -s http://127.0.0.1:4318/api/health
-# {"ok":true,"mode":"mock","seq":1,"stallMs":12000,"settings":true}
+# {"ok":true,"mode":"llm","configured":false,"engine":"api","seq":1,"stallMs":12000,"settings":true}
 
 curl -s http://127.0.0.1:4318/api/state | node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{const s=JSON.parse(d);console.log(`rooms=${s.rooms.length} cats=${s.cats.length} seq=${s.seq}`)})'
 # rooms=1 cats=4 seq=1
@@ -136,8 +136,8 @@ cat-cafe-lab/
 │   │   ├── scenarios.ts     内置剧本 beats
 │   │   ├── scenario-registry.ts 内置 + 自定义剧本库（数组引用稳定）
 │   │   ├── scenario-validation.ts 自定义剧本导入校验
-│   │   ├── mock-brain.ts    确定性演出（按 stage + cat 播 beats）
-│   │   ├── llm-brain.ts     OpenAI 兼容 API，失败降级 mock
+│   │   ├── mock-brain.ts    确定性测试替身（按 stage + cat 播 beats）
+│   │   ├── llm-brain.ts     OpenAI 兼容 API，失败即上报（任务暂停）
 │   │   └── cli-brain.ts     `claude -p` 子进程大脑
 │   ├── tools/
 │   │   ├── sandbox.ts       沙盒运行时（路径锁根 / 命令白名单 / 超时）

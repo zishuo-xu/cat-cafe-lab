@@ -163,7 +163,7 @@ export function createLlmBrain(
 
       const downgrade = (reason: string): Promise<AgentTurn[]> => {
         warn(
-          `[llm-brain] ${reason}，降级 fallback（成员=${ctx.cat.name}，model=${model || "-"}，stage=${ctx.task?.stage ?? "-"}）`,
+          `[llm-brain] ${reason}（成员=${ctx.cat.name}，model=${model || "-"}，stage=${ctx.task?.stage ?? "-"}）→ 任务将暂停`,
         );
         ctx.onReport?.({
           model,

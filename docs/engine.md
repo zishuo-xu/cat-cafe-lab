@@ -270,6 +270,27 @@ cat.tools 权限检查 → 未授权：记 error ToolCall + 回执，不执行
 **已知限制**：stall timer 不持久化，进程重启后不会自动重排；任务状态本身持久化，
 需要 UI 再催一下或来一条事件才会恢复计时。
 
+### 6.1 评审只说话不给结论：自动补一轮
+
+真实模型在 reviewing 阶段常见行为：跑了几轮工具、只发言，**始终不给 `review` 结论**，
+阶段不推进 → 12s 后被 stall 判定抓住，看起来像「卡住了」。
+
+现在 `afterTurns` 的 reviewer 分支在 `applied.review` 为空时：
+
+1. 若本轮还没补过（`runtime.reviewConclusionForced !== true`）→ 置位并投递一轮
+   `purpose: "reviewer"` 的 wake，trigger 里明确要求
+   「必须输出 `kind:"review"`，verdict 为 approve / request_changes」；
+2. 补过仍没有结论 → 保持原行为（stall + 恢复面板三选一）。
+
+### 6.2 暂停中的任务只接 chat / nudge
+
+模型失败会把任务置 `stalled`。队列里可能还压着早期排进来的 kickoff/worker wake，
+放它们继续跑只会**再失败一次、再刷一条「模型调用失败」**。
+
+`processWake` 开头因此加了守卫：`task.status === "stalled"` 时只允许
+`purpose` 为 `chat` / `nudge` 的 wake 继续，其余直接丢弃；
+恢复面板的「继续试试」会先把状态改回 `active` 再入队。
+
 ---
 
 ## 7. 修订上限与任务收尾

@@ -209,7 +209,8 @@ data: {"seq":42,"state":{...}}
 ### `PUT /api/settings`
 
 修改运行设置。`llm.headers` 可以传额外请求头（例如 opencode zen 的
-`x-opencode-session`）：**只存进程内存、不落盘、不回传值**；传 `null` 或空对象清空。
+`x-opencode-session`）：会随 `settings.json` 落盘（0600），但**值不回传前端**——
+`GET /api/settings` 只返回 `headerNames`；传 `null` 或空对象清空。API key 仍只在内存。
 
 
 请求体为 `SettingsPatch`，只传要改的字段：

@@ -385,7 +385,7 @@ describe("llm-brain · 失败暂停（不再退回演出）", () => {
         assert.equal(reports[0]?.failed, true, "必须带 failed 让 driver 暂停任务");
         assert.match(reports[0]?.degradeReason ?? "", /AgentTurn/);
         assert.equal(warns.length, 1, "每次失败只打一行 warn");
-        assert.match(warns[0] ?? "", /降级 fallback/);
+        assert.match(warns[0] ?? "", /任务将暂停/);
         assert.ok(
           !(warns[0] ?? "").includes("sk-test-secret-key"),
           "warn 里绝不能出现 apiKey",
@@ -520,7 +520,7 @@ describe("llm-brain · 失败暂停（不再退回演出）", () => {
     assert.deepEqual(result, []);
     assert.equal(fallback.calls(), 0);
     assert.equal(reports[0]?.failed, true);
-    assert.match(warns[0] ?? "", /网络错误|降级 fallback/);
+    assert.match(warns[0] ?? "", /网络错误|任务将暂停/);
   });
 });
 

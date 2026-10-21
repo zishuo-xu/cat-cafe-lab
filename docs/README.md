@@ -12,8 +12,8 @@
 
 | 文档 | 解决什么问题 | 篇幅 |
 |---|---|---|
-| [getting-started.md](getting-started.md) | 5 分钟跑起来、10 分钟看懂它在干什么 | 334 行 |
-| [architecture.md](architecture.md) | 整体分层、模块职责、关键取舍 | 250 行 |
+| [getting-started.md](getting-started.md) | 5 分钟跑起来、10 分钟看懂它在干什么 | 336 行 |
+| [architecture.md](architecture.md) | 整体分层、模块职责、关键取舍 | 251 行 |
 
 **推荐路径**：getting-started 跟着点一遍 → architecture 理解设计。
 
@@ -23,8 +23,8 @@
 
 | 文档 | 解决什么问题 | 篇幅 |
 |---|---|---|
-| [engine.md](engine.md) | 事件驱动、阶段状态机、ReAct、审批、巡查、stall 判定 | 412 行 |
-| [data-model.md](data-model.md) | 核心类型、状态结构、持久化边界 | 659 行 |
+| [engine.md](engine.md) | 事件驱动、阶段状态机、ReAct、审批、巡查、stall 判定 | 433 行 |
+| [data-model.md](data-model.md) | 核心类型、状态结构、持久化边界 | 707 行 |
 
 **推荐路径**：先读 engine 的「阶段状态机」和「Wake 8 种 purpose」两节，
 这两块理解了，其他机制都是它们的延伸。
@@ -36,8 +36,8 @@
 | 文档 | 解决什么问题 | 篇幅 |
 |---|---|---|
 | [development.md](development.md) | 加工具/场景/端点/测试的菜谱、调试技巧、常见坑 | 411 行 |
-| [frontend.md](frontend.md) | 前端结构、状态管理、9 类 UI 机制、事件委托 | 443 行 |
-| [api.md](api.md) | 54 个 HTTP 端点、两个 SSE 流、错误格式 | 927 行 |
+| [frontend.md](frontend.md) | 前端结构、状态管理、11 类 UI 机制、事件委托 | 468 行 |
+| [api.md](api.md) | 54 个 HTTP 端点、两个 SSE 流、错误格式 | 1048 行 |
 
 **推荐路径**：development 的「四套菜谱」→ 你要改的那一块的专门文档。
 
@@ -47,8 +47,8 @@
 
 | 文档 | 解决什么问题 | 篇幅 |
 |---|---|---|
-| [deployment.md](deployment.md) | 10 个环境变量、持久化、安全边界、排障表 | 420 行 |
-| [llm.md](llm.md) | 真实模式配置、prompt 构造、失败降级 | 284 行 |
+| [deployment.md](deployment.md) | 10 个环境变量、持久化、安全边界、排障表 | 449 行 |
+| [llm.md](llm.md) | 模型配置、prompt 构造、测试连接与失败处理 | 322 行 |
 | [mcp.md](mcp.md) | MCP 接入、鉴权、示例 server | 256 行 |
 
 **⚠️ 部署前必读**：[deployment.md](deployment.md) 的「安全边界」——当前**没有用户鉴权**。
@@ -59,7 +59,7 @@
 
 | 文档 | 解决什么问题 | 篇幅 |
 |---|---|---|
-| [known-issues.md](known-issues.md) | 能力边界（设计取舍 vs 缺陷）、24 类已修问题 | 429 行 |
+| [known-issues.md](known-issues.md) | 能力边界（设计取舍 vs 缺陷）、28 类已修问题 | 462 行 |
 
 **这是唯一一份「描述当前缺陷」的文档**。用之前建议先扫一眼。
 

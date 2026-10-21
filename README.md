@@ -604,7 +604,7 @@ src/agents/           brain：mock（剧本）或 llm（真实模型）
 src/domain/types.ts   唯一契约
 ```
 
-设计取舍、状态机细节、为什么"全量快照"和"半脚本演出"是故意的，见
+设计取舍、状态机细节、为什么"全量快照"和"失败即暂停"是故意的，见
 [docs/architecture.md](docs/architecture.md)。
 
 跑起来之后还可以看 `GET /api/state` 的原始 JSON——整个应用的状态都在里面。

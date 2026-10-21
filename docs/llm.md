@@ -211,11 +211,12 @@ Prompt 会带上：
 
 | 失败情况 | 行为 | 日志（一行） |
 |---|---|---|
-| HTTP 非 2xx | 上报 `failed`，任务暂停 | `[llm-brain] HTTP 500，降级 fallback（成员=林知远，stage=reviewing）` |
+| HTTP 非 2xx | 上报 `failed`，任务暂停 | `[llm-brain] HTTP 500（成员=林知远，stage=reviewing）→ 任务将暂停` |
 | 响应体不是 JSON | 同上 | `…响应不是合法 JSON envelope…` |
 | 缺 `choices[0].message.content` | 同上 | `…响应缺少 choices[0].message.content…` |
 | 内容不是可用 `AgentTurn[]` | 同上 | `…模型输出不是可用的 AgentTurn[]…` |
-| 输出被 max_tokens 截断 | 阶梯提升预算重试（4096 → 8192 → 16384）后再判失败 | `…用 16384 重试第 2 次…` |
+| 输出被 max_tokens 截断 | 阶梯提升预算重试（4096 → 8192 → 16384 → 32000）后再判失败 | `…用 32000 重试第 3 次…` |
+| 返回空内容（finish=stop 但 content 为空） | 先换非流式重试一次；仍为空才失败 | `…端点返回空内容（finish=stop）…` |
 | 请求超时 | abort → 同上 | `…请求超时 30000ms…` |
 | 网络错误（DNS / 连接失败） | 同上 | `…网络错误：fetch failed…` |
 
@@ -228,6 +229,34 @@ Prompt 会带上：
   回退时超时放宽到 90s（推理模型 20s 不够），非流式也拿不到才判定失败。
 - 模型的个别 turn 不合法只丢弃该 turn（只有一条都不剩才算整轮失败）。
 - 失败的这一轮**不写共享记忆**（避免把错内容沉淀成后续任务的上下文）。
+
+---
+
+## 3.1 「测试连接」测的是什么
+
+设置面板里的「测试连接」不是 ping 域名，而是**真的跑一次最小对话**：
+
+```
+POST {baseUrl}/chat/completions
+{ "model": "<模型名>", "max_tokens": 8, "messages": [{ "role": "user", "content": "ping" }] }
+```
+
+为什么不能用 `GET /models` 代替：opencode zen 的模型列表端点**不校验**
+`x-opencode-session`，会返回 200；但真正的对话端点缺这个头直接
+`400 MissingSessionID`。只测 `/models` 会得到假阳性——用户以为配好了，
+派活后任务立刻暂停（真实踩过）。
+
+失败时返回可操作提示：
+
+| 状态 | 提示 |
+|---|---|
+| 400 | 请求参数或请求头不被接受；opencode zen 需要 `x-opencode-session` |
+| 401 / 403 | API Key 无效或没有该模型权限 |
+| 404 | Base URL / 模型名不对（注意是否要以 `/v1` 结尾） |
+| 429 | 被限流，稍后再试或换模型 |
+| 5xx | 模型服务端报错 |
+
+成功时返回「连接成功（已跑通一次真实对话）」，并顺手报一下可用模型数量。
 
 ---
 

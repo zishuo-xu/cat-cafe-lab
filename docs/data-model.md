@@ -478,10 +478,10 @@ interface LlmCall {
 
 补充：
 
-- 所有 turn 都可带 `delayMs` 控制演出节奏；`mentions` 只影响消息展示与 @ 路由。
+- 所有 turn 都可带 `delayMs` 控制回复节奏；`mentions` 只影响消息展示与 @ 路由。
 - `tool` 的 `tool` 名必须是 `ToolName`：内置 `read_file` / `write_file` / `list_files` / `run_command`，
   或 MCP 注册的动态名（形如 `<serverId>__<toolName>`）。
-- mock brain 按 `(stage, cat)` 从剧本 beats 取 turn；真实模式由模型输出 JSON，再由结构校验过滤。
+- 真实模型输出 JSON，再由结构校验过滤；测试里用 mock brain 按 `(stage, cat)` 从剧本 beats 取 turn。
 
 ---
 
@@ -539,7 +539,7 @@ interface Scenario {
 ```
 
 - 内置剧本来自 `src/agents/scenarios.ts`；导入的自定义剧本追加到同一数组（`scenario-registry.ts`）。
-- mock brain 按 `(stage, cat)` 取 beat；同阶段连续的工具/交接节拍可以一次交付。
+- 测试替身（mock brain）按 `(stage, cat)` 取 beat；同阶段连续的工具/交接节拍可以一次交付。
 - `fault` 是**演示埋点**，由 mock brain 透传到 `turn.handoff.fault`，driver 只认 turn 上的字段。
 - 自定义剧本导入时由 `scenario-validation.ts` 校验：id 格式、成员 id 存在、五栏完整、turn kind 白名单、
   文本长度、`beats ≤ 120` 等。
@@ -664,11 +664,28 @@ MCP 配置持久化在 `data/mcp.json`（`0600`），`env` / `headers` 的值不
 `PublicSettings` / `SettingsPatch` 定义在 `types.ts`，由 `SettingsStore` 读写。
 
 - 可持久化到 `data/settings.json` 的字段：`mode`、`speed`、`toolsEnabled`、`toolApproval`、
-  `streaming`、`engine`、`proactive`、`proactiveIntervalMs`、`llm.{baseUrl,model,temperature}`。
-- **设置里的 LLM API Key / `LLM_HEADERS` 永不落盘**；`PublicSettings.llm` 只暴露 `hasKey` 与 `keySource`。
+  `streaming`、`engine`、`proactive`、`proactiveIntervalMs`、`llm.{baseUrl,model,temperature,headers}`。
+- **LLM API Key 永不落盘**（只在内存 / 环境变量）；额外请求头（如 `x-opencode-session`）
+  会随 `settings.json` 落盘（权限 0600），但**值不回传前端**——`PublicSettings.llm` 只暴露
+  `hasKey`、`keySource` 和 `headerNames`（只有名字）。
   （MCP 的 `env` / `headers` 是例外：它们要持久化在 `data/mcp.json`，但同样不回传前端、不进状态。）
 - 启动顺序：存档值 → 环境变量默认值 → 兜底默认（`normal` / `commands` / `streaming: true` / `api`）。
-- 如果存档里是 `mode: "llm"` 但配置不完整（没有 baseUrl/model/key），会回落到演出模式。
+- 没有配好 baseUrl/model 时**不会回落到演出模式**：只能聊天，派活会被 `412 llm_unconfigured` 拦下；
+  模型调用失败会让任务暂停（`stalled`）并说明原因，不会伪造结果。
+
+### 13.1 工作区的「已清空」标记
+
+`sandbox.clear()` 会在工作区根目录写一个 `.deliverylab-cleared` 文件，作用是区分：
+
+| 目录状态 | `ensureSeed()` 行为 |
+|---|---|
+| 目录不存在 | 播种演示项目（首次启动） |
+| 空目录、无标记 | 播种演示项目 |
+| 有 `.deliverylab-cleared` | **跳过播种**（尊重清空，真实任务保持空白） |
+| 有其它文件 | 跳过播种（不碰已有内容） |
+
+建任务时如果沙盒仍是**未改动过的演示种子**，后端会先 `clear()` 并留一条系统消息，
+避免演示用的 `test/*.test.js` 混进真实任务的验收。
 
 ---
 

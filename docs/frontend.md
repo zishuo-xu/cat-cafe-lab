@@ -276,6 +276,31 @@
 - 空态/降级：entries 为空显示「这个任务还没有轨迹。」；404/503 显示「轨迹服务未就绪」+ 重试。
 - 刷新：`data-action="refresh-task-trace"` 重新请求当前任务；面板打开时是快照，不会自动跟随后续事件。
 
+### 4.5.1 模型连接状态与 Provider 预设（第一屏）
+
+- 顶部 `#model-status-pill` 两个状态：`connected`（`模型：<model>`，绿）/
+  `unconfigured`（`模型未配置 · 去设置`，红）。数据来自 `GET /api/health` 的
+  `configured` / `model`（`refreshHealth()` 在启动、保存设置后拉取）。
+- 未配置时点「＋ 新任务」（`openNewTaskModal()`）会 toast + 直接打开设置，并自动滚到 LLM 区；
+  后端 `POST /api/tasks` 也会返回 `412 llm_unconfigured` 兜底。
+- 设置第一屏 `#settings-llm-section`：
+  - `#settings-provider-presets` 一排 chips（opencode zen / DeepSeek / OpenAI / 本地 Ollama / 自定义），
+    点击 `applyProviderPreset(id)` 填 Base URL、默认模型、额外请求头；
+  - 「高级：额外请求头」是 JSON textarea，保存时由 `parseHeadersInput()` 校验；
+  - 「测试连接」`#settings-test-btn` 会真跑一次最小对话（见 `llm.md` 3.1），
+    不只是查 `/models`。
+
+### 4.5.2 「这句话像需求」确认框
+
+- 发送前 `sendMessage()` 调 `looksLikeTaskBrief(text)`：
+  - 有 `@成员` → 放行（针对某人的提问）；
+  - 短句命中祈使动词（帮我 / 写一个 / 实现 / 修复 / 加个…）且不是纯提问 → 拦；
+  - 长段落仍按结构信号（列表 / 多分句 / 多个要求）打分。
+- 命中后 `showBriefHint(text)` 弹 `.confirm-dialog`（**必须带 CSS**，固定遮罩 + 居中卡片；
+  曾经只加了 DOM 没加样式，用户点发送看不到任何反应）。
+- 两个选择：「开任务」把原文带进新建任务弹窗并清空输入框；「就聊两句」放行一次
+  （`app.briefHintAllowed`）。Esc / 点遮罩关闭且**不丢输入**。
+
 ### 4.6 测试中心
 
 - 入口：`data-action="open-test-center"`（左栏顶部和聊天头各一个），打开

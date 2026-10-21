@@ -78,7 +78,7 @@ DELIVERYLAB_STALL_MS=30000 node src/main.ts             # 把「卡住」判定�
 
 - **运行本身不需要 `pnpm install`**，只有跑 `tsc` 类型检查才需要（devDependencies 只有 typescript 和 @types/node）。
 - 数据默认写在项目下的 `data/` 目录（首次运行自动创建）。删掉 `data/` 就是完整重开一局。
-- 想确认服务健康：`curl http://127.0.0.1:4318/api/health`，应返回 `{"ok":true,"mode":"mock",...}`。
+- 想确认服务健康：`curl http://127.0.0.1:4318/api/health`，应返回 `{"ok":true,"mode":"llm","configured":true,...}`；`configured:false` 表示还没接模型。
 
 ---
 
@@ -251,7 +251,7 @@ DELIVERYLAB_STALL_MS=30000 node src/main.ts             # 把「卡住」判定�
 点「测试连接」确认通了再保存——没通就派活，任务会立刻暂停并告诉你原因。
 每个成员还可以在「成员与模型」里单独指定模型和温度。
 
-配置项、持久化、安全边界和排障见 **[deployment.md](deployment.md)**；端点、prompt 构造与失败降级见 **[llm.md](llm.md)**。
+配置项、持久化、安全边界和排障见 **[deployment.md](deployment.md)**；端点、prompt 构造、测试连接与失败处理见 **[llm.md](llm.md)**。
 模型调用失败**不会**退回假台词：任务会暂停，说明失败原因，由你决定「继续试试 / 换个方案 / 收尾」。
 
 ![真实模型跑完的任务：六阶段走完，产物和共享记忆齐全](images/uat-07-done.png)

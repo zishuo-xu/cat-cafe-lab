@@ -66,6 +66,33 @@ node src/main.ts
 `configured` 判定规则：`LLM_BASE_URL` 与 `LLM_MODEL` **都非空**才算配好；
 没有 `DELIVERYLAB_MODE` 这类环境变量（产品只有真实模式，`mode` 恒为 `llm`）。
 
+### 2.2.1 环境变量只给一部分也可以
+
+`LLM_BASE_URL` / `LLM_MODEL` 可以留在设置面板里（存 `data/settings.json`），
+启动时只给 `LLM_API_KEY` / `LLM_HEADERS`：
+
+```bash
+LLM_API_KEY=oc_sk_... \
+LLM_HEADERS='{"x-opencode-session":"deliverylab-1"}' \
+node src/main.ts
+```
+
+配置合并规则：settings.json 里的 baseUrl/model 优先，环境变量补 key 和请求头。
+
+> 早期版本只有 baseUrl+model 都在环境变量时才认整块 LLM 配置，导致「只给 key」
+> 被静默丢弃（`hasKey` 一直是 false）——已修，并有测试覆盖。
+
+### 2.2.2 额外请求头会持久化
+
+`x-opencode-session` 这类头会随 `settings.json` 落盘（0600），但没有「读回」接口：
+前端只能看到 `headerNames`（名字列表），值不会回传。API Key 仍然只在内存/环境变量。
+
+### 2.2.3 「测试连接」会真跑一次对话
+
+不是 ping 域名，而是向 `POST {baseUrl}/chat/completions` 发一个 `max_tokens=8` 的最小请求，
+带上当前 key 和请求头。这样能发现「`/models` 通但对话端点 400」的假阳性
+（opencode zen 就属于这种）。失败时会告诉你该查什么。
+
 ### 2.3 指定端口 / 数据目录
 
 ```bash
@@ -130,7 +157,7 @@ npx tsc --noEmit       # 类型检查
 4. `LLM_HEADERS` 也只来自环境变量，保存在 `SettingsStore.envHeaders`，不写入
    `settings.json`、不通过 API 暴露；如果重启时需要它，必须重新提供环境变量；
 5. `DELIVERYLAB_STALL_MS` 不走 `settings.json`，每次启动由环境变量决定；
-6. 如果持久化配置是 `llm` 但缺少 Base URL 或模型名，启动时会回落到 `mock`。
+6. 持久化配置缺少 Base URL 或模型名时**不会回落到演示模式**：界面可用、只能聊天，派活被 `412` 拦下并引导去配置。
 
 > 注意：`/api/settings` 的 PUT 会持久化上面第 2 条列出的非敏感字段；
 > 不要通过设置面板写 API key 后期待它跨重启保留。
