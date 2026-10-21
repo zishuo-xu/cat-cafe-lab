@@ -38,10 +38,16 @@ export class Sandbox implements SandboxRunner {
     this.root = resolve(root);
   }
 
-  /** 没有项目时种一份初始代码；已有则保持上次的成果。 */
+  /**
+   * 只在**工作区还不存在**时种一份演示项目（首次启动）。
+   *
+   * 以前用「有没有 package.json」判断，导致清空工作区后重启又被重新播种，
+   * 真实任务又被演示文件干扰。现在：目录存在就尊重现状（哪怕是空的）。
+   * 想恢复演示内容用 reset()（界面上是「重置沙盒」）。
+   */
   ensureSeed(): void {
+    if (existsSync(this.root)) return;
     mkdirSync(this.root, { recursive: true });
-    if (existsSync(join(this.root, "package.json"))) return;
     this.writeSeed();
   }
 

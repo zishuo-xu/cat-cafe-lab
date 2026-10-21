@@ -303,3 +303,25 @@ describe("真实任务自动清空演示种子", () => {
     }
   });
 });
+
+describe("清空后的工作区不会被重启重新播种", () => {
+  test("ensureSeed 对已存在（哪怕为空）的目录直接返回", () => {
+    const dir = mkdtempSync(join(tmpdir(), "deliverylab-no-reseed-"));
+    const root = join(dir, "workspace");
+    try {
+      const first = new Sandbox(root);
+      first.ensureSeed();
+      assert.ok(readFileSync(join(root, "package.json"), "utf8").length > 0, "首次应播种");
+
+      first.clear();
+      assert.deepEqual(readdirSync(root), []);
+
+      // 模拟重启：新的 Sandbox 实例再 ensureSeed，不应重新写入演示文件
+      const restarted = new Sandbox(root);
+      restarted.ensureSeed();
+      assert.deepEqual(readdirSync(root), [], "已存在的工作区不该被重新播种");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
