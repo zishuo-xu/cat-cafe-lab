@@ -644,7 +644,7 @@ delivery-lab/
 ├── public/            index.html、app.js、styles.css、avatars.js
 ├── tools/             probe.py、matrix.py（真实模型测试驱动）
 ├── examples/mcp/      零依赖示例 MCP server（团队记事本）
-├── tests/             30 个测试文件、97 个套件、379 个测试
+├── tests/             30 个测试文件、96 个套件、379 个测试
 ├── docs/              见下方「文档地图」
 ├── data/              studio.json、settings.json、workspaces.json、mcp.json、workspace/（gitignore）
 └── PLAN.md            设计与分工记录
