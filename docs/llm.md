@@ -25,12 +25,15 @@
 | `DELIVERYLAB_STALL_MS` | 否 | `12000` | 任务卡住判定阈值 |
 
 **是否已配置**：`LLM_BASE_URL` 和 `LLM_MODEL` 都非空才算配好（`LLM_API_KEY` 看端点要求）。
+环境变量可以**只给一部分**：例如 baseUrl/model 存在设置里，启动时只给 `LLM_API_KEY` / `LLM_HEADERS`
+也会合并进来（早期版本会静默丢掉这些值）。
 `GET /api/health` 的 `configured` 字段可以确认；`mode` 字段恒为 `llm`，保留兼容。
 
 > 也可以完全不用环境变量：打开工作台左上角 ⚙️ **设置面板**（第一屏就是「LLM 连接」），
 > 选一个 **Provider 预设**（opencode zen / DeepSeek / OpenAI / 本地 Ollama）会自动填好
 > Base URL、默认模型和需要的请求头，再粘 key、点「测试连接」保存即可。
-> 额外请求头也可以展开「高级」手填 JSON——**只存内存、不落盘**，重启后要重新选预设或设环境变量。面板保存的值会覆盖环境变量；API Key 只存在进程内存，
+> 额外请求头也可以展开「高级」手填 JSON。请求头会随 `settings.json` 落盘（0600），
+> 重启后仍在；但值**不会回传前端**（只暴露名字）。API key 仍然只在内存/环境变量。面板保存的值会覆盖环境变量；API Key 只存在进程内存，
 > 不回传、不落盘。下面的环境变量方式仍然可用，作为启动默认值。
 
 ### 每个成员独立模型
@@ -279,6 +282,7 @@ curl -s "${LLM_BASE_URL}/chat/completions" \
 
 | 现象 | 可能原因 |
 |---|---|
+| 「测试连接」失败但 `/models` 能打开 | 对话端点要求额外请求头（如 opencode zen 的 `x-opencode-session`）；连接测试现在会真跑一次对话来发现这点 |
 | `/api/health` 的 `configured` 是 `false` | `LLM_BASE_URL` 或 `LLM_MODEL` 为空（注意 `export`） |
 | 一直看到 `HTTP 404` | `LLM_BASE_URL` 多写了 `/chat/completions`，或少了 `/v1` |
 | 一直看到 `HTTP 401/403` | key 无效或没权限访问该模型 |

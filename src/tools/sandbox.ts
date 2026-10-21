@@ -51,6 +51,29 @@ export class Sandbox implements SandboxRunner {
     this.writeSeed();
   }
 
+  /** 清空工作区（不留演示种子）：给「真实任务」一个干净的起点。 */
+  clear(): void {
+    rmSync(this.root, { recursive: true, force: true });
+    mkdirSync(this.root, { recursive: true });
+  }
+
+  /**
+   * 当前目录是否仍是**未改动过的演示种子**。
+   *
+   * 真实任务第一次开工时用它决定要不要清空：演示用的 src/export.js、test/remember.test.js
+   * 会和真实任务的测试混在一起，让「node --test 全绿」这条验收永远过不了
+   * （实测任务因此在评审/修订之间拉了 44 次调用）。
+   * 只要用户/成员改过任何一个种子文件，就视为真实内容，绝不清空。
+   */
+  isPristineSeed(): boolean {
+    for (const [path, content] of Object.entries(SEED_FILES)) {
+      const abs = resolve(this.root, path);
+      if (!existsSync(abs)) return false;
+      if (readFileSync(abs, "utf8") !== content) return false;
+    }
+    return true;
+  }
+
   async execute(tool: ToolName, input: Record<string, unknown>): Promise<ToolResult> {
     try {
       switch (tool) {

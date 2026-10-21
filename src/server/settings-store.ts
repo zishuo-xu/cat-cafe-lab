@@ -28,6 +28,10 @@ import type { Studio } from "./studio.ts";
 const SPEED_FACTOR: Record<Speed, number> = { slow: 1.7, normal: 1, fast: 0.5 };
 
 /** 校验额外请求头：键名只允许 [A-Za-z0-9-]，值 ≤500 字符，最多 10 个。 */
+function scrub(text: string, apiKey: string): string {
+  return apiKey ? text.split(apiKey).join("***") : text;
+}
+
 function sanitizeHeaders(input: unknown): Record<string, string> {
   if (!input || typeof input !== "object" || Array.isArray(input)) return {};
   const out: Record<string, string> = {};
@@ -99,6 +103,14 @@ interface PersistedSettings {
     baseUrl?: string;
     model?: string;
     temperature?: number;
+    /**
+     * 额外请求头（如 opencode zen 的 x-opencode-session）。
+     *
+     * 与 apiKey 不同：这些通常是「会话标识 / 路由要求」而不是长期凭证，
+     * 且每次重启都要重填的体验太差（真实用户踩过：填好 key 却因丢了头而 400）。
+     * 文件权限 0600，且值永不回传前端——只暴露 headerNames。
+     */
+    headers?: Record<string, string>;
   };
 }
 
@@ -128,7 +140,7 @@ export class SettingsStore implements SettingsApi {
   private apiKey: string;
   private keySource: "env" | "ui" | null;
 
-  /** 设置面板里填的额外请求头：只在内存，不落盘、不回传值。 */
+  /** 设置面板里填的额外请求头：会随 settings.json 落盘（0600），但值永不回传前端。 */
   private uiHeaders: Record<string, string> = {};
 
   private readonly studio: Studio;
@@ -177,6 +189,7 @@ export class SettingsStore implements SettingsApi {
     );
     this.apiKey = env?.apiKey ?? "";
     this.keySource = this.apiKey ? "env" : null;
+    this.uiHeaders = sanitizeHeaders(persisted.llm?.headers);
 
     // 配置不完整时不再「回落演出模式」：换成诚实提示脑 + 派活拦截。
     this.applyBrain();
@@ -359,28 +372,57 @@ export class SettingsStore implements SettingsApi {
 
     const startedAt = Date.now();
     try {
-      const extra = draft.headers !== undefined ? sanitizeHeaders(draft.headers) : this.effectiveHeaders();
-      const response = await fetch(`${baseUrl}/models`, {
-        headers: {
-          ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
-          ...(extra ?? {}),
-        },
-        signal: AbortSignal.timeout(8000),
+      const extra =
+        draft.headers !== undefined ? sanitizeHeaders(draft.headers) : this.effectiveHeaders();
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+        ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}),
+        ...(extra ?? {}),
+      };
+
+      // 用**真正的对话端点**验证，而不是 GET /models。
+      //
+      // 真实踩坑：opencode zen 的 /models 不校验 x-opencode-session（返回 200），
+      // 但 /chat/completions 缺头直接 400 MissingSessionID。只测 /models 会得到
+      // 假阳性——用户以为配好了，派活后任务立刻因为 400 暂停。
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          model,
+          max_tokens: 8,
+          messages: [{ role: "user", content: "ping" }],
+        }),
+        signal: AbortSignal.timeout(25_000),
       });
       const latencyMs = Date.now() - startedAt;
       if (!response.ok) {
-        return {
-          ok: false,
-          latencyMs,
-          detail: `端点返回 HTTP ${response.status} ${response.statusText}`.trim(),
-        };
+        // 只读取一小段错误体用于给出可操作提示（不含 key）。
+        let detail = `端点返回 HTTP ${response.status}`;
+        try {
+          const text = (await response.text()).slice(0, 500);
+          const gate = /MissingSessionID/i.test(text)
+            ? "端点要求 x-opencode-session 请求头：选 opencode zen 预设，或在「高级：额外请求头」里补上"
+            : "";
+          if (gate) detail = `HTTP ${response.status}：${gate}`;
+        } catch {
+          // 读不到错误体也不影响结论
+        }
+        return { ok: false, latencyMs, detail: scrub(detail, apiKey) };
       }
-      let detail = "连接成功";
+      // 连通性没问题时，顺手报一下可选模型数量（失败也不影响结论）。
+      let detail = "连接成功（已跑通一次真实对话）";
       try {
-        const body = (await response.json()) as { data?: unknown[] };
-        if (Array.isArray(body.data)) detail = `连接成功，可用模型 ${body.data.length} 个`;
+        const list = await fetch(`${baseUrl}/models`, {
+          headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {},
+          signal: AbortSignal.timeout(5000),
+        });
+        if (list.ok) {
+          const body = (await list.json()) as { data?: unknown[] };
+          if (Array.isArray(body.data)) detail += ` · 可用模型 ${body.data.length} 个`;
+        }
       } catch {
-        // 端点不返回 JSON 也不影响连通性结论。
+        // 列模型失败忽略
       }
       return { ok: true, latencyMs, detail };
     } catch (err) {
@@ -471,6 +513,7 @@ export class SettingsStore implements SettingsApi {
           baseUrl: this.baseUrl,
           model: this.model,
           temperature: this.temperature,
+          ...(Object.keys(this.uiHeaders).length > 0 ? { headers: this.uiHeaders } : {}),
         },
       };
       const tmp = `${this.file}.tmp`;

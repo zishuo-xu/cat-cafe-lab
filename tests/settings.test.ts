@@ -211,6 +211,11 @@ describe("SettingsStore.test", () => {
         res.end(JSON.stringify({ data: [{ id: "a" }, { id: "b" }] }));
         return;
       }
+      if (req.url === "/v1/chat/completions" && req.method === "POST") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ choices: [{ message: { content: "pong" } }] }));
+        return;
+      }
       res.writeHead(404);
       res.end("nope");
     });
@@ -223,12 +228,13 @@ describe("SettingsStore.test", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("连接成功并报告模型数量", async () => {
+  test("连接成功：跑通一次真实对话，并报告模型数量", async () => {
     const result = await ctx.store.test({
       baseUrl: `http://127.0.0.1:${fakePort}/v1`,
       model: "cat-chat",
     });
     assert.equal(result.ok, true);
+    assert.match(result.detail, /跑通一次真实对话/);
     assert.match(result.detail, /可用模型 2 个/);
     assert.ok(result.latencyMs >= 0);
   });
@@ -451,5 +457,81 @@ describe("工具执行开关", () => {
       /布尔/,
     );
     ctx.studio.close();
+  });
+});
+
+describe("测试连接不能假阳性（/models 通但对话端 400）", () => {
+  let fake: Server;
+  let fakePort: number;
+  let dir: string;
+  let ctx: ReturnType<typeof makeStore>;
+
+  before(async () => {
+    dir = mkdtempSync(join(tmpdir(), "deliverylab-testconn-gate-"));
+    ctx = makeStore(dir);
+    fake = createServer((req, res) => {
+      // 复刻 opencode zen 的真实行为：/models 不校验 session 头 → 200
+      if (req.url === "/v1/models") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ data: [{ id: "a" }] }));
+        return;
+      }
+      // 但对话端点缺 x-opencode-session → 400 MissingSessionID
+      if (req.url === "/v1/chat/completions") {
+        res.writeHead(400, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            type: "error",
+            error: { type: "MissingSessionID", message: "missing x-opencode-session" },
+          }),
+        );
+        return;
+      }
+      res.writeHead(404);
+      res.end("nope");
+    });
+    fakePort = await listen(fake);
+  });
+
+  after(async () => {
+    await new Promise<void>((done) => fake.close(() => done()));
+    ctx.studio.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("缺 session 头时测试连接失败，并告诉你去补请求头", async () => {
+    const result = await ctx.store.test({
+      baseUrl: `http://127.0.0.1:${fakePort}/v1`,
+      model: "cat-chat",
+      apiKey: "sk-secret-xyz",
+    });
+    assert.equal(result.ok, false, "不能因为 /models 通就报成功");
+    assert.match(result.detail, /x-opencode-session/);
+    assert.ok(!result.detail.includes("sk-secret-xyz"));
+  });
+
+  test("带上 session 头后测试连接通过", async () => {
+    const fakeOk = createServer((req, res) => {
+      if (req.url === "/v1/chat/completions") {
+        const ok = req.headers["x-opencode-session"] === "s1";
+        res.writeHead(ok ? 200 : 400, { "content-type": "application/json" });
+        res.end(ok ? JSON.stringify({ choices: [{ message: { content: "pong" } }] }) : "{}");
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{}");
+    });
+    const port = await listen(fakeOk);
+    try {
+      const result = await ctx.store.test({
+        baseUrl: `http://127.0.0.1:${port}/v1`,
+        model: "cat-chat",
+        headers: { "x-opencode-session": "s1" },
+      });
+      assert.equal(result.ok, true);
+      assert.match(result.detail, /跑通一次真实对话/);
+    } finally {
+      await new Promise<void>((done) => fakeOk.close(() => done()));
+    }
   });
 });

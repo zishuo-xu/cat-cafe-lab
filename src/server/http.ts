@@ -29,6 +29,7 @@ import type { Sandbox } from "../tools/sandbox.ts";
 import type { McpManager, McpInput } from "../mcp/manager.ts";
 import type { WorkspaceManager } from "../workspaces/manager.ts";
 import { TestRunner } from "./test-runner.ts";
+import { DEFAULT_WORKSPACE_ID } from "../domain/constants.ts";
 import { listSkills } from "../skills/registry.ts";
 import { MODEL_PROFILES, findProfile, suggestedProfile } from "./model-profiles.ts";
 
@@ -1250,6 +1251,24 @@ export function createHttpServer(deps: HttpDeps): Server {
         typeof body.scenarioId === "string" && scenarios.some((s) => s.id === body.scenarioId)
           ? { id: body.scenarioId }
           : pickScenario(scenarios, brief);
+      // 内置沙盒仍是「未改动的演示种子」时，真实任务从空白工作区开始：
+      // 演示用的 src/export.js、test/remember.test.js 会和真实任务的测试混在一起，
+      // 让「node --test 全绿」永远过不了。改过任何种子文件就视为真实内容，不动。
+      const taskRoom = studio.getRoom(roomId);
+      if (
+        sandbox &&
+        taskRoom &&
+        (taskRoom.workspaceId ?? DEFAULT_WORKSPACE_ID) === DEFAULT_WORKSPACE_ID &&
+        sandbox.isPristineSeed()
+      ) {
+        sandbox.clear();
+        studio.appendMessage({
+          roomId,
+          author: "system",
+          kind: "system",
+          text: "已把内置沙盒里的演示文件清空，给这个任务一个干净的工作区。",
+        });
+      }
       const task = studio.createTask({ roomId, brief, scenarioId: picked.id });
       // 读写 git 工作区：任务开始前建分支（工作树不干净时只记录提示，不阻塞任务）。
       const room = studio.getRoom(roomId);

@@ -231,7 +231,7 @@ export function createLlmBrain(
           if (!response.ok) {
             // 不读 body（可能很大，也可能回显敏感内容），直接释放连接。
             void response.body?.cancel().catch(() => {});
-            return await downgrade(`HTTP ${response.status}`);
+            return await downgrade(`HTTP ${response.status}${httpStatusHint(response.status)}`);
           }
 
           let content: string | null;
@@ -449,6 +449,31 @@ function extractVisibleText(raw: string): string {
   }
   // 说话用尾部 400 字（像打字）；正文用前 1500 字（正文开头最有用，且能滚动早期内容）。
   return marker === '"body":"' ? text.slice(0, 1500) : text.slice(-400);
+}
+
+/**
+ * 把 HTTP 状态码翻译成「该去检查什么」。
+ *
+ * 真实反馈：任务只显示「模型调用失败：HTTP 400」，用户不知道该改哪里。
+ * 400 最常见的真实原因是端点要求的请求头没给（如 opencode zen 的 x-opencode-session）。
+ */
+export function httpStatusHint(status: number): string {
+  if (status === 400) {
+    return "（请求参数或请求头不被端点接受；如果用的是 opencode zen，检查是否缺 x-opencode-session 请求头）";
+  }
+  if (status === 401 || status === 403) {
+    return "（API Key 无效或没有该模型的权限，检查设置里的 key）";
+  }
+  if (status === 404) {
+    return "（端点或模型名不对，检查 Base URL 是否需要以 /v1 结尾、模型名是否拼对）";
+  }
+  if (status === 429) {
+    return "（被限流了，稍后再试或换模型）";
+  }
+  if (status >= 500) {
+    return "（模型服务端报错，稍后重试或换端点）";
+  }
+  return "";
 }
 
 /** 取 finish_reason（用于区分"被截断"与"真的空响应"）。 */

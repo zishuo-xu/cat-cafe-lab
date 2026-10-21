@@ -1612,3 +1612,34 @@ describe("长输出与慢模型：预算与超时", () => {
     assert.match(String((turns[0] as { text?: string }).text), /慢但完整/);
   });
 });
+
+describe("失败原因要能指导用户下一步", () => {
+  const cases: Array<{ status: number; expect: RegExp }> = [
+    { status: 400, expect: /x-opencode-session/ },
+    { status: 401, expect: /API Key/ },
+    { status: 403, expect: /权限/ },
+    { status: 404, expect: /Base URL/ },
+    { status: 429, expect: /限流/ },
+    { status: 500, expect: /服务端报错/ },
+  ];
+
+  for (const item of cases) {
+    test(`HTTP ${item.status} 的提示能指到具体检查项`, async () => {
+      const fake = (async () =>
+        new Response("{}", { status: item.status })) as unknown as typeof fetch;
+      const reports: Array<{ degradeReason?: string; failed?: boolean }> = [];
+      const brain = createLlmBrain(
+        { baseUrl: "https://example.test/v1", model: "m", apiKey: "k", temperature: 0.7 },
+        makeFallback().brain,
+        { fetchImpl: fake, streaming: false },
+      );
+      await brain.think(
+        makeContext({
+          onReport: (report) => reports.push(report),
+        }),
+      );
+      assert.equal(reports[0]?.failed, true);
+      assert.match(reports[0]?.degradeReason ?? "", item.expect);
+    });
+  }
+});

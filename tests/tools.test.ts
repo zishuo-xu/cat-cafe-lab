@@ -1,7 +1,7 @@
 /** 沙盒工具：路径安全、命令白名单、真实执行、workspace API。 */
 
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { after, before, describe, test } from "node:test";
@@ -196,5 +196,110 @@ describe("HTTP /api/workspace", () => {
   test("没有沙盒时返回 503", async () => {
     const res = await fetch(`${bareBase}/api/workspace/tree`);
     assert.equal(res.status, 503);
+  });
+});
+
+describe("沙盒演示种子与真实任务隔离", () => {
+  test("isPristineSeed：种下来是纯净的，改过就不是", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "deliverylab-seed-state-"));
+    const sandbox = new Sandbox(dir);
+    try {
+      sandbox.ensureSeed();
+      assert.equal(sandbox.isPristineSeed(), true, "刚种下应为纯净演示种子");
+      await sandbox.execute("write_file", { path: "src/remember.js", content: "// 改过了" });
+      assert.equal(sandbox.isPristineSeed(), false, "改过任何一个种子文件就不再纯净");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("clear 后是空工作区，且不再被当成演示种子", () => {
+    const dir = mkdtempSync(join(tmpdir(), "deliverylab-seed-clear-"));
+    const sandbox = new Sandbox(dir);
+    try {
+      sandbox.ensureSeed();
+      sandbox.clear();
+      assert.deepEqual(readdirSync(dir), [], "应清空成空目录");
+      assert.equal(sandbox.isPristineSeed(), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("真实任务自动清空演示种子", () => {
+  test("沙盒仍是未改动的演示种子时，建任务会先清空", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "deliverylab-seed-task-"));
+    const sandbox = sandboxAt(dir);
+    sandbox.ensureSeed();
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    const server = createHttpServer({
+      studio,
+      driver: fakeDriver(),
+      publicDir: resolve(import.meta.dirname, "../public"),
+      scenarios: SCENARIOS,
+      sandbox,
+      mode: "mock",
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", () => done()));
+    const address = server.address();
+    if (!address || typeof address !== "object") throw new Error("no port");
+    const base = `http://127.0.0.1:${address.port}`;
+    try {
+      const res = await fetch(`${base}/api/tasks`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ roomId: "room_cafe", brief: "写一个五子棋网站，带测试" }),
+      });
+      assert.equal(res.status, 201);
+      assert.deepEqual(
+        readdirSync(join(dir, "workspace")),
+        [],
+        "演示种子应被清空，给真实任务一个干净起点",
+      );
+      const notice = studio.state.messages.find((m) => /演示文件.*清空/.test(m.text));
+      assert.ok(notice, "应留一条系统消息说明清空了演示文件");
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()));
+      studio.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("种子被改过时不清空（不碰真实内容）", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "deliverylab-seed-keep-"));
+    const sandbox = sandboxAt(dir);
+    sandbox.ensureSeed();
+    await sandbox.execute("write_file", { path: "src/remember.js", content: "// 已有真实改动" });
+    const studio = new Studio({ cats: CATS, mode: "mock" });
+    const server = createHttpServer({
+      studio,
+      driver: fakeDriver(),
+      publicDir: resolve(import.meta.dirname, "../public"),
+      scenarios: SCENARIOS,
+      sandbox,
+      mode: "mock",
+    });
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", () => done()));
+    const address = server.address();
+    if (!address || typeof address !== "object") throw new Error("no port");
+    const base = `http://127.0.0.1:${address.port}`;
+    try {
+      const res = await fetch(`${base}/api/tasks`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ roomId: "room_cafe", brief: "再做一个五子棋网站" }),
+      });
+      assert.equal(res.status, 201);
+      assert.match(
+        readFileSync(join(dir, "workspace", "src/remember.js"), "utf8"),
+        /已有真实改动/,
+        "改过的文件不能被清掉",
+      );
+    } finally {
+      await new Promise<void>((done) => server.close(() => done()));
+      studio.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

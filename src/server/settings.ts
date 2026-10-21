@@ -26,16 +26,20 @@ export function readSettings(env: NodeJS.ProcessEnv = process.env): StudioSettin
   const apiKey = env.LLM_API_KEY?.trim() ?? "";
   const model = env.LLM_MODEL?.trim() ?? "";
   const headers = parseHeaders(env.LLM_HEADERS);
-  const llm: LlmSettings | null =
-    baseUrl && model
-      ? {
-          baseUrl: baseUrl.replace(/\/+$/, ""),
-          apiKey,
-          model,
-          temperature: Number.parseFloat(env.LLM_TEMPERATURE ?? "0.8"),
-          ...(headers ? { headers } : {}),
-        }
-      : null;
+  // 只要 env 里给了任意一项就保留，交给 SettingsStore 与 settings.json 合并：
+  // baseUrl/model 可能已经存在设置里，而 key / headers 只从环境变量来。
+  // 以前要求「baseUrl 和 model 都在 env」才构造 llm，导致 `LLM_API_KEY=... node src/main.ts`
+  // 这种用法静默丢 key（真实踩过）。
+  const hasAnyLlmEnv = Boolean(baseUrl || model || apiKey || headers);
+  const llm: LlmSettings | null = hasAnyLlmEnv
+    ? {
+        baseUrl: baseUrl.replace(/\/+$/, ""),
+        apiKey,
+        model,
+        temperature: Number.parseFloat(env.LLM_TEMPERATURE ?? "0.8"),
+        ...(headers ? { headers } : {}),
+      }
+    : null;
 
   return {
     port: Number.isFinite(port) ? port : 4318,
