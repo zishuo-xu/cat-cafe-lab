@@ -31,6 +31,16 @@ const MAX_LIST = 200;
 const COMMAND_TIMEOUT_MS = 10_000;
 const ARG_PATTERN = /^[A-Za-z0-9_./@:=+-]+$/;
 
+/**
+ * 「这个空工作区是被明确清空的」标记文件。
+ *
+ * 没有它就无法区分「首次启动的空目录」（应该播种演示项目）和
+ * 「用户/任务清空后的空目录」（绝不能被重新播种，否则真实任务又被演示文件干扰）。
+ */
+const CLEARED_MARKER = ".deliverylab-cleared";
+const CLEARED_MARKER_TEXT =
+  "这个工作区被清空过（真实任务从空白开始）。想恢复演示项目，在界面上点「重置沙盒」。\n";
+
 export class Sandbox implements SandboxRunner {
   readonly root: string;
 
@@ -46,9 +56,17 @@ export class Sandbox implements SandboxRunner {
    * 想恢复演示内容用 reset()（界面上是「重置沙盒」）。
    */
   ensureSeed(): void {
-    if (existsSync(this.root)) return;
-    mkdirSync(this.root, { recursive: true });
-    this.writeSeed();
+    if (!existsSync(this.root)) {
+      mkdirSync(this.root, { recursive: true });
+      this.writeSeed();
+      return;
+    }
+    // 目录已存在：只有「完全没有内容」时才当作首次启动播种；
+    // 有清空标记就尊重清空结果。
+    const entries = readdirSync(this.root);
+    if (entries.length === 0) {
+      this.writeSeed();
+    }
   }
 
   reset(): void {
@@ -61,6 +79,7 @@ export class Sandbox implements SandboxRunner {
   clear(): void {
     rmSync(this.root, { recursive: true, force: true });
     mkdirSync(this.root, { recursive: true });
+    writeFileSync(resolve(this.root, CLEARED_MARKER), CLEARED_MARKER_TEXT, "utf8");
   }
 
   /**
@@ -72,6 +91,7 @@ export class Sandbox implements SandboxRunner {
    * 只要用户/成员改过任何一个种子文件，就视为真实内容，绝不清空。
    */
   isPristineSeed(): boolean {
+    if (existsSync(resolve(this.root, CLEARED_MARKER))) return false;
     for (const [path, content] of Object.entries(SEED_FILES)) {
       const abs = resolve(this.root, path);
       if (!existsSync(abs)) return false;

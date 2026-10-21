@@ -219,7 +219,8 @@ describe("沙盒演示种子与真实任务隔离", () => {
     try {
       sandbox.ensureSeed();
       sandbox.clear();
-      assert.deepEqual(readdirSync(dir), [], "应清空成空目录");
+      const left = readdirSync(dir).filter((name) => name !== ".deliverylab-cleared");
+      assert.deepEqual(left, [], "除了清空标记，不应留下任何演示文件");
       assert.equal(sandbox.isPristineSeed(), false);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -253,7 +254,7 @@ describe("真实任务自动清空演示种子", () => {
       });
       assert.equal(res.status, 201);
       assert.deepEqual(
-        readdirSync(join(dir, "workspace")),
+        readdirSync(join(dir, "workspace")).filter((name) => name !== ".deliverylab-cleared"),
         [],
         "演示种子应被清空，给真实任务一个干净起点",
       );
@@ -314,12 +315,15 @@ describe("清空后的工作区不会被重启重新播种", () => {
       assert.ok(readFileSync(join(root, "package.json"), "utf8").length > 0, "首次应播种");
 
       first.clear();
-      assert.deepEqual(readdirSync(root), []);
 
       // 模拟重启：新的 Sandbox 实例再 ensureSeed，不应重新写入演示文件
       const restarted = new Sandbox(root);
       restarted.ensureSeed();
-      assert.deepEqual(readdirSync(root), [], "已存在的工作区不该被重新播种");
+      assert.deepEqual(
+        readdirSync(root).filter((name) => name !== ".deliverylab-cleared"),
+        [],
+        "明确清空过的工作区不该被重新播种",
+      );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
