@@ -60,10 +60,11 @@ export const STREAM_TIMEOUT_MS = 90_000;
 export const DEFAULT_MAX_TOKENS = 4096;
 /** 被 max_tokens 截断时的重试上限。 */
 /**
- * 截断后的阶梯预算：推理型模型的思考链也吃 completion 预算，8192 可能还不够。
- * 实测 deepseek-v4.1-flash 在「写规范 + 交接卡」这种长输出上 8192 仍被截断。
+ * 截断后的阶梯预算：推理型模型的思考链也吃 completion 预算。
+ * 实测 deepseek-v4.1-flash：8192 截断、16384 仍截断（写一个完整五子棋实现时思考链过长），
+ * 所以阶梯一路提到该模型上限 32000。
  */
-const ESCALATED_MAX_TOKENS = [8192, 16384] as const;
+const ESCALATED_MAX_TOKENS = [8192, 16384, 32000] as const;
 /** 一次最多接受的 turn 数，防止模型刷屏。 */
 export const MAX_TURNS = 6;
 /** delayMs 上限，防止模型给出离谱的停顿把演出拖死。 */
